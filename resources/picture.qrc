@@ -1,0 +1,19 @@
+<RCC>
+    <qresource prefix="/">
+        <file>pic/denglu-yonghu.png</file>
+        <file>pic/dengluzhanghu.png</file>
+        <file>pic/drxx02.png</file>
+        <file>pic/drxx92.png</file>
+        <file>pic/gongzuotai.png</file>
+        <file>pic/gongzuotai_1.png</file>
+        <file>pic/jianpan.png</file>
+        <file>pic/xitong.png</file>
+        <file>pic/xitongguanli.png</file>
+        <file>pic/xitongguanli_1.png</file>
+        <file>pic/xitongshezhi.png</file>
+        <file>pic/xitongxinxi.png</file>
+        <file>pic/xitongzhenduan.png</file>
+        <file>pic/yuechi.png</file>
+        <file>pic/yuechi_1.png</file>
+    </qresource>
+</RCC>
