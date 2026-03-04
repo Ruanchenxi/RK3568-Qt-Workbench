@@ -191,6 +191,28 @@ public:
      */
     void setCurrentOpId(int opId) { m_currentOpId = opId; }
 
+    /**
+     * @brief 设置当前站号（仅影响 DEL 命令的 Addr2，其他命令不受影响）
+     * @param id 站号数值；\"001\"→1，\"002\"→2；0 或非法值自动回退 1
+     *
+     * Preconditions:
+     *   - 无强制前提；可在 connectPort() 之前或之后任意时刻调用
+     *   - 建议在 KeySessionService 构造时调用一次，之后随配置变更实时调用
+     *
+     * Side Effects:
+     *   - 更新 m_stationId，影响后续所有 DEL 命令的 Addr2 字段
+     *   - 输出一条 [CONF] 日志记录新值，供诊断（不产生 notice/timeout 信号）
+     *   - SET_COM/Q_TASK/Q_KEYEQ 的 Addr2 始终为 0x0000，不受此方法影响
+     *   - 不影响已 inFlight 的命令（下一次 DEL 才生效）
+     *
+     * Failure Strategy:
+     *   - id=0 时自动修正为 1，不抛出异常；[CONF] 日志可见修正后的值
+     *
+     * SAFETY: 此字段填充规则与原产品行为对齐（2026-03-04 A/B 抓包验证）。
+     *   不要将 stationId 用于 SET_COM/Q_TASK/Q_KEYEQ，否则偏离原产品行为。
+     */
+    void setStationId(quint16 id);
+
 signals:
     /// 旧版文本日志信号（兼容保留，新代码应使用 logItemEmitted）
     void logLine(const QString &msg);
@@ -316,6 +338,10 @@ private:
 
     // 操作追踪
     int            m_currentOpId;          ///< 当前操作ID，由 UI 层设置，-1=无归属
+
+    // 站号（DEL Addr2 来源）
+    quint16        m_stationId;            ///< 当前站号，DEL Addr2 Lo=m_stationId&0xFF Hi=0x00
+                                           ///< 默认 1，由 KeySessionService::setStationId() 注入
 };
 
 #endif // KEYSERIALCLIENT_H

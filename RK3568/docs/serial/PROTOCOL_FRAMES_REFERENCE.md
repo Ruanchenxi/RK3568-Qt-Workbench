@@ -37,14 +37,23 @@ Last Updated: 2026-03-04
 
 ## §2 命令码一览
 
-| 命令码 | 名称       | 方向           | 说明               |
-|--------|------------|----------------|--------------------|
-| 0x0F   | SET_COM    | TX（主发）     | 握手命令           |
-| 0x04   | Q_TASK     | TX / RX        | 查询任务列表       |
-| 0x06   | DEL        | TX（主发）     | 删除指定任务       |
-| 0x5A   | ACK        | RX（设备回）   | 确认响应           |
-| 0x00   | NAK        | RX（设备回）   | 拒绝/错误响应      |
-| 0x11   | KEY_EVENT  | RX（设备推送） | 钥匙在位/离位事件  |
+| 命令码 | 名称       | 方向           | 说明                     |
+|--------|------------|----------------|--------------------------|
+| 0x0F   | SET_COM    | TX（主发）     | 握手命令                 |
+| 0x04   | Q_TASK     | TX / RX        | 查询任务列表             |
+| 0x06   | DEL        | TX（主发）     | 删除指定任务             |
+| 0x14   | Q_KEYEQ    | TX / RX        | 查询/上报钥匙电量        |
+| 0x5A   | ACK        | RX（设备回）   | 确认响应                 |
+| 0x00   | NAK        | RX（设备回）   | 拒绝/错误响应            |
+| 0x11   | KEY_EVENT  | RX（设备推送） | 钥匙在位/离位事件        |
+
+### Addr2 填写规则（2026-03-04 A/B 抓包验证）
+
+| 命令方向 | 命令             | TX Addr2          | 说明                         |
+|----------|------------------|-------------------|------------------------------|
+| 主机→设备 | SET_COM / Q_TASK / Q_KEYEQ / SET_TIME | `00 00` | 固定，与系统站号无关 |
+| 主机→设备 | DEL              | `stationId 00`    | Lo=当前站号，Hi=0x00         |
+| 设备→主机 | 所有回包         | 常为 `FF 00`      | 解析器不以 RX Addr2 做过滤   |
 
 ---
 
@@ -74,6 +83,7 @@ Last Updated: 2026-03-04
 | `5A 0F`                   | A720   | ACK(SET_COM)  |
 | `5A 06`                   | 3609   | ACK(DEL)      |
 | `04 00`                   | D14C   | Q_TASK resp count=0 |
+| `14`                      | 52B5   | Q_KEYEQ 查询（Data 空）|
 
 ---
 
@@ -182,15 +192,21 @@ Len = 1(Cmd) + 1(count) + count×20
 
 ### §4.6 DEL 发送帧
 
+> ⚠️ **关键结论（2026-03-04 A/B 抓包验证）：DEL 的 Addr2 = 当前站号（stationId），不是固定 0x0001**
+>
+> - 系统设置"当前站号"=1 → DEL 发包 Addr2 = `01 00`
+> - 系统设置"当前站号"=2 → DEL 发包 Addr2 = `02 00`
+> - 钥匙链路其他命令（SET_COM/Q_TASK/Q_KEYEQ/SET_TIME）的 Addr2 始终为 `00 00`，与站号无关
+
 ```text
-偏移   值       字段
-4      01       Addr2 Lo  ← ⚠️ DEL 专用，与 SET_COM/Q_TASK 不同
-5      00       Addr2 Hi  → Addr2 = 0x0001
-6      11       Len Lo
-7      00       Len Hi    → Len = 0x0011（Cmd1 + Data16）
-8      06       Cmd = DEL
-9~24   taskId   Data（16 字节 GUID，来自 Q_TASK 响应）
-25~26  **       CRC（随 taskId 变化）
+偏移   值           字段
+4      stationId   Addr2 Lo  ← 等于系统设置中的当前站号（1=0x01, 2=0x02, ...）
+5      00          Addr2 Hi  → 站号最大 255，Hi 始终为 0x00
+6      11          Len Lo
+7      00          Len Hi    → Len = 0x0011（Cmd1 + Data16）
+8      06          Cmd = DEL
+9~24   taskId      Data（16 字节 GUID，来自 Q_TASK 响应）
+25~26  **          CRC（随 taskId 变化）
 ```
 
 参考：taskId 全 0 时 CRC = `1A8C`
@@ -240,7 +256,51 @@ Len = 0x0005
 
 ---
 
-### §4.10 NAK 响应帧
+### §4.10 Q_KEYEQ 查询帧（TX，主机→设备）
+
+```text
+偏移  值    字段
+0     7E    帧头[0]
+1     6C    帧头[1]
+2     FF    KeyId（广播）
+3     **    FrameNo（自增）
+4     00    Addr2 Lo  → Addr2 = 0x0000（固定，与站号无关）
+5     00    Addr2 Hi
+6     01    Len Lo
+7     00    Len Hi    → Len = 0x0001（Cmd 只有 1 字节，Data 为空）
+8     14    Cmd = Q_KEYEQ
+9     52    CRC Hi
+10    B5    CRC Lo    → CRC = 0x52B5（已验证）
+```
+
+实测完整帧：`7E 6C FF 01 00 00 01 00 14 52 B5`
+
+---
+
+### §4.11 Q_KEYEQ 响应帧（RX，设备→主机，UP_KEYEQ）
+
+```text
+偏移  值      字段
+4     FF      Addr2 Lo → RX Addr2 常为 0x00FF，正常现象，不作过滤
+5     00      Addr2 Hi
+6     09      Len Lo
+7     00      Len Hi    → Len = 0x0009（Cmd1 + Data8）
+8     14      Cmd = Q_KEYEQ
+9     **      Data[0] = 电量百分比（0x00~0x64 = 0%~100%；0xFF = 无效）
+10~16 FF×7   Data[1]~Data[7] = 保留（全 0xFF）
+17    **      CRC Hi
+18    **      CRC Lo
+```
+
+Data[0] 解析规则：
+- `0x00`~`0x64`：电量 0%～100%（直接作为十进制百分比）
+- `0xFF`：无效（钥匙未在位或设备不支持），显示 `--`
+
+实测示例（电量 93%）：`7E 6C 01 01 FF 00 09 00 14 5D FF FF FF FF FF FF FF 3E 11`
+
+---
+
+### §4.12 NAK 响应帧
 
 ```text
 8     00    Cmd = NAK
@@ -341,11 +401,12 @@ while buf.len() >= MIN_FRAME_LEN(11):
 | CmdSetCom                    | 0x0F | 握手命令                |
 | CmdQTask                     | 0x04 | 查询任务                |
 | CmdDel                       | 0x06 | 删除任务                |
+| CmdQKeyEq                    | 0x14 | 查询/上报钥匙电量       |
 | CmdAck                       | 0x5A | 确认响应                |
 | CmdNak                       | 0x00 | 拒绝响应                |
 | CmdKeyEvent                  | 0x11 | 钥匙事件                |
-| Addr2 (SET_COM/Q_TASK)       | 0x0000 | Lo=00 Hi=00          |
-| Addr2 (DEL)                  | 0x0001 | Lo=01 Hi=00          |
+| Addr2 (SET_COM/Q_TASK/Q_KEYEQ/SET_TIME) | 0x0000 | Lo=00 Hi=00，固定；与站号无关 |
+| Addr2 (DEL)                  | stationId | Lo=站号&0xFF Hi=0x00；站号1→01 00，站号2→02 00 |
 | RETRY_TIMEOUT_MS             | 1000 | 单次重试超时(ms)        |
 | MAX_RETRIES                  | 3    | 最大重试次数            |
 | KEY_STABLE_WINDOW_MS         | 600  | 稳定性观察窗口(ms)      |
@@ -367,7 +428,7 @@ while buf.len() >= MIN_FRAME_LEN(11):
 | CRC 用左移变种（CCITT）              | 用右移查表，更新：`(crc>>8)^table[(b^crc&0xFF)&0xFF]` |
 | SET_COM CRC = 0x30C4                  | SET_COM CRC = **0x1C11**（已验证）       |
 | Q_TASK Data 全 00                     | Q_TASK Data 全 **FF×16**（通配查询）     |
-| DEL Addr2 = 0x0000                    | DEL Addr2 = **0x0001**（Lo=01 Hi=00）   |
+| DEL Addr2 固定写 0x0001（忽略系统站号）  | DEL Addr2 = **当前站号**（Lo=stationId&0xFF Hi=0x00），系统设置"当前站号"001→01 00，002→02 00 |
 | Len 含帧头/KeyId 等所有字节           | Len = Cmd(1) + Data(N)，**不含帧头以前** |
 | CRC 字段 LE 小端发送                  | CRC **BE 大端**，高字节先发              |
 | 用整帧字节相等判断命令匹配           | 应只比较 Cmd 字节，FrameNo 是可变的      |

@@ -21,19 +21,21 @@ static constexpr quint8  FrameHeader1   = 0x6C;  ///< 帧头第二字节
 static constexpr quint8  ReqKeyId       = 0xFF;  ///< 广播查询所有钥匙柜
 
 // ---------- Addr2（2字节地址扩展） ----------
-// 说明：
-// 1) SET_COM / Q_TASK 使用 0x0000。
-// 2) DEL 使用 0x0001。
-// 3) 字段落帧顺序为低字节在前（Lo, Hi）。
-static constexpr quint8  Addr2DefaultLo = 0x00;
-static constexpr quint8  Addr2DefaultHi = 0x00;
-static constexpr quint8  Addr2DelLo     = 0x01;
-static constexpr quint8  Addr2DelHi     = 0x00;
+// 规则（2026-03-04 A/B 抓包验证）：
+//   1) SET_COM / Q_TASK / Q_KEYEQ / SET_TIME：TX 固定 Addr2=0x0000（与"当前站号"无关）
+//   2) DEL(0x06)：TX Addr2 = 当前站号（stationId），小端 Lo=stationId&0xFF Hi=0x00
+//      例：stationId=1 → Addr2字节 01 00；stationId=2 → 02 00
+//   3) 回包（RX）Addr2 常为 0x00FF，解析器不以 Addr2 做过滤条件
+// 注意：Addr2DelLo/Hi 已作废，DEL 的 Addr2 由 KeySerialClient::setStationId() 动态计算
+static constexpr quint8  Addr2DefaultLo = 0x00;  ///< SET_COM/Q_TASK/Q_KEYEQ：Lo=0x00
+static constexpr quint8  Addr2DefaultHi = 0x00;  ///< SET_COM/Q_TASK/Q_KEYEQ：Hi=0x00
+// Addr2DelLo/Hi 已废弃（原固定 0x01/0x00），请使用 KeySerialClient::setStationId() 动态注入
 
 // ---------- 命令码 ----------
 static constexpr quint8  CmdSetCom      = 0x0F;  ///< 握手命令
 static constexpr quint8  CmdQTask       = 0x04;  ///< 查询任务列表
 static constexpr quint8  CmdDel         = 0x06;  ///< 删除任务
+static constexpr quint8  CmdQKeyEq      = 0x14;  ///< 查询钥匙电量（TX: Data 空；RX: Data[0]=0~100%，0xFF=无效）
 static constexpr quint8  CmdAck         = 0x5A;  ///< 设备确认
 static constexpr quint8  CmdNak         = 0x00;  ///< 设备拒绝
 static constexpr quint8  CmdKeyEvent    = 0x11;  ///< 钥匙事件（在位/离位）

@@ -1,7 +1,7 @@
 # CODEMAP（核心文件职责索引）
 
 Status: Active  
-Last Updated: 2026-03-02  
+Last Updated: 2026-03-04  
 范围：`src/` 内核心模块与关键文件。  
 
 说明：
@@ -62,7 +62,7 @@ Last Updated: 2026-03-02
 |---|---|---|
 | `src/features/key/ui/keymanagepage.h/.cpp` | 钥匙管理页面与日志表渲染 | 不直接 include 具体串口实现 |
 | `src/features/key/application/KeyManageController.h/.cpp` | 页面操作编排、会话驱动 | 通过会话服务抽象访问协议能力 |
-| `src/features/key/application/KeySessionService.h/.cpp` | 串口会话服务、重试/回放接入点 | 调用 protocol + transport 抽象 |
+| `src/features/key/application/KeySessionService.h/.cpp` | 串口会话服务、重试/回放接入点；从 ConfigManager 注入站号并监听变更 | 调用 protocol + transport 抽象；允许依赖 ConfigManager（核心层）；禁止 UI 页面类 |
 | `src/features/key/application/SerialLogManager.h/.cpp` | 串口日志缓冲/过滤/导出组织 | 不承载协议帧解析 |
 | `src/features/key/protocol/KeySerialClient.h/.cpp` | 串口协议核心状态机与报文处理 | 仅允许依赖 `ISerialTransport` 抽象 |
 | `src/features/key/protocol/KeyProtocolDefs.h` | 协议命令与常量定义 | 语义锁定，谨慎改动 |

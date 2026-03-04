@@ -94,6 +94,7 @@ KeySerialClient::KeySerialClient(ISerialTransport *transport, QObject *parent)
     , m_verifiedPortName()
     , m_hasVerifiedPort(false)
     , m_currentOpId(-1)
+    , m_stationId(1)   // 默认站号 1，由 KeySessionService 构造后通过 setStationId() 注入
 {
     Q_ASSERT(m_serial != nullptr);
     connect(m_serial, &ISerialTransport::readyRead, this, &KeySerialClient::onReadyRead);
@@ -322,7 +323,8 @@ void KeySerialClient::queryTasksAllInternal(bool fromRecovery, bool allowWhenUnk
  *   4. 钥匙必须在位且稳定（否则延迟到稳定后自动发送）
  *
  * 协议细节：
- *   - Addr2 使用 DEL 专用地址 0x0001（区别于 Q_TASK 的 0x0000）
+ *   - Addr2 = 当前站号 m_stationId（小端 Lo Hi），由 KeySessionService::setStationId() 注入
+ *     例：站号1 → Addr2 [01 00]；站号2 → [02 00]（2026-03-04 A/B 抓包验证，不是固定 0x0001）
  *   - 期望响应：ACK(0x5A)，ACK.data[0] == CMD_DEL(0x06)
  *   - DEL 成功后自动发起 Q_TASK 验证（m_pendingAfterDelQuery 标志）
  *
@@ -352,16 +354,40 @@ void KeySerialClient::deleteTask(const QByteArray &taskId16)
         return;
     }
 
-    log(QString("发送 DEL(0x06) 删除任务: %1")
+    log(QString("发送 DEL(0x06) stationId=%1 Addr2=%2 00 taskId: %3")
+            .arg(m_stationId)
+            .arg(m_stationId & 0xFF, 2, 16, QChar('0'))
             .arg(QString(taskId16.toHex(' ').toUpper())));
     drainBeforeBusinessSend("DEL");
 
     m_pendingAfterDelQuery = true;
+    // Addr2 = 当前站号（小端 Lo Hi）
+    // SET_COM/Q_TASK 始终用 0x0000，只有 DEL 用 stationId（2026-03-04 A/B 抓包验证）
     QByteArray addr2;
-    addr2.append(static_cast<char>(KeyProtocol::Addr2DelLo));
-    addr2.append(static_cast<char>(KeyProtocol::Addr2DelHi));
+    addr2.append(static_cast<char>(m_stationId & 0xFF));
+    addr2.append(static_cast<char>((m_stationId >> 8) & 0xFF));
     QByteArray frame = buildFrame(CMD_DEL, taskId16, addr2);
     sendFrame(frame, CMD_ACK, INFLIGHT_DEL);
+}
+
+/**
+ * @brief 设置当前站号（影响 DEL 命令的 Addr2）
+ * @param id 站号数值（1-255），例如系统设置 "001" → 1，"002" → 2；0 回退为 1
+ *
+ * 调用关系：KeySessionService 在构造后立即调用，并在 ConfigManager::configChanged
+ * 信号触发时再次调用，确保系统设置界面"当前站号"修改后实时生效。
+ *
+ * SAFETY: 此字段填充规则与原产品行为完全对齐（2026-03-04 A/B 抓包验证）。
+ *   - DEL 发包 Addr2 Lo = stationId & 0xFF，Hi = 0x00（小端）
+ *   - 不得将 m_stationId 用于 SET_COM/Q_TASK/Q_KEYEQ，这些命令 Addr2 固定 0x0000
+ *   - 此规则改动会导致 DEL 命令发往错误站点，设备返回 NAK(0x08)，不可随意修改
+ */
+void KeySerialClient::setStationId(quint16 id)
+{
+    m_stationId = (id > 0) ? id : 1;  // 防御：站号不允许为 0
+    log(QString("[CONF] stationId 更新为 %1（DEL Addr2: %2 00）")
+            .arg(m_stationId)
+            .arg(m_stationId & 0xFF, 2, 16, QChar('0')));
 }
 
 /**
