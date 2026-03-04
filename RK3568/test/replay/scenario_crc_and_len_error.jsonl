@@ -1,0 +1,5 @@
+# CRC 错误 + 非法长度示例
+{"op":"open","delayMs":0}
+{"op":"chunk","hex":"7E 6C FF 10 00 00 02 00 5A 0F A7 21","delayMs":30}
+{"op":"chunk","hex":"7E 6C FF 11 00 00 FF FF 04 00 00","delayMs":30}
+

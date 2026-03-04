@@ -1,0 +1,744 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>KeyManagePage</class>
+ <widget class="QWidget" name="KeyManagePage">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1200</width>
+    <height>700</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>钥匙管理</string>
+  </property>
+  <layout class="QVBoxLayout" name="rootLayout">
+   <property name="spacing">
+    <number>0</number>
+   </property>
+   <property name="leftMargin"><number>0</number></property>
+   <property name="topMargin"><number>0</number></property>
+   <property name="rightMargin"><number>0</number></property>
+   <property name="bottomMargin"><number>0</number></property>
+
+   <item>
+    <widget class="QWidget" name="tabBar" native="true">
+     <property name="minimumSize"><size><width>0</width><height>40</height></size></property>
+     <property name="maximumSize"><size><width>16777215</width><height>40</height></size></property>
+     <property name="styleSheet">
+      <string notr="true">#tabBar { background: #E8E4DE; }
+#tabBar QPushButton { border: none; padding: 0 20px; font-size: 13px; color: #5D6B7A; min-height: 36px; }
+#tabBar QPushButton:checked { background: #FFFFFF; color: #2E7D32; font-weight: bold; border-top: 2px solid #2E7D32; }</string>
+     </property>
+     <layout class="QHBoxLayout" name="tabBarLayout">
+      <property name="spacing"><number>2</number></property>
+      <property name="leftMargin"><number>8</number></property>
+      <property name="topMargin"><number>0</number></property>
+      <property name="rightMargin"><number>8</number></property>
+      <property name="bottomMargin"><number>0</number></property>
+      <item>
+       <widget class="QPushButton" name="tabKey">
+        <property name="text"><string>钥匙</string></property>
+        <property name="checkable"><bool>true</bool></property>
+        <property name="checked"><bool>true</bool></property>
+        <property name="autoExclusive"><bool>true</bool></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="tabSerial">
+        <property name="text"><string>串口报文</string></property>
+        <property name="checkable"><bool>true</bool></property>
+        <property name="autoExclusive"><bool>true</bool></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="tabHttpClient">
+        <property name="text"><string>HTTP客户端报文</string></property>
+        <property name="checkable"><bool>true</bool></property>
+        <property name="autoExclusive"><bool>true</bool></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="tabHttpServer">
+        <property name="text"><string>HTTP服务端报文</string></property>
+        <property name="checkable"><bool>true</bool></property>
+        <property name="autoExclusive"><bool>true</bool></property>
+       </widget>
+      </item>
+      <item>
+       <spacer name="tabSpacer">
+        <property name="orientation"><enum>Qt::Horizontal</enum></property>
+        <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+       </spacer>
+      </item>
+     </layout>
+    </widget>
+   </item>
+
+   <item>
+    <widget class="QStackedWidget" name="contentStack">
+     <property name="currentIndex"><number>0</number></property>
+
+     <widget class="QWidget" name="pageKey">
+      <layout class="QVBoxLayout" name="pageKeyLayout">
+       <property name="spacing"><number>0</number></property>
+       <property name="leftMargin"><number>0</number></property>
+       <property name="topMargin"><number>0</number></property>
+       <property name="rightMargin"><number>0</number></property>
+       <property name="bottomMargin"><number>0</number></property>
+
+       <item>
+        <widget class="QWidget" name="topDeviceBar" native="true">
+         <property name="minimumSize"><size><width>0</width><height>60</height></size></property>
+         <property name="maximumSize"><size><width>16777215</width><height>60</height></size></property>
+         <property name="styleSheet">
+          <string notr="true">#topDeviceBar { background: #FFFFFF; border-bottom: 1px solid #E0DDD7; }</string>
+         </property>
+         <layout class="QHBoxLayout" name="topDeviceBarLayout">
+          <property name="spacing"><number>12</number></property>
+          <property name="leftMargin"><number>12</number></property>
+          <property name="topMargin"><number>8</number></property>
+          <property name="rightMargin"><number>12</number></property>
+          <property name="bottomMargin"><number>8</number></property>
+
+          <item>
+           <widget class="QLabel" name="btnSmartKey">
+            <property name="text"><string>智能钥匙</string></property>
+            <property name="minimumSize"><size><width>100</width><height>40</height></size></property>
+            <property name="maximumSize"><size><width>120</width><height>42</height></size></property>
+            <property name="alignment"><set>Qt::AlignCenter</set></property>
+            <property name="styleSheet">
+             <string notr="true">QLabel {
+  background: #2E7D32;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: bold;
+  padding: 6px 16px;
+}</string>
+            </property>
+           </widget>
+          </item>
+
+          <item>
+           <spacer name="statusLeftSpacer">
+            <property name="orientation"><enum>Qt::Horizontal</enum></property>
+            <property name="sizeType"><enum>QSizePolicy::Fixed</enum></property>
+            <property name="sizeHint" stdset="0"><size><width>16</width><height>20</height></size></property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QLabel" name="lblKeyPosition">
+            <property name="text"><string>在位: &lt;font color='#EF6C00'&gt;未插&lt;/font&gt;</string></property>
+            <property name="textFormat"><enum>Qt::RichText</enum></property>
+            <property name="styleSheet"><string notr="true">font-size: 13px; color: #5D6B7A; margin-right: 12px;</string></property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="lblCommStatus">
+            <property name="text"><string>通讯: &lt;font color='#2E7D32'&gt;正常&lt;/font&gt;</string></property>
+            <property name="textFormat"><enum>Qt::RichText</enum></property>
+            <property name="styleSheet"><string notr="true">font-size: 13px; color: #5D6B7A; margin-right: 12px;</string></property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="lblBatteryInfo">
+            <property name="text"><string>电量: --</string></property>
+            <property name="styleSheet"><string notr="true">font-size: 13px; color: #5D6B7A; margin-right: 12px;</string></property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="lblTaskInfo">
+            <property name="text"><string>任务数: --</string></property>
+            <property name="styleSheet"><string notr="true">font-size: 13px; color: #5D6B7A;</string></property>
+           </widget>
+          </item>
+
+          <item>
+           <spacer name="deviceStatusSpacer">
+            <property name="orientation"><enum>Qt::Horizontal</enum></property>
+            <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+           </spacer>
+          </item>
+
+          <item>
+           <widget class="QPushButton" name="btnDownloadRfid">
+            <property name="text"><string>下载RFID</string></property>
+            <property name="styleSheet">
+             <string notr="true">QPushButton { background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 4px; padding: 4px 12px; font-size: 12px; color: #424242; }
+QPushButton:hover { background: #F5F5F5; border-color: #2E7D32; color: #2E7D32; }
+QPushButton:pressed { background: #E8F5E9; }</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="btnInitDevice">
+            <property name="text"><string>初始化</string></property>
+            <property name="styleSheet">
+             <string notr="true">QPushButton { background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 4px; padding: 4px 12px; font-size: 12px; color: #424242; }
+QPushButton:hover { background: #F5F5F5; border-color: #2E7D32; color: #2E7D32; }
+QPushButton:pressed { background: #E8F5E9; }</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="btnQueryBattery">
+            <property name="text"><string>获取电量</string></property>
+            <property name="styleSheet">
+             <string notr="true">QPushButton { background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 4px; padding: 4px 12px; font-size: 12px; color: #424242; }
+QPushButton:hover { background: #F5F5F5; border-color: #2E7D32; color: #2E7D32; }
+QPushButton:pressed { background: #E8F5E9; }</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="btnQueryTaskCount">
+            <property name="text"><string>获取任务数</string></property>
+            <property name="styleSheet">
+             <string notr="true">QPushButton { background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 4px; padding: 4px 12px; font-size: 12px; color: #424242; }
+QPushButton:hover { background: #F5F5F5; border-color: #2E7D32; color: #2E7D32; }
+QPushButton:pressed { background: #E8F5E9; }</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="btnSyncTime">
+            <property name="text"><string>钥匙校时</string></property>
+            <property name="styleSheet">
+             <string notr="true">QPushButton { background: #FFFFFF; border: 1px solid #BDBDBD; border-radius: 4px; padding: 4px 12px; font-size: 12px; color: #424242; }
+QPushButton:hover { background: #F5F5F5; border-color: #2E7D32; color: #2E7D32; }
+QPushButton:pressed { background: #E8F5E9; }</string>
+            </property>
+           </widget>
+          </item>
+
+          <item>
+           <spacer name="topBarRightSpacer">
+            <property name="orientation"><enum>Qt::Horizontal</enum></property>
+            <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+           </spacer>
+          </item>
+         </layout>
+        </widget>
+       </item>
+
+       <item>
+        <widget class="QWidget" name="middleArea" native="true">
+         <layout class="QHBoxLayout" name="middleAreaLayout">
+          <property name="spacing"><number>0</number></property>
+          <property name="leftMargin"><number>0</number></property>
+          <property name="topMargin"><number>0</number></property>
+          <property name="rightMargin"><number>0</number></property>
+          <property name="bottomMargin"><number>0</number></property>
+
+          <item>
+           <widget class="QWidget" name="leftSidebar" native="true">
+            <property name="minimumSize"><size><width>200</width><height>0</height></size></property>
+            <property name="maximumSize"><size><width>210</width><height>16777215</height></size></property>
+            <property name="styleSheet">
+             <string notr="true">#leftSidebar { background: #F9F8F5; border-right: 1px solid #E0DDD7; }</string>
+            </property>
+            <layout class="QVBoxLayout" name="leftSidebarLayout">
+             <property name="spacing"><number>8</number></property>
+             <property name="leftMargin"><number>12</number></property>
+             <property name="topMargin"><number>12</number></property>
+             <property name="rightMargin"><number>12</number></property>
+             <property name="bottomMargin"><number>12</number></property>
+
+             <item>
+              <widget class="QLabel" name="lblSelectedTicketTitle">
+               <property name="text"><string>当前选中票</string></property>
+               <property name="styleSheet"><string notr="true">font-size: 14px; font-weight: bold; color: #333333; padding-bottom: 4px;</string></property>
+              </widget>
+             </item>
+
+             <item>
+              <widget class="QWidget" name="ticketInfoCard" native="true">
+               <property name="styleSheet">
+                <string notr="true">#ticketInfoCard {
+  background: #FFFFFF;
+  border: 1px solid #E0DDD7;
+  border-radius: 6px;
+  padding: 8px;
+}</string>
+               </property>
+               <layout class="QVBoxLayout" name="ticketInfoCardLayout">
+                <property name="spacing"><number>6</number></property>
+                <property name="leftMargin"><number>10</number></property>
+                <property name="topMargin"><number>10</number></property>
+                <property name="rightMargin"><number>10</number></property>
+                <property name="bottomMargin"><number>10</number></property>
+                <item>
+                 <widget class="QLabel" name="lblTicketNo">
+                  <property name="text"><string>票号: &lt;font color='#2E7D32'&gt;未选择&lt;/font&gt;</string></property>
+                  <property name="textFormat"><enum>Qt::RichText</enum></property>
+                  <property name="styleSheet"><string notr="true">font-size: 13px; color: #5D6B7A;</string></property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLabel" name="lblTicketType">
+                  <property name="text"><string>类型: --</string></property>
+                  <property name="styleSheet"><string notr="true">font-size: 13px; color: #5D6B7A;</string></property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLabel" name="lblTicketPosition">
+                  <property name="text"><string>位置: --</string></property>
+                  <property name="styleSheet"><string notr="true">font-size: 13px; color: #5D6B7A;</string></property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLabel" name="lblTicketReturnStatus">
+                  <property name="text"><string>回传状态: &lt;font color='#C62828'&gt;待执行&lt;/font&gt;</string></property>
+                  <property name="textFormat"><enum>Qt::RichText</enum></property>
+                  <property name="styleSheet"><string notr="true">font-size: 13px; color: #5D6B7A;</string></property>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+
+             <item>
+              <widget class="QLabel" name="lblTicketOpTitle">
+               <property name="text"><string>票据操作</string></property>
+               <property name="styleSheet"><string notr="true">font-size: 14px; font-weight: bold; color: #333333; padding-top: 8px; padding-bottom: 4px;</string></property>
+              </widget>
+             </item>
+
+             <item>
+              <widget class="QPushButton" name="btnTransferTicket">
+               <property name="text"><string>传  票</string></property>
+               <property name="minimumSize"><size><width>0</width><height>44</height></size></property>
+               <property name="styleSheet">
+                <string notr="true">QPushButton {
+  background: #4CAF50;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 6px;
+  font-size: 16px;
+  font-weight: bold;
+  padding: 8px;
+}
+QPushButton:hover { background: #43A047; }
+QPushButton:pressed { background: #388E3C; }
+QPushButton:disabled { background: #C8E6C9; color: #A5D6A7; }</string>
+               </property>
+              </widget>
+             </item>
+
+             <item>
+              <widget class="QPushButton" name="btnDeleteTicket">
+               <property name="text"><string>删除票</string></property>
+               <property name="minimumSize"><size><width>0</width><height>36</height></size></property>
+               <property name="styleSheet">
+                <string notr="true">QPushButton {
+  background: #FFFFFF;
+  color: #757575;
+  border: 1px solid #BDBDBD;
+  border-radius: 6px;
+  font-size: 13px;
+  padding: 6px;
+}
+QPushButton:hover { border-color: #F44336; color: #F44336; }
+QPushButton:pressed { background: #FFEBEE; }
+QPushButton:disabled { background: #F5F5F5; color: #BDBDBD; border-color: #E0E0E0; }</string>
+               </property>
+              </widget>
+             </item>
+
+             <item>
+              <widget class="QPushButton" name="btnReturnTicket">
+               <property name="text"><string>回传 (重试)</string></property>
+               <property name="minimumSize"><size><width>0</width><height>36</height></size></property>
+               <property name="enabled"><bool>false</bool></property>
+               <property name="styleSheet">
+                <string notr="true">QPushButton {
+  background: #FFFFFF;
+  color: #757575;
+  border: 1px solid #BDBDBD;
+  border-radius: 6px;
+  font-size: 13px;
+  padding: 6px;
+}
+QPushButton:hover { border-color: #FF9800; color: #EF6C00; }
+QPushButton:pressed { background: #FFF3E0; }
+QPushButton:disabled { background: #F5F5F5; color: #BDBDBD; border-color: #E0E0E0; }</string>
+               </property>
+              </widget>
+             </item>
+
+             <item>
+              <widget class="QLabel" name="lblReturnHint">
+               <property name="text"><string>回传默认禁用，失败时才启用</string></property>
+               <property name="styleSheet"><string notr="true">font-size: 11px; color: #9E9E9E;</string></property>
+               <property name="wordWrap"><bool>true</bool></property>
+              </widget>
+             </item>
+
+             <item>
+              <spacer name="sidebarSpacer">
+               <property name="orientation"><enum>Qt::Vertical</enum></property>
+               <property name="sizeHint" stdset="0"><size><width>20</width><height>40</height></size></property>
+              </spacer>
+             </item>
+            </layout>
+           </widget>
+          </item>
+
+          <item>
+           <widget class="QWidget" name="dataArea" native="true">
+            <property name="styleSheet">
+             <string notr="true">#dataArea { background: #F0EDE8; }</string>
+            </property>
+            <layout class="QVBoxLayout" name="dataAreaLayout">
+             <property name="spacing"><number>8</number></property>
+             <property name="leftMargin"><number>8</number></property>
+             <property name="topMargin"><number>8</number></property>
+             <property name="rightMargin"><number>8</number></property>
+             <property name="bottomMargin"><number>8</number></property>
+
+             <item>
+              <widget class="QWidget" name="systemTicketSection" native="true">
+               <property name="styleSheet">
+                <string notr="true">#systemTicketSection { background: #FFFFFF; border: 1px solid #E0DDD7; border-radius: 4px; }</string>
+               </property>
+               <layout class="QVBoxLayout" name="systemTicketSectionLayout">
+                <property name="spacing"><number>0</number></property>
+                <property name="leftMargin"><number>0</number></property>
+                <property name="topMargin"><number>0</number></property>
+                <property name="rightMargin"><number>0</number></property>
+                <property name="bottomMargin"><number>0</number></property>
+
+                <item>
+                 <widget class="QWidget" name="systemTicketHeader" native="true">
+                  <property name="minimumSize"><size><width>0</width><height>36</height></size></property>
+                  <property name="maximumSize"><size><width>16777215</width><height>36</height></size></property>
+                  <property name="styleSheet">
+                   <string notr="true">#systemTicketHeader { background: #FFFFFF; border-bottom: 1px solid #E8E4DE; }</string>
+                  </property>
+                  <layout class="QHBoxLayout" name="systemTicketHeaderLayout">
+                   <property name="leftMargin"><number>12</number></property>
+                   <property name="topMargin"><number>4</number></property>
+                   <property name="rightMargin"><number>8</number></property>
+                   <property name="bottomMargin"><number>4</number></property>
+                   <item>
+                    <widget class="QLabel" name="lblSystemTicketTitle">
+                     <property name="text"><string>系统票数据</string></property>
+                     <property name="styleSheet"><string notr="true">font-size: 14px; font-weight: bold; color: #333333;</string></property>
+                    </widget>
+                   </item>
+                   <item>
+                    <spacer name="systemTicketTitleSpacer">
+                     <property name="orientation"><enum>Qt::Horizontal</enum></property>
+                     <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+                    </spacer>
+                   </item>
+                   <item>
+                    <widget class="QPushButton" name="btnGetSystemTicketList">
+                     <property name="text"><string>获取系统票列表</string></property>
+                     <property name="styleSheet">
+                      <string notr="true">QPushButton {
+  background: #FFFFFF;
+  border: 1px solid #4CAF50;
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: #4CAF50;
+}
+QPushButton:hover { background: #E8F5E9; }
+QPushButton:pressed { background: #C8E6C9; }</string>
+                     </property>
+                    </widget>
+                   </item>
+                  </layout>
+                 </widget>
+                </item>
+
+                <item>
+<widget class="QTableWidget" name="systemTicketTable">
+                  <property name="styleSheet">
+                   <string notr="true">QTableWidget { border: none; background: #FFFFFF; font-size: 12px; }
+QHeaderView::section { background: #FAFAFA; color: #8C9BAA; border: none; border-bottom: 1px solid #E8E4DE; padding: 4px 6px; font-size: 12px; }
+QTableWidget::item { border-bottom: 1px solid #F0EDE8; padding: 3px 6px; }
+QTableWidget::item:selected { background: #DCE8FF; color: #1F2937; }
+QTableWidget::item:selected:active { background: #D0E2FF; color: #1F2937; }
+QTableWidget::item:selected:!active { background: #E8F0FF; color: #1F2937; }</string>
+                  </property>
+                  <property name="alternatingRowColors"><bool>true</bool></property>
+                  <property name="showGrid"><bool>false</bool></property>
+                  <property name="selectionBehavior"><enum>QAbstractItemView::SelectRows</enum></property>
+                  <column><property name="text"><string>序号</string></property></column>
+                  <column><property name="text"><string>票号</string></property></column>
+                  <column><property name="text"><string>类型</string></property></column>
+                  <column><property name="text"><string>来源</string></property></column>
+                  <column><property name="text"><string>状态</string></property></column>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+
+             <item>
+              <widget class="QWidget" name="keyTicketSection" native="true">
+               <property name="styleSheet">
+                <string notr="true">#keyTicketSection { background: #FFFFFF; border: 1px solid #E0DDD7; border-radius: 4px; }</string>
+               </property>
+               <layout class="QVBoxLayout" name="keyTicketSectionLayout">
+                <property name="spacing"><number>0</number></property>
+                <property name="leftMargin"><number>0</number></property>
+                <property name="topMargin"><number>0</number></property>
+                <property name="rightMargin"><number>0</number></property>
+                <property name="bottomMargin"><number>0</number></property>
+
+                <item>
+                 <widget class="QWidget" name="keyTicketHeader" native="true">
+                  <property name="minimumSize"><size><width>0</width><height>36</height></size></property>
+                  <property name="maximumSize"><size><width>16777215</width><height>36</height></size></property>
+                  <property name="styleSheet">
+                   <string notr="true">#keyTicketHeader { background: #FFFFFF; border-bottom: 1px solid #E8E4DE; }</string>
+                  </property>
+                  <layout class="QHBoxLayout" name="keyTicketHeaderLayout">
+                   <property name="leftMargin"><number>12</number></property>
+                   <property name="topMargin"><number>4</number></property>
+                   <property name="rightMargin"><number>8</number></property>
+                   <property name="bottomMargin"><number>4</number></property>
+                   <item>
+                    <widget class="QLabel" name="lblKeyTicketTitle">
+                     <property name="text"><string>钥匙票数据</string></property>
+                     <property name="styleSheet"><string notr="true">font-size: 14px; font-weight: bold; color: #333333;</string></property>
+                    </widget>
+                   </item>
+                   <item>
+                    <spacer name="keyTicketTitleSpacer">
+                     <property name="orientation"><enum>Qt::Horizontal</enum></property>
+                     <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+                    </spacer>
+                   </item>
+                   <item>
+                    <widget class="QPushButton" name="btnReadKeyTicketList">
+                     <property name="text"><string>读取钥匙票列表</string></property>
+                     <property name="styleSheet">
+                      <string notr="true">QPushButton {
+  background: #FFFFFF;
+  border: 1px solid #4CAF50;
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: #4CAF50;
+}
+QPushButton:hover { background: #E8F5E9; }
+QPushButton:pressed { background: #C8E6C9; }</string>
+                     </property>
+                    </widget>
+                   </item>
+                  </layout>
+                 </widget>
+                </item>
+
+                <item>
+<widget class="QTableWidget" name="keyTicketTable">
+                  <property name="styleSheet">
+                   <string notr="true">QTableWidget { border: none; background: #FFFFFF; font-size: 12px; }
+QHeaderView::section { background: #FAFAFA; color: #8C9BAA; border: none; border-bottom: 1px solid #E8E4DE; padding: 4px 6px; font-size: 12px; }
+QTableWidget::item { border-bottom: 1px solid #F0EDE8; padding: 3px 6px; }
+QTableWidget::item:selected { background: #DCE8FF; color: #1F2937; }
+QTableWidget::item:selected:active { background: #D0E2FF; color: #1F2937; }
+QTableWidget::item:selected:!active { background: #E8F0FF; color: #1F2937; }</string>
+                  </property>
+                  <property name="alternatingRowColors"><bool>true</bool></property>
+                  <property name="showGrid"><bool>false</bool></property>
+                  <property name="selectionBehavior"><enum>QAbstractItemView::SelectRows</enum></property>
+                  <column><property name="text"><string>序号</string></property></column>
+                  <column><property name="text"><string>票号</string></property></column>
+                  <column><property name="text"><string>类型</string></property></column>
+                  <column><property name="text"><string>来源</string></property></column>
+                  <column><property name="text"><string>状态</string></property></column>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+
+       <item>
+        <widget class="QWidget" name="statusBar" native="true">
+         <property name="minimumSize"><size><width>0</width><height>32</height></size></property>
+         <property name="maximumSize"><size><width>16777215</width><height>32</height></size></property>
+         <property name="styleSheet">
+          <string notr="true">#statusBar { background: #FFFFFF; border-top: 1px solid #E8E4DE; }</string>
+         </property>
+         <layout class="QHBoxLayout" name="statusBarLayout">
+          <property name="leftMargin"><number>12</number></property>
+          <property name="topMargin"><number>0</number></property>
+          <property name="rightMargin"><number>12</number></property>
+          <property name="bottomMargin"><number>0</number></property>
+          <item>
+           <widget class="QLabel" name="lblFeedback">
+            <property name="text"><string>就绪</string></property>
+            <property name="styleSheet"><string notr="true">font-size: 12px; color: #2E7D32;</string></property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="statusSpacer">
+            <property name="orientation"><enum>Qt::Horizontal</enum></property>
+            <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QLabel" name="lblCommSeatNo">
+            <property name="text"><string>当前通讯座号: --</string></property>
+            <property name="styleSheet"><string notr="true">font-size: 14px; color: #EF6C00; margin-right: 20px;</string></property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="lblCommParams">
+            <property name="text"><string>串口: -- OFF</string></property>
+            <property name="styleSheet"><string notr="true">font-size: 14px; color: #EF6C00;</string></property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+
+     <widget class="QWidget" name="pageSerial">
+      <layout class="QVBoxLayout" name="pageSerialLayout">
+       <property name="spacing"><number>0</number></property>
+       <property name="leftMargin"><number>0</number></property>
+       <property name="topMargin"><number>0</number></property>
+       <property name="rightMargin"><number>0</number></property>
+       <property name="bottomMargin"><number>0</number></property>
+
+       <item>
+        <widget class="QWidget" name="serialToolbar" native="true">
+         <property name="minimumSize"><size><width>0</width><height>36</height></size></property>
+         <property name="maximumSize"><size><width>16777215</width><height>36</height></size></property>
+         <property name="styleSheet">
+          <string notr="true">#serialToolbar { background: #FFFFFF; border-bottom: 1px solid #E8E4DE; }
+#serialToolbar QCheckBox { color: #5D6B7A; font-size: 12px; }
+#serialToolbar QPushButton { background: #FFFFFF; border: 1px solid #E0DDD7; border-radius: 4px; padding: 0 10px; color: #5D6B7A; font-size: 12px; min-height: 26px; }
+#serialToolbar QPushButton:hover { border-color: #2E7D32; color: #2E7D32; }</string>
+         </property>
+         <layout class="QHBoxLayout" name="serialToolbarLayout">
+          <property name="spacing"><number>8</number></property>
+          <property name="leftMargin"><number>8</number></property>
+          <property name="topMargin"><number>4</number></property>
+          <property name="rightMargin"><number>8</number></property>
+          <property name="bottomMargin"><number>4</number></property>
+          <item>
+           <widget class="QCheckBox" name="chkExpertMode">
+            <property name="text"><string>专家模式</string></property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="chkShowHex">
+            <property name="text"><string>显示Hex</string></property>
+            <property name="checked"><bool>true</bool></property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="serialToolbarSpacer">
+            <property name="orientation"><enum>Qt::Horizontal</enum></property>
+            <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QPushButton" name="btnExportLog">
+            <property name="text"><string>导出日志</string></property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="btnClearSerial">
+            <property name="text"><string>清空</string></property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+
+       <item>
+        <widget class="QTableWidget" name="serialLogTable">
+         <property name="styleSheet">
+          <string notr="true">QTableWidget { border: none; background: #FFFFFF; font-family: Consolas, monospace; font-size: 11px; selection-background-color: #E8F1FF; selection-color: #1F2937; }
+QHeaderView::section { background: #FAFAFA; color: #8C9BAA; border: none; border-bottom: 1px solid #F0EDE8; padding: 2px 4px; font-family: sans-serif; font-size: 11px; }
+QTableWidget::item { border-bottom: 1px solid #F5F3EF; padding: 1px 4px; }
+QTableWidget::item:selected:active { background: #E8F1FF; color: #1F2937; }
+QTableWidget::item:selected:!active { background: #F0F4FA; color: #1F2937; }</string>
+         </property>
+         <property name="alternatingRowColors"><bool>true</bool></property>
+         <property name="showGrid"><bool>false</bool></property>
+         <property name="selectionBehavior"><enum>QAbstractItemView::SelectRows</enum></property>
+         <column><property name="text"><string>时间</string></property></column>
+         <column><property name="text"><string>方向</string></property></column>
+         <column><property name="text"><string>Op</string></property></column>
+         <column><property name="text"><string>命令</string></property></column>
+         <column><property name="text"><string>长度</string></property></column>
+         <column><property name="text"><string>摘要</string></property></column>
+         <column><property name="text"><string>Hex</string></property></column>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+
+     <widget class="QWidget" name="pageHttpClient">
+      <layout class="QVBoxLayout" name="pageHttpClientLayout">
+       <property name="spacing"><number>8</number></property>
+       <property name="leftMargin"><number>8</number></property>
+       <property name="topMargin"><number>8</number></property>
+       <property name="rightMargin"><number>8</number></property>
+       <property name="bottomMargin"><number>8</number></property>
+       <item>
+        <widget class="QTextEdit" name="httpClientLogText">
+         <property name="readOnly"><bool>true</bool></property>
+         <property name="styleSheet">
+          <string notr="true">font-family: Consolas, monospace; background: #FFFFFF; border: 1px solid #E8E4DE; border-radius: 4px;</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="btnClearHttpClient">
+         <property name="text"><string>清空</string></property>
+         <property name="maximumSize"><size><width>90</width><height>30</height></size></property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+
+     <widget class="QWidget" name="pageHttpServer">
+      <layout class="QVBoxLayout" name="pageHttpServerLayout">
+       <property name="spacing"><number>8</number></property>
+       <property name="leftMargin"><number>8</number></property>
+       <property name="topMargin"><number>8</number></property>
+       <property name="rightMargin"><number>8</number></property>
+       <property name="bottomMargin"><number>8</number></property>
+       <item>
+        <widget class="QTextEdit" name="httpServerLogText">
+         <property name="readOnly"><bool>true</bool></property>
+         <property name="styleSheet">
+          <string notr="true">font-family: Consolas, monospace; background: #FFFFFF; border: 1px solid #E8E4DE; border-radius: 4px;</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="btnClearHttpServer">
+         <property name="text"><string>清空</string></property>
+         <property name="maximumSize"><size><width>90</width><height>30</height></size></property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

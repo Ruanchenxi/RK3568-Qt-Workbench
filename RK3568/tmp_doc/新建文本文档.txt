@@ -1,0 +1,616 @@
+docs/regression/serial_chain_runbook.md
+# 串口链路回归 Runbook（阶段1）
+
+## 0. 使用原则
+1. 本文是回归操作手册，不是协议实现文档。
+2. 所有时间参数以源码常量为准；文中数值仅是当前默认参考。
+3. 日志匹配优先看结构化字段：`方向 + 命令 + 摘要 + Hex`。
+4. 方向字段必须使用程序当前格式：`TX>` / `RX<` / `RAW~` / `EVT*` / `WARN!` / `ERR!`。
+
+## 1. 常量基线（以代码常量为准）
+以下名称来自 `KeySerialClient` / 协议定义，回归时请先对齐当前分支源码：
+
+1. `KEY_STABLE_WINDOW_MS`（默认参考：600）
+2. `KEY_QUIET_WINDOW_MS`（默认参考：400）
+3. `KEY_PLACED_HANDSHAKE_DELAY_MS`（默认参考：600）
+4. `STARTUP_PROBE_DELAY_MS`（默认参考：200）
+5. `RETRY_TIMEOUT_MS`（默认参考：1000）
+6. `MAX_RETRIES`（默认参考：3）
+7. `QTASK_RECOVERY_DELAY_MS`（默认参考：500）
+8. `QTASK_RECOVERY_ROUNDS`（默认参考：2）
+
+注意：
+1. 设备现场日志可能出现与源码默认值不同的毫秒数（例如历史版本构建）。
+2. 回归结论以“行为是否一致”优先，不以单个毫秒数硬判定。
+
+---
+
+## SR-01 连接握手（SET_COM -> ACK）
+
+### 准备条件
+1. 串口设备已接入，端口可见。
+2. 页面进入“钥匙管理 > 串口报文”。
+
+### 操作步骤
+1. 建立串口连接（自动或手动）。
+2. 观察是否发 `SET_COM` 并收到 ACK。
+
+### 预期关键字（与现有日志字段一致）
+1. `TX>,SET_COM,2,"SET_COM send"`
+2. `RX<,ACK,2,"ACK for SET_COM"`
+3. `EVT*,-1,--,0,"Verified port: ..."`
+
+### 失败排查
+1. 只有 `TX>` 无 `RX<`：优先检查端口占用、线缆、底座供电。
+2. 连续 `ERR!`：检查是否串口被系统/其他进程抢占。
+
+---
+
+## SR-02 KEY 放上/拿走事件与稳定窗
+
+### 准备条件
+1. SR-01 已通过。
+2. 钥匙先处于未在位状态。
+
+### 操作步骤
+1. 放上钥匙，保持接触稳定。
+2. 观察稳定窗日志。
+3. 拿走钥匙，再次确认事件日志。
+
+### 预期关键字
+1. `EVT*,KEY_EVT,5,"KEY_PLACED (钥匙放上)"`
+2. `EVT*,-1,--,0,"KEY_STABLE window start (key placed, ...ms)"`
+3. `EVT*,-1,--,0,"KEY_STABLE_PRESENT"`
+4. `EVT*,-1,--,0,"钥匙已就绪，可发送 Q_TASK/DEL"`
+5. `EVT*,KEY_EVT,5,"KEY_REMOVED (钥匙拿走)"`
+
+### 失败排查
+1. 放上后长期无 `KEY_STABLE_PRESENT`：检查是否持续噪声或接触抖动。
+2. 放/拿频繁交替：先处理机械接触，再评估协议。
+
+---
+
+## SR-03 噪声窗口与恢复判定（重点）
+
+### 准备条件
+1. SR-02 已通过。
+2. 已开启专家模式（确保 `RAW~` / `WARN!` 可见）。
+
+### 操作步骤
+1. 在 KEY 放上后轻微制造接触抖动。
+2. 观察噪声与重同步日志。
+3. 等待稳定后再执行业务命令。
+
+### 预期关键字
+1. `RAW~,-1,--,0,"RAW_RX +... bytes"`
+2. `WARN!,-1,--,0,"Noise during KEY_STABLE (...)"`（raw chunk/no header 均可）
+3. `WARN!,-1,--,0,"RESYNC ..."`（可能出现）
+4. 最终必须回到 `EVT*,-1,--,0,"KEY_STABLE_PRESENT"`
+
+### 恢复成功判定
+1. 出现 `KEY_STABLE_PRESENT`。
+2. 随后 Q_TASK/DEL 可以继续发送并有有效响应（或按超时路径恢复）。
+
+---
+
+## SR-04 Q_TASK 查询（空任务/无回包）
+
+### 准备条件
+1. KEY 已在位且稳定。
+
+### 操作步骤
+1. 点击“获取任务数”或“读取钥匙票列表”。
+2. 观察发送、重试、结果。
+
+### 预期关键字
+1. `TX>,Q_TASK,17,"Q_TASK(all) send"`
+2. 正常回包：`RX<,Q_TASK,...,"Q_TASK resp: count=..."`
+3. 异常重试：`WARN!,Q_TASK,0,"Retry 1/3 for Q_TASK"`、`Retry 2/3 for Q_TASK`
+
+### 失败排查
+1. 若最终 `ERR!,Q_TASK,0,"Q_TASK timeout after 3 retries, keep port open"`：
+2. 继续检查是否紧跟 `TX>,SET_COM,2,"SET_COM send"` + `RX<,ACK,2,"ACK for SET_COM"`。
+3. 若 SET_COM 可 ACK，说明链路通，问题在业务回包或噪声窗口。
+
+---
+
+## SR-05 Q_TASK 超时恢复链路
+
+### 准备条件
+1. 可复现 Q_TASK 超时。
+
+### 操作步骤
+1. 连续执行 Q_TASK，观察软超时与硬超时。
+2. 观察是否触发恢复握手。
+
+### 预期关键字
+1. `WARN!,Q_TASK,0,"Q_TASK soft-timeout, delay retry .../..."`
+2. `EVT*,-1,--,0,"Q_TASK 暂未响应，...ms 后自动重试(.../...)"`（可能出现）
+3. `ERR!,Q_TASK,0,"Q_TASK timeout after 3 retries, keep port open"`
+4. `WARN!,Q_TASK,0,"Q_TASK timeout: no frame header observed"`（无帧头场景必须出现）
+5. `TX>,SET_COM,2,"SET_COM send"`
+6. `RX<,ACK,2,"ACK for SET_COM"`
+
+### 失败排查
+1. 超时后若直接断开端口而非恢复握手，视为行为回退。
+2. 超时后无 SET_COM 且 KEY 在位，需重点检查状态机分支。
+
+---
+
+## SR-06 DEL 删除验证（闭环成功判据来自本节）
+
+### 准备条件
+1. Q_TASK 可返回任务列表（count > 0）。
+
+### 操作步骤
+1. 执行 DEL。
+2. 观察 ACK。
+3. 再次 Q_TASK 验证数量变化（通常 count=0 或减少）。
+
+### 预期关键字（闭环成功必须出现）
+1. `TX>,DEL,17,"DEL send: ..."`
+2. `RX<,ACK,2,"ACK for DEL"`
+3. DEL 后：`RX<,Q_TASK,...,"Q_TASK resp: count=0"`（或 count 按删除结果变化）
+
+### 失败排查
+1. DEL 无 ACK：先检查 inFlight 冲突与串口写入状态。
+2. DEL ACK 后任务未变化：检查 taskId 与设备侧删除结果。
+
+---
+
+## SR-07 基线导出与比对
+
+### 准备条件
+1. 完成至少一次“异常恢复场景”和一次“成功闭环场景”。
+
+### 操作步骤
+1. 导出串口 CSV。
+2. 对比 `docs/regression/baselines/baseline_success.csv` 与 `docs/regression/baselines/baseline_flaky.csv`。
+
+### 预期关键字
+1. 异常恢复基线应包含：`Q_TASK timeout` -> `SET_COM send` -> `ACK for SET_COM`。
+2. 成功闭环基线应包含：`SET_COM`、`Q_TASK`、`DEL`、以及 DEL 后的 `Q_TASK(count=0)`（或变化符合删除结果）。
+
+### 失败排查
+1. 若 `baseline_success.csv` 以 `#` 开头，表示当前仓库尚无真实闭环成功样本。
+2. 此时先按本 Runbook 的 `SR-01 ~ SR-06` 重新采集一份程序“导出按钮”生成的原始 CSV。
+3. 采集成功判据：必须同时出现 `TX>,...,DEL,17,"DEL send: ..."`、`RX<,...,ACK,2,"ACK for DEL"`、以及 DEL 后一次 `Q_TASK resp: count=0`（或数量按删除结果变化）。
+4. 采集后用真实导出文件覆盖 `docs/regression/baselines/baseline_success.csv`。
+2) docs/architecture/current_callgraph.md（已修正 fence 闭合）
+# 当前调用链与模块定位（阶段1基线）
+
+## 1. 一句话总结
+这是一个 Qt5 Widgets 的钥匙管理应用；当前“钥匙串口主链路”是 `KeyManagePage -> KeySerialClient -> QSerialPort`，并通过 `LogItem` 回流到 UI 日志表格与 CSV 导出。
+
+## 2. 主链路（在用）
+
+```text
+[UI按钮]
+   |
+   v
+KeyManagePage
+  - onQueryTaskCount()
+  - onReadKeyTickets()
+  - onDeleteTicket()
+  - nextOpId() / setCurrentOpId()
+   |
+   v
+KeySerialClient
+  - queryTasksAll()/deleteTask()
+  - ensureBusinessReadyOrDefer()
+  - buildFrame()/sendFrame()
+  - retry/recovery/resync/stability windows
+   |
+   v
+QSerialPort
+  - write()/readyRead()/errorOccurred()
+
+为什么这样分层：
+
+UI 不直接碰协议细节，避免页面类变成“协议巨石”。
+
+协议层统一处理重试、稳定窗、噪声、重同步，便于后续单点优化。
+
+3. 接收与状态回流
+QSerialPort::readyRead
+   |
+   v
+KeySerialClient::onReadyRead()
+   -> tryExtractOneFrame()
+   -> handleFrame()
+      - ACK / NAK / Q_TASK / KEY_EVT
+      - timeout/retry/recovery
+   |
+   +--> signals:
+         tasksUpdated(...)
+         ackReceived(...)
+         nakReceived(...)
+         keyPlacedChanged(...)
+         keyStableChanged(...)
+         timeoutOccurred(...)
+         notice(...)
+         logItemEmitted(LogItem)
+                     |
+                     v
+               KeyManagePage slots
+                     |
+                     v
+             UI标签/表格/状态栏更新
+4. 日志流向（结构化）
+KeySerialClient::emitLog(...)
+   -> LogItem
+   -> logItemEmitted(LogItem)
+   -> KeyManagePage::onLogItemReceived()
+   -> m_logItems（环形缓冲）
+   -> serialLogTable（可过滤显示）
+   -> CSV 导出（全量）
+
+为什么必须保留这个流向：
+
+回归比对依赖稳定的结构化字段（方向/命令/摘要/Hex）。
+
+专家模式可隐藏 RAW/WARN，但导出仍保留全量证据。
+
+5. 主链路与遗留模块边界
+5.1 主链路（当前业务使用）
+
+RK3568/src/keymanagepage.cpp
+
+RK3568/src/keymanagepage.h
+
+RK3568/src/protocol/KeySerialClient.cpp
+
+RK3568/src/protocol/KeySerialClient.h
+
+RK3568/src/protocol/KeyProtocolDefs.h
+
+RK3568/src/protocol/KeyCrc16.h
+
+RK3568/src/protocol/LogItem.h
+
+5.2 遗留/旁路模块（不在当前串口主链路）
+
+RK3568/src/services/SerialService.cpp
+
+RK3568/src/services/SerialService.h
+
+RK3568/src/protocol/KeyCabinetProtocol.cpp
+
+RK3568/src/protocol/KeyCabinetProtocol.h
+
+RK3568/src/protocol/ProtocolBase.h
+
+判断依据（代码级）：
+
+KeyManagePage 直接创建并连接 KeySerialClient 信号槽。
+
+当前钥匙业务请求未经过 SerialService 转发。
+
+KeyCabinetProtocol/ProtocolBase 与当前 7E6C 协议链路分离。
+
+6. 给半年后的自己
+
+改协议行为（稳定窗/重试/恢复）请先看 KeySerialClient，不要在 KeyManagePage 打补丁。
+
+改 UI 展示（按钮、表格、文案）请在 KeyManagePage，不要侵入协议层。
+
+回归优先级：先看结构化日志关键字是否连贯，再看 UI 是否同步更新。
+
+
+---
+
+## 3) `test/serial_test/README.md`
+
+```markdown
+# serial_test 回归说明（阶段1）
+
+## 1. 工具定位
+`test/serial_test` 是协议联调小工具，用于在不依赖主页面复杂业务的情况下验证串口协议收发闭环。
+
+核心价值：
+1. 快速验证 `SET_COM / Q_TASK / DEL / KEY_EVT`。
+2. 快速判定问题在“链路层”还是“业务/UI层”。
+3. 为阶段化改造提供稳定回归入口。
+
+## 2. 代码位置
+1. 工程文件：`test/serial_test/serial_test.pro`
+2. 入口：`test/serial_test/main.cpp`
+3. 窗口实现：`test/serial_test/SerialTestWidget.h`
+4. 窗口实现：`test/serial_test/SerialTestWidget.cpp`
+
+## 3. 编译与运行
+
+### 3.1 Qt Creator（推荐）
+1. 打开 `test/serial_test/serial_test.pro`
+2. 选择 Qt5.15 对应 Kit
+3. Build
+4. Run
+
+### 3.2 命令行（qmake）
+Windows（Qt 命令行环境）：
+1. `cd test/serial_test`
+2. `qmake serial_test.pro`
+3. `nmake` 或 `mingw32-make`
+4. 运行 `serial_test.exe`
+
+Linux：
+1. `cd test/serial_test`
+2. `qmake serial_test.pro`
+3. `make -j`
+4. `./serial_test`
+
+## 4. 协议回归建议流程
+1. 点击“刷新”并选择目标串口。
+2. 点击“连接”，观察 `SET_COM` 与 `ACK for SET_COM`。
+3. 放上钥匙，观察 `KEY_PLACED` 与稳定窗相关日志。
+4. 点击“查询任务”，观察 `Q_TASK` 回包或重试/超时。
+5. 若有任务，点击“删除第一张”，观察 `ACK for DEL` 和后续再查询。
+
+## 5. 必看日志关键字（结构化）
+方向字段：
+1. `TX>`
+2. `RX<`
+3. `RAW~`
+4. `EVT*`
+5. `WARN!`
+6. `ERR!`
+
+高频摘要关键字：
+1. `SET_COM send`
+2. `ACK for SET_COM`
+3. `Q_TASK(all) send`
+4. `Q_TASK resp: count=...`
+5. `Retry 1/3 for Q_TASK`
+6. `Q_TASK timeout after 3 retries, keep port open`
+7. `Q_TASK timeout: no frame header observed`
+8. `KEY_STABLE_PRESENT`
+
+## 6. 为什么会看到“噪声 + 稳定窗”
+1. KEY 放上/拿走时，底座可能产生短暂电气噪声。
+2. 噪声会污染接收缓冲，导致出现 `RAW~` 和 `WARN!`（如 RESYNC）。
+3. 稳定窗（`KEY_STABLE_WINDOW_MS` + `KEY_QUIET_WINDOW_MS`）用于避免在噪声期发业务命令，降低误超时概率。
+
+## 7. 为什么超时后会发 SET_COM
+1. Q_TASK 超时不等于串口断开，常见是会话状态被噪声打乱或设备未返回有效帧。
+2. 发送 `SET_COM` 是“重建协议会话”的轻量恢复动作，不是重启应用。
+3. 若 `SET_COM` 能 ACK，说明链路通，后续应继续排查业务回包与接触稳定性。
+
+## 8. 与基线文件联动
+1. 成功样本：`docs/regression/baselines/baseline_success.csv`
+2. 异常样本：`docs/regression/baselines/baseline_flaky.csv`
+3. 帧级参考：`test/serial_test/golden_frames.md`（payload-level）
+
+说明：
+1. 若 `baseline_success.csv` 以 `#` 开头，则该文件是“待采集占位说明”，当前仓库尚无真实闭环成功样本。
+2. 基线对比时请先确认 success 基线是否已被真实导出文件替换。
+4) test/serial_test/golden_frames.md
+# Payload-Level 回归参考（非外围字段黄金帧）
+
+## 1. 目的
+本文件只固化 **payload-level** 的可回归要素：`Cmd + Data + CRC`。  
+不再把完整帧（含 KeyId/FrameNo/Addr2/Len）作为“硬匹配黄金帧”。
+
+## 2. 重要说明（必须遵守）
+
+### 2.1 外围字段不可硬匹配
+以下字段在真实设备/不同会话中可能变化，不允许作为回归硬匹配条件：
+1. `KeyId`
+2. `FrameNo`
+3. `Addr2`（不同命令本就不同）
+4. `Len`（受 Data 长度影响）
+
+### 2.2 回归比对优先级
+回归必须优先比对：
+1. `Cmd`
+2. `DataLen`
+3. `Data`
+4. `CRC`（按“仅 Cmd+Data，CRC 高字节在前”）
+5. 关键日志关键字（方向字段 + 摘要）
+
+### 2.3 完整帧的定位
+完整帧只能用于“辅助定位”，不可单独作为回归判定依据。
+
+---
+
+## 3. CRC 规则（当前实现）
+1. poly = `0x1021`
+2. init = `0x0000`
+3. 输入 = `Cmd + Data`
+4. 输出落帧顺序 = `CRC_HI` 在前，`CRC_LO` 在后
+
+---
+
+## 4. Payload-Level 参考（可用于硬比对）
+
+### 4.1 SET_COM 请求
+- Cmd: `0x0F`
+- Data: `01`
+- CRC: `1C11`
+
+### 4.2 ACK(SET_COM)
+- Cmd: `0x5A`
+- Data: `0F`
+- CRC: `A720`
+
+### 4.3 Q_TASK(all) 请求
+- Cmd: `0x04`
+- Data: `FF * 16`
+- CRC: `F326`
+
+### 4.4 Q_TASK 响应（count=0）
+- Cmd: `0x04`
+- Data: `00`
+- CRC: `D14C`
+
+### 4.5 DEL 请求（taskId=16字节）
+- Cmd: `0x06`
+- Data: `taskId[16]`
+- 例：taskId 全 0 时 CRC = `1A8C`（仅用于算法校验）
+
+### 4.6 ACK(DEL)
+- Cmd: `0x5A`
+- Data: `06`
+- CRC: `3609`
+
+### 4.7 KEY_EVT 放上/拿走
+- KEY_PLACED: Cmd=`0x11`, Data=`01 00 00 00`, CRC=`D162`
+- KEY_REMOVED: Cmd=`0x11`, Data=`00 00 00 00`, CRC=`44A0`
+
+---
+
+## 5. Q_TASK count=1 结构说明
+
+### 5.1 结构示例（非黄金）
+说明：以下仅用于解释结构，不可作为黄金帧硬匹配。
+
+- Cmd: `0x04`
+- Data:
+  - `count(1)` = `01`
+  - `item0(20)`：
+    - `taskId(16)`
+    - `status(1)`
+    - `type(1)`
+    - `source(1)`
+    - `reserved(1)`
+
+字段解释（必须按此解析）：
+1. `taskId(16)`：任务唯一标识（16字节原始值）
+2. `status(1)`：任务状态
+3. `type(1)`：任务类型
+4. `source(1)`：任务来源
+5. `reserved(1)`：保留字节
+
+### 5.2 真实抓包样例（count=1）
+状态：**当前仓库内可用基线与样本中未出现 `Q_TASK resp: count=1`，因此无法给出可信的真实 count=1 回包帧。**
+
+已核查数据源（以仓库内文件为准）：
+1. `docs/regression/baselines/baseline_success.csv`
+2. `docs/regression/baselines/baseline_flaky.csv`
+3. 仓库内其余可用导出 CSV（如存在）
+
+补录要求（拿到后再升级为“真实样例”）：
+1. 导出一次包含 `RX<,Q_TASK,...,"Q_TASK resp: count=1"` 的原始 CSV（必须为程序导出原件，禁止手工拼接）。
+2. 从该行 Hex 提取真实 `taskId(16)+后4字节(status/type/source/reserved)` 并填入本节。
+3. 同步补充对应业务场景（删除前后 count 变化）。
+
+验收标准（count=1 真实样本）：
+1. 该行必须来自真实导出 CSV 原文（禁止手工拼接）。
+2. 方向字段必须为 `RX<`，命令字段必须为 `Q_TASK`。
+3. `Len` 应满足 `1(count) + 20*N` 的结构关系（N=1 时 DataLen=21）。
+4. Hex 中可拆出：`count=01` + `taskId(16)` + `status/type/source/reserved(4)`。
+5. CRC 校验通过（按 Cmd+Data 计算）。
+
+---
+
+## 6. 完整帧示例（仅辅助阅读，非硬匹配）
+以下行仅用于人工阅读，不可用于自动“全帧字节相等”判定：
+
+1. `7E 6C FF 00 00 00 02 00 0F 01 1C 11`（SET_COM send 示例）
+2. `7E 6C FF 88 00 00 02 00 5A 0F A7 20`（ACK for SET_COM 示例）
+3. `7E 6C 00 8F 00 00 05 00 11 00 00 00 00 44 A0`（KEY_REMOVED 示例）
+5) docs/regression/baselines/baseline_success.csv（占位说明，符合你“不得伪造 success”规则）
+# baseline_success.csv 当前为占位说明，非可执行回归基线。
+# 原因：当前仓库内已核查样本未满足“DEL 闭环成功”判据（缺少 DEL send / ACK for DEL / DEL后Q_TASK结果）。
+# 闭环成功判据（必须同时满足）：
+# 1) TX>,*,DEL,17,"DEL send: ..."
+# 2) RX<,*,ACK,2,"ACK for DEL"
+# 3) DEL 后至少一次 Q_TASK resp: count=0（或 count 按删除结果变化）
+#
+# 如何采集真实 baseline_success.csv（按 SR-01 ~ SR-06）：
+# 1) 连接设备并完成 SET_COM -> ACK。
+# 2) 放上钥匙并等待 KEY_STABLE_PRESENT。
+# 3) 先执行一次 Q_TASK，确认 count > 0（存在可删任务）。
+# 4) 执行 DEL，确认 ACK for DEL。
+# 5) 再执行 Q_TASK，确认 count=0（或数量减少符合删除结果）。
+# 6) 在“串口报文”页点击导出，直接保存程序导出的原始 CSV（不要手工转存）。
+# 7) 用真实导出文件覆盖本文件，并保留列头：
+#    时间,方向,OpId,命令,长度,摘要,Hex
+6) docs/regression/baselines/baseline_flaky.csv（真实异常样本）
+
+这里我按你发来的“表头已修复版本”原样放入（首行必须可读中文）。
+你如果希望我把它完整保留 UTF-8 BOM，仓库文件里可有 BOM；但文本展示里看起来都一样，不影响规则。
+
+时间,方向,OpId,命令,长度,摘要,Hex
+49:01.3,EVT*,-1,--,0,串口已连接: COM10 (115200/8N1),--
+49:01.3,TX>,-1,SET_COM,2,SET_COM send,7E 6C FF 00 00 00 02 00 0F 01 1C 11
+49:01.8,RAW~,-1,--,0,RAW_RX +12 bytes,7E 6C FF 8C 00 00 02 00 5A 0F A7 20
+49:01.8,EVT*,-1,--,0,Verified port: COM10 (cmd=0x5a),--
+49:01.8,RX<,-1,ACK,2,ACK for SET_COM,7E 6C FF 8C 00 00 02 00 5A 0F A7 20
+49:01.8,EVT*,-1,--,0,"SET_COM ACK without KEY_EVT, schedule Q_TASK probe in 200ms",--
+49:02.0,EVT*,-1,--,0,RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0,--
+49:02.0,EVT*,-1,Q_TASK,0,Startup probe Q_TASK send (skip keyPresent gate),--
+49:02.0,TX>,-1,Q_TASK,17,Q_TASK(all) send,7E 6C FF 01 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26
+49:03.0,WARN!,-1,Q_TASK,0,Retry 1/3 for Q_TASK,--
+49:04.1,WARN!,-1,Q_TASK,0,Retry 2/3 for Q_TASK,--
+49:05.0,EVT*,-1,Q_TASK,0,"Startup Q_TASK probe timeout, key remains not-present",--
+49:29.8,RAW~,-1,--,0,RAW_RX +15 bytes,7E 6C FF 8D 00 00 05 00 11 01 00 00 00 D1 62
+49:29.8,EVT*,-1,--,0,RX drain reason=KEY_PLACED drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0,--
+49:29.8,EVT*,-1,KEY_EVT,5,"KEY_PLACED (钥匙放上), drainBytes=0",7E 6C FF 8D 00 00 05 00 11 01 00 00 00 D1 62
+49:29.8,EVT*,-1,--,0,"KEY_STABLE window start (key placed, 600ms)",--
+49:30.1,RAW~,-1,--,0,RAW_RX +6 bytes,00 00 80 E0 F0 E0
+49:30.1,WARN!,-1,--,0,Noise during KEY_STABLE (raw chunk),00 00 80 E0 F0 E0
+49:30.1,WARN!,-1,--,0,Noise during KEY_STABLE (no header),00 00 80 E0 F0
+49:30.1,WARN!,-1,--,0,RESYNC no-header dropBytes=5 recvBufBefore=6 recvBufAfter=1,00 00 80 E0 F0
+49:30.1,RAW~,-1,--,0,RAW_RX +48 bytes,00 10 E0 00 00 00 00 00 00 00 00 18 00 00 20 00 F0 80 10 FC 80 FF FC F0 20 00 3C 00 00 FC 10 00 FE 00 00 81 DE FE F0 38 00 00 08 00 02 00 00 00
+49:30.1,WARN!,-1,--,0,Noise during KEY_STABLE (raw chunk),00 10 E0 00 00 00 00 00 00 00 00 18 00 00 20 00 F0 80 10 FC 80 FF FC F0 20 00 3C 00 00 FC 10 00 FE 00 00 81 DE FE F0 38 00 00 08 00 02 00 00 00
+49:30.1,WARN!,-1,--,0,Noise during KEY_STABLE (no header),E0 00 10 E0 00 00 00 00 00 00 00 00 18 00 00 20 00 F0 80 10 FC 80 FF FC F0 20 00 3C 00 00 FC 10 00 FE 00 00 81 DE FE F0 38 00 00 08 00 02 00 00
+49:30.1,WARN!,-1,--,0,RESYNC no-header dropBytes=48 recvBufBefore=49 recvBufAfter=1,E0 00 10 E0 00 00 00 00 00 00 00 00 18 00 00 20 00 F0 80 10 FC 80 FF FC F0 20 00 3C 00 00 FC 10 00 FE 00 00 81 DE FE F0 38 00 00 08 00 02 00 00
+49:30.2,RAW~,-1,--,0,RAW_RX +34 bytes,00 00 00 F0 02 00 00 00 00 FD CC 7F 00 0C F8 00 00 00 24 C0 FE FC F0 F8 41 00 00 00 00 7C 02 03 21 00
+49:30.2,WARN!,-1,--,0,Noise during KEY_STABLE (raw chunk),00 00 00 F0 02 00 00 00 00 FD CC 7F 00 0C F8 00 00 00 24 C0 FE FC F0 F8 41 00 00 00 00 7C 02 03 21 00
+49:30.2,WARN!,-1,--,0,Noise during KEY_STABLE (no header),00 00 00 00 F0 02 00 00 00 00 FD CC 7F 00 0C F8 00 00 00 24 C0 FE FC F0 F8 41 00 00 00 00 7C 02 03 21
+49:30.2,WARN!,-1,--,0,RESYNC no-header dropBytes=34 recvBufBefore=35 recvBufAfter=1,00 00 00 00 F0 02 00 00 00 00 FD CC 7F 00 0C F8 00 00 00 24 C0 FE FC F0 F8 41 00 00 00 00 7C 02 03 21
+49:30.4,TX>,-1,SET_COM,2,SET_COM send,7E 6C FF 02 00 00 02 00 0F 01 1C 11
+49:30.5,RAW~,-1,--,0,RAW_RX +12 bytes,7E 6C FF 8E 00 00 02 00 5A 0F A7 20
+49:30.5,WARN!,-1,--,0,Noise during KEY_STABLE (resync drop),0
+49:30.5,WARN!,-1,--,0,RESYNC drop 1 bytes failReason=headerShift droppedByteCount=1 nextHeaderIndex=0 recvBufBefore=13,0
+49:30.5,RX<,-1,ACK,2,ACK for SET_COM,7E 6C FF 8E 00 00 02 00 5A 0F A7 20
+49:30.9,EVT*,-1,--,0,KEY_STABLE_PRESENT,--
+49:30.9,EVT*,-1,--,0,钥匙已就绪，可发送 Q_TASK/DEL,--
+49:37.6,RAW~,-1,--,0,RAW_RX +15 bytes,7E 6C 00 8F 00 00 05 00 11 00 00 00 00 44 A0
+49:37.6,EVT*,-1,KEY_EVT,5,KEY_REMOVED (钥匙拿走),7E 6C 00 8F 00 00 05 00 11 00 00 00 00 44 A0
+49:40.2,RAW~,-1,--,0,RAW_RX +15 bytes,7E 6C 00 90 00 00 05 00 11 01 00 00 00 D1 62
+49:40.2,EVT*,-1,--,0,RX drain reason=KEY_PLACED drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0,--
+49:40.2,EVT*,-1,KEY_EVT,5,"KEY_PLACED (钥匙放上), drainBytes=0",7E 6C 00 90 00 00 05 00 11 01 00 00 00 D1 62
+49:40.2,EVT*,-1,--,0,"KEY_STABLE window start (key placed, 600ms)",--
+49:40.8,EVT*,-1,--,0,KEY_STABLE_PRESENT,--
+49:40.8,EVT*,-1,--,0,钥匙已就绪，可发送 Q_TASK/DEL,--
+49:40.8,TX>,-1,SET_COM,2,SET_COM send,7E 6C FF 03 00 00 02 00 0F 01 1C 11
+49:40.9,RAW~,-1,--,0,RAW_RX +12 bytes,7E 6C FF 91 00 00 02 00 5A 0F A7 20
+49:40.9,RX<,-1,ACK,2,ACK for SET_COM,7E 6C FF 91 00 00 02 00 5A 0F A7 20
+50:05.4,EVT*,-1,--,0,RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0,--
+50:05.4,TX>,1,Q_TASK,17,Q_TASK(all) send,7E 6C FF 04 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26
+50:06.4,WARN!,1,Q_TASK,0,Retry 1/3 for Q_TASK,--
+50:07.4,WARN!,1,Q_TASK,0,Retry 2/3 for Q_TASK,--
+50:08.5,WARN!,1,Q_TASK,0,"Q_TASK soft-timeout, delay retry 1/2",--
+50:08.5,EVT*,-1,--,0,Q_TASK 暂未响应，500ms 后自动重试(1/2),--
+50:09.0,EVT*,-1,--,0,RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0,--
+50:09.0,TX>,1,Q_TASK,17,Q_TASK(all) send,7E 6C FF 05 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26
+50:10.0,WARN!,1,Q_TASK,0,Retry 1/3 for Q_TASK,--
+50:11.0,WARN!,1,Q_TASK,0,Retry 2/3 for Q_TASK,--
+50:12.0,WARN!,1,Q_TASK,0,"Q_TASK soft-timeout, delay retry 2/2",--
+50:12.0,EVT*,-1,--,0,Q_TASK 暂未响应，500ms 后自动重试(2/2),--
+50:12.5,EVT*,-1,--,0,RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0,--
+50:12.5,TX>,1,Q_TASK,17,Q_TASK(all) send,7E 6C FF 06 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26
+50:13.5,WARN!,1,Q_TASK,0,Retry 1/3 for Q_TASK,--
+50:14.5,WARN!,1,Q_TASK,0,Retry 2/3 for Q_TASK,--
+50:15.5,ERR!,1,Q_TASK,0,"Q_TASK timeout after 3 retries, keep port open",--
+50:15.5,TX>,1,SET_COM,2,SET_COM send,7E 6C FF 07 00 00 02 00 0F 01 1C 11
+50:15.5,WARN!,1,Q_TASK,0,Q_TASK timeout: no frame header observed,--
+50:15.6,RAW~,1,--,0,RAW_RX +12 bytes,7E 6C FF 92 00 00 02 00 5A 0F A7 20
+50:15.6,RX<,1,ACK,2,ACK for SET_COM,7E 6C FF 92 00 00 02 00 5A 0F A7 20
+（可选）7) docs/regression/baselines/README_encoding.md
+# Baseline CSV 编码说明
+
+## 1. 目标
+让基线 CSV 在常见工具（Excel/VSCode/Notepad++）中打开时列头与中文内容可读，避免出现 `æ¶é´` 这类乱码。
+
+## 2. 推荐统一规范（建议执行）
+1. 所有基线 CSV 统一使用 **UTF-8 BOM**。
+2. 列头统一为：
+   `时间,方向,OpId,命令,长度,摘要,Hex`
+3. 严禁手工改写业务行；仅允许“程序导出原始 CSV”直接覆盖基线文件。
+
+## 3. 校验方法
+1. 用文本编辑器打开，检查首行列头是否为可读中文。
+2. 若 Excel 双击仍乱码：用 Excel “数据 -> 自文本/CSV 导入 -> 编码选择 UTF-8” 打开验证。
+3. 若发现乱码文件，先转换为 UTF-8 BOM，再入库作为基线。

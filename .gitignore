@@ -1,0 +1,34 @@
+﻿# Build directories
+*/build*
+RK3568/build*/
+
+# Compiled object files
+*.obj
+*.o
+
+# Qt generated files
+ui_*.h
+moc_*.cpp
+moc_predefs.h
+qrc_*.cpp
+
+# IDE files
+.qtcreator/
+.vscode/
+*.pro.user
+
+# IDE temporary files
+*.swp
+*.swo
+*~
+
+# Binary files
+*.exe
+*.dll
+*.lib
+*.a
+
+# Build artifacts
+*.ilk
+*.pdb
+*.vc.pdb

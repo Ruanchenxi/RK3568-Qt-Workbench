@@ -1,0 +1,27 @@
+﻿时间,方向,OpId,命令,长度,摘要,Hex
+44:51.6,EVT*,-1,--,0,串口已连接: COM10 (115200/8N1),--
+44:51.6,TX>,-1,SET_COM,2,SET_COM send,7E 6C FF 00 00 00 02 00 0F 01 1C 11
+44:52.2,RAW~,-1,--,0,RAW_RX +12 bytes,7E 6C FF 88 00 00 02 00 5A 0F A7 20
+44:52.2,EVT*,-1,--,0,Verified port: COM10 (cmd=0x5a),--
+44:52.2,RX<,-1,ACK,2,ACK for SET_COM,7E 6C FF 88 00 00 02 00 5A 0F A7 20
+44:52.2,EVT*,-1,--,0,"SET_COM ACK without KEY_EVT, schedule Q_TASK probe in 200ms",--
+44:52.4,EVT*,-1,--,0,RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0,--
+44:52.4,EVT*,-1,Q_TASK,0,Startup probe Q_TASK send (skip keyPresent gate),--
+44:52.4,TX>,-1,Q_TASK,17,Q_TASK(all) send,7E 6C FF 01 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26
+44:53.4,WARN!,-1,Q_TASK,0,Retry 1/3 for Q_TASK,--
+44:54.4,WARN!,-1,Q_TASK,0,Retry 2/3 for Q_TASK,--
+44:55.4,EVT*,-1,Q_TASK,0,"Startup Q_TASK probe timeout, key remains not-present",--
+46:23.9,RAW~,-1,--,0,RAW_RX +15 bytes,7E 6C FF 89 00 00 05 00 11 01 00 00 00 D1 62
+46:23.9,EVT*,-1,--,0,RX drain reason=KEY_PLACED drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0,--
+46:23.9,EVT*,-1,KEY_EVT,5,"KEY_PLACED (钥匙放上), drainBytes=0",7E 6C FF 89 00 00 05 00 11 01 00 00 00 D1 62
+46:23.9,EVT*,-1,--,0,"KEY_STABLE window start (key placed, 600ms)",--
+46:24.5,TX>,-1,SET_COM,2,SET_COM send,7E 6C FF 02 00 00 02 00 0F 01 1C 11
+46:24.6,EVT*,-1,--,0,KEY_STABLE_PRESENT,--
+46:24.6,EVT*,-1,--,0,钥匙已就绪，可发送 Q_TASK/DEL,--
+46:24.7,RAW~,-1,--,0,RAW_RX +12 bytes,7E 6C FF 8A 00 00 02 00 5A 0F A7 20
+46:24.7,RX<,-1,ACK,2,ACK for SET_COM,7E 6C FF 8A 00 00 02 00 5A 0F A7 20
+46:45.8,EVT*,-1,--,0,RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0,--
+46:45.8,TX>,1,Q_TASK,17,Q_TASK(all) send,7E 6C FF 03 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26
+46:45.8,RAW~,1,--,0,RAW_RX +12 bytes,7E 6C 01 03 FF 00 02 00 04 00 D1 4C
+46:45.8,EVT*,-1,Q_TASK,0,Q_TASK RX observed frame header 7E6C,--
+46:45.8,RX<,1,Q_TASK,2,Q_TASK resp: count=0,7E 6C 01 03 FF 00 02 00 04 00 D1 4C

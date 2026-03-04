@@ -1,0 +1,665 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SystemPage</class>
+ <widget class="QWidget" name="SystemPage">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1280</width>
+    <height>608</height>
+   </rect>
+  </property>
+  <property name="styleSheet">
+   <string notr="true">
+/* ========== 系统设置页面样式 ========== */
+#SystemPage {
+    background-color: transparent;
+}
+
+/* 页面标题 */
+#pageTitle {
+    color: #2C3E50;
+    font-size: 24px;
+    font-weight: normal;
+}
+
+/* 标签页切换按钮 - 基础样式 */
+#tabBasic, #tabAdvanced, #tabUserIdentity {
+    background-color: transparent;
+    color: #5D6B7A;
+    font-size: 13px;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    min-width: 80px;
+}
+
+#tabBasic:hover, #tabAdvanced:hover, #tabUserIdentity:hover {
+    background-color: #E8F5E9;
+}
+
+#tabBasic:pressed, #tabAdvanced:pressed, #tabUserIdentity:pressed {
+    background-color: #C8E6C9;
+}
+
+#tabBasic:checked, #tabAdvanced:checked, #tabUserIdentity:checked {
+    background-color: #2E7D32;
+    color: #FFFFFF;
+}
+
+/* 表单面板 */
+#sysFormPanel {
+    background-color: #FFFFFF;
+    border: 1px solid #E8E4DE;
+    border-radius: 12px;
+}
+
+/* 表单标题 */
+#formTitle {
+    color: #2C3E50;
+    font-size: 16px;
+    border: none;
+    background: transparent;
+}
+
+/* 分区标题 - 加粗醒目 */
+#sectionTitle1, .sectionTitle {
+    color: #2C3E50;
+    font-size: 14px;
+    font-weight: bold;
+    background: transparent;
+    border: none;
+    padding: 8px 0;
+}
+
+/* 字段标签 - 无边框纯文字 */
+#field1Label, #field2Label, #field3Label, #field4Label, 
+#field5Label, #field6Label, #field7Label, #field8Label {
+    color: #5D6B7A;
+    font-size: 13px;
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+
+/* 输入框 */
+QLineEdit {
+    background-color: #F5F3EF;
+    border: 1px solid #E8E4DE;
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 14px;
+    color: #2C3E50;
+    min-height: 20px;
+}
+
+/* 下拉框 */
+QComboBox {
+    background-color: #F5F3EF;
+    border: 1px solid #E8E4DE;
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 14px;
+    color: #2C3E50;
+    min-width: 140px;
+    min-height: 20px;
+}
+
+QLineEdit:focus, QComboBox:focus {
+    border-color: #2E7D32;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 30px;
+}
+
+QComboBox::down-arrow {
+    image: none;
+}
+
+/* 刷新按钮 - 点击效果 */
+#refreshBtn {
+    background-color: #FFFFFF;
+    color: #5D6B7A;
+    font-size: 13px;
+    border: 1px solid #E0E0E0;
+    border-radius: 6px;
+    padding: 8px 16px;
+    min-width: 60px;
+}
+
+#refreshBtn:pressed {
+    background-color: #BDBDBD;
+    border-color: #888888;
+    color: #333333;
+}
+
+/* 保存按钮 - 点击效果 */
+#saveBtn {
+    background-color: #2E7D32;
+    color: #FFFFFF;
+    font-size: 13px;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    min-width: 80px;
+}
+
+#saveBtn:pressed {
+    background-color: #145A14;
+}
+
+/* 分隔线 */
+.divider {
+    background-color: #E8E4DE;
+}
+   </string>
+  </property>
+  <layout class="QVBoxLayout" name="mainLayout">
+   <property name="spacing">
+    <number>20</number>
+   </property>
+   <property name="leftMargin">
+    <number>24</number>
+   </property>
+   <property name="topMargin">
+    <number>24</number>
+   </property>
+   <property name="rightMargin">
+    <number>24</number>
+   </property>
+   <property name="bottomMargin">
+    <number>24</number>
+   </property>
+   <item>
+    <layout class="QHBoxLayout" name="pageHeader">
+     <property name="spacing">
+      <number>0</number>
+     </property>
+     <item>
+      <widget class="QLabel" name="pageTitle">
+       <property name="text">
+        <string>系统设置</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="headerSpacer1">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QWidget" name="sysTabs" native="true">
+       <property name="styleSheet">
+        <string notr="true">background-color: #FFFFFF; border: 1px solid #E8E4DE; border-radius: 8px; padding: 4px;</string>
+       </property>
+       <layout class="QHBoxLayout" name="sysTabsLayout">
+        <property name="spacing">
+         <number>4</number>
+        </property>
+        <property name="leftMargin">
+         <number>4</number>
+        </property>
+        <property name="topMargin">
+         <number>4</number>
+        </property>
+        <property name="rightMargin">
+         <number>4</number>
+        </property>
+        <property name="bottomMargin">
+         <number>4</number>
+        </property>
+        <item>
+         <widget class="QPushButton" name="tabBasic">
+          <property name="text">
+           <string>基本配置</string>
+          </property>
+          <property name="checkable">
+           <bool>true</bool>
+          </property>
+          <property name="checked">
+           <bool>true</bool>
+          </property>
+          <property name="autoExclusive">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="tabAdvanced">
+          <property name="text">
+           <string>用户身份采集</string>
+          </property>
+          <property name="checkable">
+           <bool>true</bool>
+          </property>
+          <property name="autoExclusive">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QFrame" name="sysFormPanel">
+     <property name="styleSheet">
+      <string notr="true">background-color: #FFFFFF; border: 1px solid #E8E4DE; border-radius: 12px;</string>
+     </property>
+     <property name="frameShape">
+      <enum>QFrame::StyledPanel</enum>
+     </property>
+     <layout class="QVBoxLayout" name="sysFormPanelLayout">
+      <property name="spacing">
+       <number>0</number>
+      </property>
+      <property name="leftMargin">
+       <number>0</number>
+      </property>
+      <property name="topMargin">
+       <number>0</number>
+      </property>
+      <property name="rightMargin">
+       <number>0</number>
+      </property>
+      <property name="bottomMargin">
+       <number>0</number>
+      </property>
+      <item>
+       <widget class="QWidget" name="formHeader" native="true">
+        <property name="styleSheet">
+         <string notr="true">border-bottom: 1px solid #E8E4DE; background: transparent;</string>
+        </property>
+        <layout class="QHBoxLayout" name="formHeaderLayout">
+         <property name="spacing">
+          <number>12</number>
+         </property>
+         <property name="leftMargin">
+          <number>20</number>
+         </property>
+         <property name="topMargin">
+          <number>16</number>
+         </property>
+         <property name="rightMargin">
+          <number>20</number>
+         </property>
+         <property name="bottomMargin">
+          <number>16</number>
+         </property>
+         <item>
+          <widget class="QLabel" name="formTitle">
+           <property name="text">
+            <string>系统参数设置</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="formHeaderSpacer">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+         <item>
+          <widget class="QPushButton" name="refreshBtn">
+           <property name="styleSheet">
+            <string notr="true">QPushButton { background-color: #FFFFFF; color: #5D6B7A; font-size: 13px; border: 1px solid #E0E0E0; border-radius: 6px; padding: 8px 16px; min-width: 60px; } QPushButton:pressed { background-color: #BDBDBD; border-color: #888888; color: #333333; }</string>
+           </property>
+           <property name="text">
+            <string>刷新</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="saveBtn">
+           <property name="styleSheet">
+            <string notr="true">QPushButton { background-color: #2E7D32; color: #FFFFFF; font-size: 13px; border: none; border-radius: 6px; padding: 8px 16px; min-width: 80px; } QPushButton:pressed { background-color: #145A14; }</string>
+           </property>
+           <property name="text">
+            <string>保存配置</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <widget class="QScrollArea" name="formScrollArea">
+        <property name="styleSheet">
+         <string notr="true">QScrollArea { border: none; background: transparent; }</string>
+        </property>
+        <property name="widgetResizable">
+         <bool>true</bool>
+        </property>
+        <widget class="QWidget" name="formBody">
+         <property name="geometry">
+          <rect>
+           <x>0</x>
+           <y>0</y>
+           <width>1230</width>
+           <height>442</height>
+          </rect>
+         </property>
+         <layout class="QGridLayout" name="gridLayout">
+          <item row="0" column="0">
+           <layout class="QVBoxLayout" name="verticalLayout">
+            <item>
+             <widget class="QLabel" name="field1Label">
+              <property name="styleSheet">
+               <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
+              </property>
+              <property name="text">
+               <string>首页地址</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLineEdit" name="homeUrlEdit">
+              <property name="text">
+               <string>http://192.168.1.100:8080</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="0" column="1">
+           <layout class="QVBoxLayout" name="field2Layout">
+            <property name="spacing">
+             <number>8</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="field2Label">
+              <property name="styleSheet">
+               <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
+              </property>
+              <property name="text">
+               <string>接口地址</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLineEdit" name="apiUrlEdit">
+              <property name="text">
+               <string>http://192.168.1.100:8080/api</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="0">
+           <layout class="QVBoxLayout" name="field3Layout">
+            <property name="spacing">
+             <number>8</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="field3Label">
+              <property name="styleSheet">
+               <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
+              </property>
+              <property name="text">
+               <string>当前站号</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLineEdit" name="stationIdEdit">
+              <property name="text">
+               <string>001</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="1">
+           <layout class="QVBoxLayout" name="field4Layout">
+            <property name="spacing">
+             <number>8</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="field4Label">
+              <property name="styleSheet">
+               <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
+              </property>
+              <property name="text">
+               <string>租户编码</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLineEdit" name="tenantCodeEdit">
+              <property name="text">
+               <string>TENANT001</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="2" column="0" colspan="2">
+           <widget class="QFrame" name="divider1">
+            <property name="minimumSize">
+             <size>
+              <width>0</width>
+              <height>1</height>
+             </size>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>1</height>
+             </size>
+            </property>
+            <property name="styleSheet">
+             <string notr="true">background-color: #E8E4DE;</string>
+            </property>
+            <property name="frameShape">
+             <enum>QFrame::HLine</enum>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="0" colspan="2">
+           <widget class="QLabel" name="sectionTitle1">
+            <property name="styleSheet">
+             <string notr="true">color: #2C3E50; font-size: 14px; font-weight: bold; background: transparent; border: none;</string>
+            </property>
+            <property name="text">
+             <string>串口配置</string>
+            </property>
+           </widget>
+          </item>
+          <item row="4" column="0">
+           <layout class="QVBoxLayout" name="field5Layout">
+            <property name="spacing">
+             <number>8</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="field5Label">
+              <property name="styleSheet">
+               <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
+              </property>
+              <property name="text">
+               <string>钥匙串口</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QComboBox" name="keySerialCombo">
+              <item>
+               <property name="text">
+                <string>COM1</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>COM2</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>COM3</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>COM4</string>
+               </property>
+              </item>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="4" column="1">
+           <layout class="QVBoxLayout" name="field6Layout">
+            <property name="spacing">
+             <number>8</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="field6Label">
+              <property name="styleSheet">
+               <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
+              </property>
+              <property name="text">
+               <string>读卡串口</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QComboBox" name="cardSerialCombo">
+              <item>
+               <property name="text">
+                <string>COM1</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>COM2</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>COM3</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>COM4</string>
+               </property>
+              </item>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="5" column="0">
+           <layout class="QVBoxLayout" name="field7Layout">
+            <property name="spacing">
+             <number>8</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="field7Label">
+              <property name="styleSheet">
+               <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
+              </property>
+              <property name="text">
+               <string>波特率</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QComboBox" name="baudRateCombo">
+              <item>
+               <property name="text">
+                <string>9600</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>19200</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>38400</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>115200</string>
+               </property>
+              </item>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="5" column="1">
+           <layout class="QVBoxLayout" name="field8Layout">
+            <property name="spacing">
+             <number>8</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="field8Label">
+              <property name="styleSheet">
+               <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
+              </property>
+              <property name="text">
+               <string>数据位</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QComboBox" name="dataBitsCombo">
+              <item>
+               <property name="text">
+                <string>7</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>8</string>
+               </property>
+              </item>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="6" column="0" colspan="2">
+           <spacer name="formBottomSpacer">
+            <property name="orientation">
+             <enum>Qt::Vertical</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>20</width>
+              <height>40</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+         </layout>
+        </widget>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

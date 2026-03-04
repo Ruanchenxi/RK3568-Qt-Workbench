@@ -1,0 +1,6 @@
+# 半包 + 粘包场景
+{"op":"open","delayMs":0}
+{"op":"chunk","hex":"7E 6C FF 01 00 00","delayMs":15}
+{"op":"chunk","hex":"02 00 5A 0F A7 20","delayMs":15}
+{"op":"chunk","hex":"7E 6C FF 02 00 00 02 00 5A 0F A7 20 7E 6C FF 03 00 00 02 00 5A 06 36 09","delayMs":20}
+

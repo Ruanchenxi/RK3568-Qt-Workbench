@@ -1,0 +1,6 @@
+# 超时恢复链路示例
+{"op":"open","delayMs":0}
+{"op":"timeout","delayMs":1200}
+{"op":"timeout","delayMs":1200}
+{"op":"chunk","hex":"7E 6C FF 20 00 00 02 00 5A 0F A7 20","delayMs":20}
+
