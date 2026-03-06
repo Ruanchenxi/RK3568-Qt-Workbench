@@ -14,7 +14,10 @@
 
 #include <QWidget>
 #include <QByteArray>
+#include <QJsonObject>
+#include <QList>
 #include <QString>
+#include <QStringList>
 
 class QCheckBox;
 class QLabel;
@@ -55,6 +58,24 @@ private:
     bool doGenerate();
     /// 生成（若未生成）并对比 golden
     void doGenerateAndDiff();
+    /// 解析原始字节流中的多帧传输结果
+    static bool splitFramesFromByteStream(const QByteArray &data,
+                                          QList<QByteArray> &frames,
+                                          QString &errorMsg);
+    /// 纯单行 HEX
+    static QString toHexOneLine(const QByteArray &frame);
+    /// 解析带 [Frame x/N] 标记的 HEX 文件
+    static QByteArray parseHexFileForReplay(const QString &path,
+                                            QStringList &errors);
+    /// 多帧总览文本
+    static QStringList frameOverviewLines(const QList<QByteArray> &frames);
+    /// 多帧复制/保存文本，仅包含帧标记和纯 HEX
+    QString buildFramesPlainHexText() const;
+    /// 多帧分块展示文本
+    QStringList buildFramesDisplayLines() const;
+    /// 从 payload 提取联调关键结果
+    static QStringList payloadSummaryLines(const QJsonObject &ticketObj,
+                                           const QByteArray &payload);
     /// 向 m_output 追加带前缀的文字
     void appendOutput(const QString &text);
     /// 清空并写入（替换全文）
@@ -84,6 +105,8 @@ private:
     QPlainTextEdit *m_output;        ///< 详细结果展示区
 
     // ---- 状态 ----
+    QList<QByteArray> m_lastFrames;      ///< 上次生成的整组帧
+    QStringList       m_lastHexOneLines; ///< 上次生成的单行 HEX 列表
     QByteArray  m_lastFrame;         ///< 上次生成的完整帧（含 CRC）
     QString     m_lastHexOneLine;    ///< 上次生成的单行 HEX（用于剪贴板）
     QString     m_latestHttpJsonPath;///< 最近一次由 HTTP 层落盘的 JSON

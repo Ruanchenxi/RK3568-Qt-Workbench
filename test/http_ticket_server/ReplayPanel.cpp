@@ -22,9 +22,203 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QVBoxLayout>
 #include <QFile>
+#include <QJsonArray>
 #include <QTextStream>
+
+// ────────────────────────────────────────────────────────────
+static QString fmtHex(quint32 v, int width = 4)
+{
+    return QString::fromLatin1("%1").arg(v, width, 16, QChar('0')).toUpper();
+}
+
+// ────────────────────────────────────────────────────────────
+QString ReplayPanel::toHexOneLine(const QByteArray &frame)
+{
+    return ReplayRunner::toHexDump(frame, frame.size());
+}
+
+// ────────────────────────────────────────────────────────────
+QByteArray ReplayPanel::parseHexFileForReplay(const QString &path,
+                                              QStringList &errors)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        errors << QString::fromUtf8("  [ERROR] 无法打开 golden hex 文件: %1  (%2)")
+                  .arg(path).arg(f.errorString());
+        return QByteArray();
+    }
+
+    QStringList keptLines;
+    QStringList lines = QString::fromLatin1(f.readAll()).split(QRegularExpression(R"([\r\n]+)"));
+    f.close();
+
+    for (const QString &line : qAsConst(lines)) {
+        QString trimmed = line.trimmed();
+        if (trimmed.startsWith("[Frame ", Qt::CaseInsensitive))
+            continue;
+        keptLines << line;
+    }
+
+    return ReplayRunner::parseHexString(keptLines.join("\n"), errors);
+}
+
+// ────────────────────────────────────────────────────────────
+bool ReplayPanel::splitFramesFromByteStream(const QByteArray &data,
+                                            QList<QByteArray> &frames,
+                                            QString &errorMsg)
+{
+    frames.clear();
+    int offset = 0;
+    while (offset < data.size()) {
+        if (offset + 10 > data.size()) {
+            errorMsg = QString::fromUtf8("剩余字节不足以解析帧头: offset=%1").arg(offset);
+            return false;
+        }
+        if ((quint8)data[offset] != 0x7E || (quint8)data[offset + 1] != 0x6C) {
+            errorMsg = QString::fromUtf8("帧头不匹配: offset=%1, bytes=%2 %3")
+                    .arg(offset)
+                    .arg(fmtHex((quint8)data[offset], 2))
+                    .arg(fmtHex((quint8)data[offset + 1], 2));
+            return false;
+        }
+
+        quint16 lenField = (quint8)data[offset + 6]
+                         | ((quint16)(quint8)data[offset + 7] << 8);
+        const int frameLen = 10 + lenField;
+        if (frameLen <= 0 || offset + frameLen > data.size()) {
+            errorMsg = QString::fromUtf8("帧长度非法: offset=%1, len=%2, remain=%3")
+                    .arg(offset).arg(frameLen).arg(data.size() - offset);
+            return false;
+        }
+
+        frames.append(data.mid(offset, frameLen));
+        offset += frameLen;
+    }
+
+    return !frames.isEmpty();
+}
+
+// ────────────────────────────────────────────────────────────
+QStringList ReplayPanel::frameOverviewLines(const QList<QByteArray> &frames)
+{
+    QStringList out;
+    out << QString::fromUtf8("  === 帧总览 ===");
+    out << QString::fromUtf8("  frameCount      : %1").arg(frames.size());
+
+    for (int i = 0; i < frames.size(); ++i) {
+        const QByteArray &f = frames[i];
+        if (f.size() < 12) {
+            out << QString::fromUtf8("  frame[%1]       : 帧过短 (%2 B)").arg(i).arg(f.size());
+            continue;
+        }
+        quint8 frameNo = (quint8)f[3];
+        quint16 lenField = (quint8)f[6] | ((quint16)(quint8)f[7] << 8);
+        quint8 cmd = (quint8)f[8];
+        quint16 seq = (quint8)f[9] | ((quint16)(quint8)f[10] << 8);
+        int payloadLen = lenField - 3;
+        quint16 crc = ((quint16)(quint8)f[f.size() - 2] << 8)
+                    | (quint16)(quint8)f[f.size() - 1];
+        out << QString::fromUtf8("  frame[%1]       : FrameNo=0x%2 Cmd=0x%3 Seq=%4 Len=%5 Payload=%6 CRC=0x%7 Total=%8")
+               .arg(i)
+               .arg(fmtHex(frameNo, 2))
+               .arg(fmtHex(cmd, 2))
+               .arg(seq)
+               .arg(lenField)
+               .arg(payloadLen)
+               .arg(fmtHex(crc, 4))
+               .arg(f.size());
+    }
+
+    return out;
+}
+
+// ────────────────────────────────────────────────────────────
+QString ReplayPanel::buildFramesPlainHexText() const
+{
+    if (m_lastFrames.isEmpty())
+        return QString();
+    if (m_lastFrames.size() == 1)
+        return m_lastHexOneLine;
+
+    QStringList out;
+    for (int i = 0; i < m_lastFrames.size(); ++i) {
+        out << QString::fromUtf8("[Frame %1/%2]").arg(i + 1).arg(m_lastFrames.size());
+        out << m_lastHexOneLines.value(i);
+        if (i + 1 < m_lastFrames.size())
+            out << "";
+    }
+    return out.join('\n');
+}
+
+// ────────────────────────────────────────────────────────────
+QStringList ReplayPanel::buildFramesDisplayLines() const
+{
+    QStringList out;
+    for (int i = 0; i < m_lastFrames.size(); ++i) {
+        const QByteArray &frame = m_lastFrames[i];
+        out << QString::fromUtf8("  [Frame %1/%2]  one-line").arg(i + 1).arg(m_lastFrames.size());
+        out << "  " + m_lastHexOneLines.value(i);
+        out << QString::fromUtf8("  [Frame %1/%2]  32B/line").arg(i + 1).arg(m_lastFrames.size());
+        QStringList lines = ReplayRunner::toHexDump(frame, 32).split('\n');
+        for (const QString &line : qAsConst(lines))
+            out << "  " + line;
+        if (i + 1 < m_lastFrames.size())
+            out << "";
+    }
+    return out;
+}
+
+// ────────────────────────────────────────────────────────────
+QStringList ReplayPanel::payloadSummaryLines(const QJsonObject &ticketObj,
+                                             const QByteArray &payload)
+{
+    QStringList out;
+    if (payload.size() < 32)
+        return out;
+
+    auto pb = [&](int idx) -> quint8 { return static_cast<quint8>(payload[idx]); };
+    auto le16 = [&](int off) -> quint16 {
+        return (quint16)pb(off) | ((quint16)pb(off + 1) << 8);
+    };
+    auto le32 = [&](int off) -> quint32 {
+        return (quint32)pb(off)
+             | ((quint32)pb(off + 1) << 8)
+             | ((quint32)pb(off + 2) << 16)
+             | ((quint32)pb(off + 3) << 24);
+    };
+
+    quint32 fileSize = le32(0);
+    quint16 stepNum = le16(26);
+    quint32 taskNameOff = le32(28);
+    const int stringAreaStart = 160 + stepNum * 8;
+
+    out << QString::fromUtf8("  === 联调关键结果 ===");
+    out << QString::fromUtf8("  taskId          : %1").arg(ticketObj.value("taskId").toString());
+    out << QString::fromUtf8("  taskName        : %1").arg(ticketObj.value("taskName").toString());
+    out << QString::fromUtf8("  stepNum         : %1").arg(stepNum);
+    out << QString::fromUtf8("  payloadLen      : %1 (0x%2)")
+           .arg(payload.size()).arg(fmtHex(payload.size(), 4));
+    out << QString::fromUtf8("  fileSize        : %1 (0x%2)")
+           .arg(fileSize).arg(fmtHex(fileSize, 4));
+    out << QString::fromUtf8("  stringAreaStart : %1 (0x%2)")
+           .arg(stringAreaStart).arg(fmtHex(stringAreaStart, 4));
+    out << QString::fromUtf8("  taskNameOff     : %1 (0x%2)")
+           .arg(taskNameOff).arg(fmtHex(taskNameOff, 4));
+
+    for (int i = 0; i < stepNum; ++i) {
+        const int off = 160 + i * 8 + 4;
+        if (off + 3 >= payload.size())
+            break;
+        quint32 displayOff = le32(off);
+        out << QString::fromUtf8("  step[%1].displayOff: %2 (0x%3)")
+               .arg(i).arg(displayOff).arg(fmtHex(displayOff, 4));
+    }
+
+    return out;
+}
 
 // ────────────────────────────────────────────────────────────
 //  构造函数 / UI 搭建
@@ -154,6 +348,8 @@ ReplayPanel::ReplayPanel(QWidget *parent)
 void ReplayPanel::onClearOutput()
 {
     m_output->clear();
+    m_lastFrames.clear();
+    m_lastHexOneLines.clear();
     m_lastFrame.clear();
     m_lastHexOneLine.clear();
     m_btnCopyHex->setEnabled(false);
@@ -346,6 +542,8 @@ void ReplayPanel::previewSelectedJson()
 // ────────────────────────────────────────────────────────────
 bool ReplayPanel::doGenerate()
 {
+    m_lastFrames.clear();
+    m_lastHexOneLines.clear();
     m_lastFrame.clear();
     m_lastHexOneLine.clear();
     m_btnCopyHex->setEnabled(false);
@@ -421,85 +619,59 @@ bool ReplayPanel::doGenerate()
     for (const QString &l : qAsConst(frameLogLines))
         out << "  " + l;
 
-    m_lastFrame = frames[0];
-
-    auto b = [&](int idx) -> quint8 {
-        return static_cast<quint8>(m_lastFrame[idx]);
-    };
-    quint16 lenField = (quint16)b(6) | ((quint16)b(7) << 8);
-    int payloadLen = lenField - 3;
-    quint32 fileSize = (quint32)b(11)
-                     | ((quint32)b(12) << 8)
-                     | ((quint32)b(13) << 16)
-                     | ((quint32)b(14) << 24);
-    quint16 stepNum = (quint16)b(37) | ((quint16)b(38) << 8);
-    quint32 taskNameOff = (quint32)b(39)
-                        | ((quint32)b(40) << 8)
-                        | ((quint32)b(41) << 16)
-                        | ((quint32)b(42) << 24);
-    int stringAreaStart = 160 + stepNum * 8;
-    quint16 crc = ((quint16)b(m_lastFrame.size() - 2) << 8)
-                | (quint16)b(m_lastFrame.size() - 1);
+    m_lastFrames = frames;
+    for (const QByteArray &frame : qAsConst(m_lastFrames))
+        m_lastHexOneLines << toHexOneLine(frame);
+    m_lastFrame = m_lastFrames.first();
+    m_lastHexOneLine = m_lastHexOneLines.first();
 
     out << SEP;
-    out << QString::fromUtf8("  === 联调关键结果 ===");
-    out << QString::fromUtf8("  taskId          : %1").arg(ticketObj.value("taskId").toString());
-    out << QString::fromUtf8("  taskName        : %1").arg(ticketObj.value("taskName").toString());
-    out << QString::fromUtf8("  stepNum         : %1").arg(stepNum);
-    out << QString::fromUtf8("  payloadLen      : %1 (0x%2)")
-           .arg(payloadLen).arg(payloadLen, 4, 16, QChar('0')).toUpper();
-    out << QString::fromUtf8("  frameLen        : %1 (0x%2)")
-           .arg(m_lastFrame.size()).arg(m_lastFrame.size(), 4, 16, QChar('0')).toUpper();
-    out << QString::fromUtf8("  Len             : %1 (0x%2)")
-           .arg(lenField).arg(lenField, 4, 16, QChar('0')).toUpper();
-    out << QString::fromUtf8("  fileSize        : %1 (0x%2)")
-           .arg(fileSize).arg(fileSize, 4, 16, QChar('0')).toUpper();
-    out << QString::fromUtf8("  stringAreaStart : %1 (0x%2)")
-           .arg(stringAreaStart).arg(stringAreaStart, 4, 16, QChar('0')).toUpper();
-    out << QString::fromUtf8("  taskNameOff     : %1 (0x%2)")
-           .arg(taskNameOff).arg(taskNameOff, 4, 16, QChar('0')).toUpper();
-    for (int i = 0; i < stepNum; ++i) {
-        const int dispPos = 11 + 160 + i * 8 + 4;
-        if (dispPos + 3 >= m_lastFrame.size())
-            break;
-        quint32 displayOff = (quint32)b(dispPos)
-                           | ((quint32)b(dispPos + 1) << 8)
-                           | ((quint32)b(dispPos + 2) << 16)
-                           | ((quint32)b(dispPos + 3) << 24);
-        out << QString::fromUtf8("  step[%1].displayOff: %2 (0x%3)")
-               .arg(i).arg(displayOff)
-               .arg(displayOff, 4, 16, QChar('0')).toUpper();
-    }
-    out << QString::fromUtf8("  CRC             : 0x%1")
-           .arg(crc, 4, 16, QChar('0')).toUpper();
+    QStringList payloadSummary = payloadSummaryLines(ticketObj, enc.payload);
+    for (const QString &line : qAsConst(payloadSummary))
+        out << line;
+    out << QString::fromUtf8("  frameCount      : %1").arg(m_lastFrames.size());
+
+    out << SEP;
+    QStringList overviewLines = frameOverviewLines(m_lastFrames);
+    for (const QString &line : qAsConst(overviewLines))
+        out << line;
 
     // ── 4. 字段摘要 ──────────────────────────────────────────
     out << SEP;
-    out << QString::fromUtf8("  === 字段摘要 ===");
-    QStringList summary = ReplayRunner::frameFieldSummary(m_lastFrame);
-    for (const QString &s : qAsConst(summary))
-        out << "  " + s;
+    if (m_lastFrames.size() == 1) {
+        out << QString::fromUtf8("  === 字段摘要 ===");
+        QStringList summary = ReplayRunner::frameFieldSummary(m_lastFrame);
+        for (const QString &s : qAsConst(summary))
+            out << "  " + s;
+    } else {
+        out << QString::fromUtf8("  === 多帧提示 ===");
+        out << QString::fromUtf8("  当前结果为多帧，请按 Frame 1/N, Frame 2/N 顺序发送。");
+        out << QString::fromUtf8("  单帧字段摘要不再只取第一帧，以免误导。");
+    }
 
     // ── 5. 完整 HEX ──────────────────────────────────────────
     out << SEP;
-    out << QString::fromUtf8("  === 完整 HEX（%1 B）===").arg(m_lastFrame.size());
-
-    // 单行（用于复制到串口助手）
-    m_lastHexOneLine = ReplayRunner::toHexDump(m_lastFrame, m_lastFrame.size());
-    out << "  " + m_lastHexOneLine;
-    out << "";
-    out << QString::fromUtf8("  （分行，每行32B）");
-    QStringList multiLine = ReplayRunner::toHexDump(m_lastFrame, 32).split('\n');
-    for (const QString &l : qAsConst(multiLine))
-        out << "  " + l;
+    if (m_lastFrames.size() == 1)
+        out << QString::fromUtf8("  === 完整 HEX（%1 B）===").arg(m_lastFrame.size());
+    else
+        out << QString::fromUtf8("  === 完整 HEX（多帧，共 %1 帧）===").arg(m_lastFrames.size());
+    QStringList displayLines = buildFramesDisplayLines();
+    for (const QString &line : qAsConst(displayLines))
+        out << line;
 
     setOutput(out.join('\n'));
 
     m_btnCopyHex->setEnabled(true);
     m_btnSaveHex->setEnabled(true);
 
-    m_statusLabel->setText(
-        QString::fromUtf8("✅ 生成成功  |  帧长 = %1 B").arg(m_lastFrame.size()));
+    if (m_lastFrames.size() == 1) {
+        m_statusLabel->setText(
+            QString::fromUtf8("✅ 生成成功  |  单帧 %1 B").arg(m_lastFrame.size()));
+    } else {
+        m_statusLabel->setText(
+            QString::fromUtf8("✅ 生成成功  |  多帧 %1 帧（Frame1=%2 B）")
+                .arg(m_lastFrames.size()).arg(m_lastFrames.first().size()));
+    }
     m_statusLabel->setStyleSheet("color:green; font-weight:bold; padding:4px;");
     return true;
 }
@@ -528,7 +700,7 @@ void ReplayPanel::doGenerateAndDiff()
 
     // 解析 golden
     QStringList parseErrors;
-    QByteArray golden = ReplayRunner::parseHexFile(goldenPath, parseErrors);
+    QByteArray golden = parseHexFileForReplay(goldenPath, parseErrors);
     for (const QString &e : qAsConst(parseErrors))
         appendOutput(e);
 
@@ -539,44 +711,70 @@ void ReplayPanel::doGenerateAndDiff()
         return;
     }
 
-    // Golden 字段摘要
-    appendOutput(QString::fromUtf8("\n  Golden 字段摘要："));
-    QStringList gsum = ReplayRunner::frameFieldSummary(golden);
-    for (const QString &s : qAsConst(gsum))
-        appendOutput("    " + s);
+    QList<QByteArray> goldenFrames;
+    QString splitError;
+    if (!splitFramesFromByteStream(golden, goldenFrames, splitError)) {
+        appendOutput(QString::fromUtf8("❌ Golden 多帧解析失败: %1").arg(splitError));
+        m_statusLabel->setText(QString::fromUtf8("❌ Golden 多帧解析失败"));
+        m_statusLabel->setStyleSheet("color:red; font-weight:bold; padding:4px;");
+        return;
+    }
 
-    // Diff
-    ReplayRunner::DiffReport dr = ReplayRunner::buildDiff(m_lastFrame, golden);
-    int payloadLen = ((int)(quint8)m_lastFrame[6] | ((int)(quint8)m_lastFrame[7] << 8)) - 3;
-    appendOutput(QString::fromUtf8("  frameLen=%1  payloadLen=%2")
-                 .arg(m_lastFrame.size()).arg(payloadLen));
-    appendOutput("");
-    for (const QString &l : qAsConst(dr.lines))
-        appendOutput(l);
+    appendOutput(QString::fromUtf8("\n  Golden 帧总览："));
+    QStringList goldenOverview = frameOverviewLines(goldenFrames);
+    for (const QString &line : qAsConst(goldenOverview))
+        appendOutput(line);
 
-    if (dr.pass) {
+    appendOutput(QString::fromUtf8("\n  === 多帧 DIFF ==="));
+    appendOutput(QString::fromUtf8("  生成帧数=%1  Golden帧数=%2")
+                 .arg(m_lastFrames.size()).arg(goldenFrames.size()));
+
+    bool pass = true;
+    QString firstDiff;
+
+    if (m_lastFrames.size() != goldenFrames.size()) {
+        pass = false;
+        firstDiff = QString::fromUtf8("帧数不一致：生成=%1 Golden=%2")
+                .arg(m_lastFrames.size()).arg(goldenFrames.size());
+    }
+
+    const int compareCount = qMin(m_lastFrames.size(), goldenFrames.size());
+    int globalOffsetBase = 0;
+    for (int i = 0; i < compareCount; ++i) {
+        const QByteArray &genFrame = m_lastFrames[i];
+        const QByteArray &goldFrame = goldenFrames[i];
+        appendOutput(QString::fromUtf8("  [Frame %1/%2] generated=%3B golden=%4B")
+                     .arg(i + 1).arg(compareCount)
+                     .arg(genFrame.size()).arg(goldFrame.size()));
+
+        ReplayRunner::DiffReport dr = ReplayRunner::buildDiff(genFrame, goldFrame);
+        if (!dr.pass && pass) {
+            pass = false;
+            if (!dr.diffs.isEmpty()) {
+                const ReplayRunner::DiffRange &d = dr.diffs[0];
+                quint8 genB = (d.start < genFrame.size()) ? (quint8)genFrame[d.start] : 0;
+                quint8 golB = (d.start < goldFrame.size()) ? (quint8)goldFrame[d.start] : 0;
+                firstDiff = QString::fromUtf8("首差异: Frame %1/%2, frameOffset=%3, globalOffset=%4, 生成=%5, 期望=%6, 字段=%7")
+                        .arg(i + 1).arg(m_lastFrames.size())
+                        .arg(d.start).arg(globalOffsetBase + d.start)
+                        .arg(fmtHex(genB, 2)).arg(fmtHex(golB, 2)).arg(d.fieldHint);
+            } else {
+                firstDiff = QString::fromUtf8("首差异: Frame %1/%2 长度不一致").arg(i + 1).arg(m_lastFrames.size());
+            }
+        }
+        globalOffsetBase += genFrame.size();
+    }
+
+    if (pass) {
+        appendOutput(QString::fromUtf8("  ✅ PASS — 多帧序列全部一致（包括 CRC）"));
         m_statusLabel->setText(
-            QString::fromUtf8("✅ PASS — frameLen=%1 payloadLen=%2，所有字节完全一致（包括 CRC）")
-                .arg(m_lastFrame.size()).arg(payloadLen));
+            QString::fromUtf8("✅ PASS — %1 帧全部一致（包括 CRC）").arg(m_lastFrames.size()));
         m_statusLabel->setStyleSheet(
             "color:green; font-weight:bold; font-size:13px; padding:4px;");
     } else {
-        QString firstDiff;
-        if (!dr.diffs.isEmpty()) {
-            const auto &d = dr.diffs[0];
-            quint8 genB = (d.start < m_lastFrame.size())
-                          ? static_cast<quint8>(m_lastFrame[d.start]) : 0;
-            quint8 golB = (d.start < golden.size())
-                          ? static_cast<quint8>(golden[d.start]) : 0;
-            firstDiff = QString::fromUtf8("首差异 offset=%1  生成=%2  期望=%3  字段=%4")
-                .arg(d.start)
-                .arg(QString::fromLatin1("%1").arg(genB, 2, 16, QChar('0')).toUpper())
-                .arg(QString::fromLatin1("%1").arg(golB, 2, 16, QChar('0')).toUpper())
-                .arg(d.fieldHint);
-        }
+        appendOutput(QString::fromUtf8("  ❌ FAIL — %1").arg(firstDiff));
         m_statusLabel->setText(
-            QString::fromUtf8("❌ FAIL — frameLen=%1 payloadLen=%2 | %3")
-                .arg(m_lastFrame.size()).arg(payloadLen).arg(firstDiff));
+            QString::fromUtf8("❌ FAIL — %1").arg(firstDiff));
         m_statusLabel->setStyleSheet(
             "color:red; font-weight:bold; font-size:11px; padding:4px;");
     }
@@ -591,17 +789,21 @@ void ReplayPanel::onDiff()   { doGenerateAndDiff(); }
 
 void ReplayPanel::onCopyHex()
 {
-    if (m_lastHexOneLine.isEmpty()) return;
-    QApplication::clipboard()->setText(m_lastHexOneLine);
-    m_statusLabel->setText(
-        QString::fromUtf8("📋  已复制 HEX 到剪贴板（%1 B，可直接粘贴到串口助手）")
-            .arg(m_lastFrame.size()));
+    if (m_lastFrames.isEmpty()) return;
+    QApplication::clipboard()->setText(buildFramesPlainHexText());
+    if (m_lastFrames.size() == 1) {
+        m_statusLabel->setText(
+            QString::fromUtf8("📋  已复制 1 帧 HEX 到剪贴板"));
+    } else {
+        m_statusLabel->setText(
+            QString::fromUtf8("📋  已复制 %1 帧 HEX 到剪贴板").arg(m_lastFrames.size()));
+    }
     m_statusLabel->setStyleSheet("color:#006699; font-weight:bold; padding:4px;");
 }
 
 void ReplayPanel::onSaveHex()
 {
-    if (m_lastFrame.isEmpty()) return;
+    if (m_lastFrames.isEmpty()) return;
 
     QString path = m_outputPathEdit->text().trimmed();
     if (path.isEmpty()) {
@@ -622,26 +824,50 @@ void ReplayPanel::onSaveHex()
         return;
     }
     QTextStream ts(&f);
-    ts << ReplayRunner::toHexDump(m_lastFrame, 32) << "\n";
+    ts << buildFramesPlainHexText() << "\n";
     f.close();
 
-    // 同时写 .bin
-    QString binPath = QFileInfo(path).dir().filePath(
-        QFileInfo(path).completeBaseName() + ".bin");
-    QFile bf(binPath);
-    if (bf.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        bf.write(m_lastFrame);
-        bf.close();
+    QStringList savedBinPaths;
+    if (m_lastFrames.size() == 1) {
+        QString binPath = QFileInfo(path).dir().filePath(
+            QFileInfo(path).completeBaseName() + ".bin");
+        QFile bf(binPath);
+        if (bf.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            bf.write(m_lastFrame);
+            bf.close();
+            savedBinPaths << binPath;
+        }
+    } else {
+        for (int i = 0; i < m_lastFrames.size(); ++i) {
+            QString binPath = QFileInfo(path).dir().filePath(
+                QFileInfo(path).completeBaseName() + QString("_frame%1.bin").arg(i));
+            QFile bf(binPath);
+            if (bf.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                bf.write(m_lastFrames[i]);
+                bf.close();
+                savedBinPaths << binPath;
+            }
+        }
     }
 
-    m_statusLabel->setText(
-        QString::fromUtf8("💾  已保存 HEX: %1  BIN: %2")
-            .arg(QDir::toNativeSeparators(path))
-            .arg(QDir::toNativeSeparators(binPath)));
+    if (m_lastFrames.size() == 1) {
+        m_statusLabel->setText(
+            QString::fromUtf8("💾  已保存 HEX/BIN: %1")
+                .arg(QDir::toNativeSeparators(path)));
+    } else {
+        m_statusLabel->setText(
+            QString::fromUtf8("💾  已保存多帧 HEX: %1  |  每帧 BIN 已分别保存")
+                .arg(QDir::toNativeSeparators(path)));
+    }
     m_statusLabel->setStyleSheet("color:#006699; font-weight:bold; padding:4px;");
 
     appendOutput("\n" + QString::fromUtf8("  HEX 已保存: %1").arg(path));
-    appendOutput(QString::fromUtf8("  BIN 已保存: %1").arg(binPath));
+    if (savedBinPaths.isEmpty()) {
+        appendOutput(QString::fromUtf8("  BIN 未保存"));
+    } else {
+        for (const QString &binPath : qAsConst(savedBinPaths))
+            appendOutput(QString::fromUtf8("  BIN 已保存: %1").arg(binPath));
+    }
 }
 
 // ────────────────────────────────────────────────────────────
