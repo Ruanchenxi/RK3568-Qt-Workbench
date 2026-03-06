@@ -1,0 +1,28 @@
+{
+  "data": {
+    "createTime": "202603061528",
+    "planTime": "202603071529",
+    "stepNum": 2,
+    "steps": [
+      {
+        "innerCode": 1,
+        "lockerOperate": 3,
+        "rfid": "C9:04:99:A0:02",
+        "stepDetail": "将411断路器合上并执行锁定",
+        "stepId": "2029821498548482049",
+        "stepType": 1
+      },
+      {
+        "innerCode": 2,
+        "lockerOperate": 3,
+        "rfid": "C9:04:99:A0:02",
+        "stepDetail": "将414断路器合上并执行锁定",
+        "stepId": "2029821498611396610",
+        "stepType": 1
+      }
+    ],
+    "taskId": "2029821497986445313",
+    "taskName": "SD-2026-03-06-000003-检修完成-大横琴B2低压配电房-411断路器,414断路器",
+    "taskType": 1
+  }
+}

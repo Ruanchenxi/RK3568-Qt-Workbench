@@ -1,0 +1,36 @@
+{
+  "data": {
+    "createTime": "202603061607",
+    "planTime": "202603071608",
+    "stepNum": 3,
+    "steps": [
+      {
+        "innerCode": 1,
+        "lockerOperate": 2,
+        "rfid": "C9:04:99:A0:02",
+        "stepDetail": "解除锁定，将411断路器操作到隔离位置并执行锁定",
+        "stepId": "2029831178234556417",
+        "stepType": 1
+      },
+      {
+        "innerCode": 2,
+        "lockerOperate": 2,
+        "rfid": "C9:04:99:A0:02",
+        "stepDetail": "解除锁定，将414断路器操作到隔离位置并执行锁定",
+        "stepId": "2029831178268110850",
+        "stepType": 1
+      },
+      {
+        "innerCode": 9999,
+        "lockerOperate": 2,
+        "rfid": "C9:04:9B:60:82",
+        "stepDetail": "解除锁定，将9999开关操作到隔离位置并执行锁定",
+        "stepId": "2029831178268110851",
+        "stepType": 1
+      }
+    ],
+    "taskId": "2029831177731239937",
+    "taskName": "TD-2026-03-06-000004-其他情况-大横琴B2低压配电房-411断路器,414断路器,9999间隔",
+    "taskType": 0
+  }
+}

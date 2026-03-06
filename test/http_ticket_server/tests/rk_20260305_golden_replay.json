@@ -1,0 +1,20 @@
+{
+    "data": {
+        "taskId": "2029450115956056065",
+        "taskName": "TD-2026-03-05-000006-设备检修-大横琴B2低压配电房-411断路器",
+        "createTime": "202603050653",
+        "planTime": "202603060653",
+        "stepNum": 1,
+        "taskType": 0,
+        "steps": [
+            {
+                "innerCode": 1,
+                "lockerOperate": 2,
+                "stepDetail": "解除锁定，将411断路器操作到隔离位置并执行锁定",
+                "stepId": "2029450116023164928",
+                "stepType": 1,
+                "rfid": ""
+            }
+        ]
+    }
+}

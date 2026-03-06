@@ -1,0 +1,208 @@
+本文档提取自嵌入式 Qt 项目完整聊天记录，由 AI 自主筛选核心信息与有效实测报文，可直接用于新 AI 接手开发、测试与验证，所有内容均来自原聊天记录实测与共识。
+==========================================
+【模块 1：项目基础信息】
+- 项目名称：http_ticket_server（复刻原产品：工作台 Web 传票 JSON → 本地 HTTP → 操作票二进制编码 → 串口票据帧 → Golden 对比/回放）
+- 核心目标：
+  - 在 Windows 开发环境先完成闭环：PowerShell/工作台 POST JSON → 本地 8888 接口接收 → 记录/落盘 → 编码为票据帧 HEX → Golden 对比 PASS
+  - 后续部署到 RK3588：与原产品同机运行，接入工作台点击“钥匙传票”触发真实下发
+- 技术栈：Qt 5.15.x（QtWebEngine 嵌入工作台；QtNetwork/QTcpServer 本地 HTTP；C++；GBK 编码处理；CRC16 算法）
+- 核心功能（完成状态，按推进阶段）：
+  - Step1：独立 HTTP Server 监听 127.0.0.1:8888，支持 POST 接收 JSON 并返回 {success,msg} → 已完成
+  - Step2：HTTP 服务端报文日志（时间戳/Origin/User-Agent/pretty JSON/落盘 logs/http_ticket_*.json）→ 已完成
+  - Step3：CORS + OPTIONS 预检兼容工作台 WebEngine；兼容 body 可能带 data 外壳 → 已完成
+  - Step4.1：生成“传票串口帧”HEX（不写串口），输出 Len/CRC/分帧信息 → 已完成
+  - Stage5.1+5.2：JSON→payload 编码（version/taskId/stepNum/time/stepTable/GBK 字符串区 + 偏移回填）→ 已完成
+  - Stage5.4：Golden 回放/对比 Runner（--replay / --golden / --out），可 PASS 到原产品抓包帧 → 已完成
+  - Replay / Diff Tab：支持“使用最新收到的 JSON”与“自动跟随最新 HTTP JSON” → 已完成
+  - Golden 工具 Tab：支持多步样本解析展示 → 已完成
+  - 真机 ACK：串口助手发送帧后收到设备 ACK 回包 → 已完成（仅确认链路）
+- 硬性约束：
+  - 字符串区：GBK 编码 + 00 结尾；VNC 复制中文可能出现 ????，以帧中 GBK 字节为准
+  - 偏移字段：4 字节小端回填（taskNameOff/displayOff 等）
+  - 时间字段：BCD 编码；当源时间仅到分钟时，末两字节使用 FF FF（以实测 PASS 版本为准）
+  - Golden 规则：逐字节完全一致（含 CRC）才算 PASS
+==========================================
+【模块 2：串口协议核心规则】
+- 基础通信参数：115200，8N1，无校验，无流控
+- 外层帧结构（传票/操作票命令族）：
+  - SOF(2)=7E 6C
+  - KeyId(1)
+  - FrameNo(1)
+  - Station(1)
+  - Device(1)
+  - Len(2,LE)：长度=Cmd(1)+Seq(2)+PayloadLen
+  - Cmd(1)：0x03 单帧/最后帧；0x83 表示还有后续帧（bit7=1）
+  - Seq(2,LE)：数据帧号，从 0 开始每帧+1
+  - Payload(n)
+  - CRC(2,BE)：对 [Cmd][Seq][Payload] 计算；帧尾写 CRCHi CRCLo；初值 0
+- 内层 payload（操作票文件数据）当前已验证布局：
+  - version(2)：01 11
+  - reserved(2)：00 00
+  - taskId(raw)(16)：当前实测为 uint64(LE,8B) + 00×8
+  - stationId(1)
+  - ticketAttr(1)：00=普通票
+  - stepNum(2,LE)
+  - taskNameOff(4,LE)：回填 taskName 字符串起始偏移
+  - createTime(8,BCD)：缺秒时写 FF FF
+  - planTime(8,BCD)：同上
+  - auth(48)：当前实现 FF×48（TODO）
+  - reserved(剩余固定区)：按长度填充 FF
+  - stepTableStart = p[160]
+  - 每步固定 8B：innerCode(2,LE) + lockerOp(1) + state(1) + displayOff(4,LE 回填)
+  - stringAreaStart = 160 + 8 * stepNum
+  - 字符串区：stepDetail[0..N-1](GBK+00) + taskName(GBK+00)
+- Golden 验证规则（Stage5.4）：
+  - 输入：sample_http.json（含中文） + sample_golden.hex（原产品抓包帧）
+  - 输出：生成帧 hex 并与 golden 逐字节 diff
+  - PASS：所有字节一致（含 CRC）
+  - FAIL：只输出首差异 offset + 字段标签 + 差异片段（首差异 + 关键字段标注）
+==========================================
+【模块 3：有效实测报文记录（AI 自主提取，标注类型）】
+- 说明：按 单步票 → 多步票 → ACK 回包 顺序；同类按时间先后；无则标注“该模块无有效信息”。
+
+一）单步票（原产品实测抓包，286B）
+- 报文类型：单步票（CMD=0x03，单帧/最后帧）
+- 对应 HTTP JSON payload（中文正确版）：该条在聊天记录中仅出现部分字段（createTime/planTime/stepDetail/taskName），其余字段缺失；无法从聊天记录中恢复完整 JSON，故标注为“缺”。
+  - 已知字段：createTime=202603040859；planTime=202603050929；stepDetail=解除锁定，将411断路器操作到隔离位置并执行锁定；taskName=TD-2026-03-04-000004-设备检修-大横琴B2低压配电房-411断路器
+- 完整 HEX（286B，每行 32 字节）：
+7E 6C 00 00 01 00 14 01 03 00 00 11 01 00 00 01 11 00 00 01 10 EF A9 69 E1 28 1C 00 00 00 00 00
+00 00 00 01 00 01 00 D6 00 00 00 20 26 03 04 08 59 FF FF 20 26 03 05 09 29 FF FF FF FF FF FF FF
+FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF
+FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF
+FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF
+FF FF FF FF FF FF FF FF FF FF FF 01 00 02 00 A8 00 00 00 BD E2 B3 FD CB F8 B6 A8 A3 AC BD AB 34
+31 31 B6 CF C2 B7 C6 F7 B2 D9 D7 F7 B5 BD B8 F4 C0 EB CE BB D6 C3 B2 A2 D6 B4 D0 D0 CB F8 B6 A8
+00 54 44 2D 32 30 32 36 2D 30 33 2D 30 34 2D 30 30 30 30 30 34 2D C9 E8 B1 B8 BC EC D0 DE 2D B4
+F3 BA E1 C7 D9 42 32 B5 CD D1 B9 C5 E4 B5 E7 B7 BF 2D 34 31 31 B6 CF C2 B7 C6 F7 00 48 EA
+- 关键信息标注：
+  - Len(LE)=0x0114；Cmd=0x03；Seq=0000；CRC(BE)=0x48EA
+  - payload 起始 4B fileSize=11 01 00 00（=273），与 Len=276 的关系：276=1(Cmd)+2(Seq)+273(payloadLen)
+  - taskNameOff= D6 00 00 00（=214）；displayOff= A8 00 00 00（=168）
+
+二）单步票（Golden PASS 样本，286B）
+- 报文类型：单步票（CMD=0x03，单帧/最后帧）
+- 对应 HTTP JSON payload（中文正确版）：
+{
+    "data": {
+        "createTime": "202603050653",
+        "planTime": "202603060653",
+        "stepNum": 1,
+        "steps": [
+            {
+                "innerCode": 1,
+                "lockerOperate": 2,
+                "rfid": "C9:04:99:A0:02",
+                "stepDetail": "解除锁定，将411断路器操作到隔离位置并执行锁定",
+                "stepId": "2029450116409040898",
+                "stepType": 1
+            }
+        ],
+        "taskId": "2029450115956056065",
+        "taskName": "TD-2026-03-05-000006-设备检修-大横琴B2低压配电房-411断路器",
+        "taskType": 0
+    }
+}
+- 完整 HEX（286B，每行 32 字节）：
+7E 6C 00 00 01 00 14 01 03 00 00 11 01 00 00 01 11 00 00 01 A0 EF C2 20 0E 2A 1C 00 00 00 00 00
+00 00 00 01 00 01 00 D6 00 00 00 20 26 03 05 06 53 FF FF 20 26 03 06 06 53 FF FF FF FF FF FF FF
+FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF
+FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF
+FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF
+FF FF FF FF FF FF FF FF FF FF FF 01 00 02 00 A8 00 00 00 BD E2 B3 FD CB F8 B6 A8 A3 AC BD AB 34
+31 31 B6 CF C2 B7 C6 F7 B2 D9 D7 F7 B5 BD B8 F4 C0 EB CE BB D6 C3 B2 A2 D6 B4 D0 D0 CB F8 B6 A8
+00 54 44 2D 32 30 32 36 2D 30 33 2D 30 35 2D 30 30 30 30 30 36 2D C9 E8 B1 B8 BC EC D0 DE 2D B4
+F3 BA E1 C7 D9 42 32 B5 CD D1 B9 C5 E4 B5 E7 B7 BF 2D 34 31 31 B6 CF C2 B7 C6 F7 00 20 6C
+- 关键信息标注：
+  - Len(LE)=0x0114；Cmd=0x03；Seq=0000；CRC(BE)=0x206C
+  - fileSize=11 01 00 00（=273）
+  - 时间：createTime=202603050653 → 20 26 03 05 06 53 FF FF；planTime=202603060653 → 20 26 03 06 06 53 FF FF
+- 实测结果：Golden 对比 PASS（逐字节一致，包括 CRC）
+
+三）单步票（其他已出现的 286B 帧，Golden 结果未记录）
+- 报文类型：单步票（CMD=0x03，单帧/最后帧）
+- 对应 HTTP JSON payload：该模块无有效信息（未给出可用 JSON）
+- 完整 HEX（286B，每行 32 字节）：
+7E 6C 00 00 01 00 14 01 03 00 00 11 01 00 00 01 11 00 00 01 A0 08 15 D5 38 29 1C FF FF FF FF FF
+FF FF FF 01 00 01 00 D6 00 00 00 20 26 03 04 23 21 00 FF 20 26 03 06 00 57 00 FF FF FF FF FF FF
+FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF
+FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF
+FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF
+FF FF FF FF FF FF FF FF FF FF FF 01 00 02 00 A8 00 00 00 BD E2 B3 FD CB F8 B6 A8 A3 AC BD AB 34
+31 31 B6 CF C2 B7 C6 F7 B2 D9 D7 F7 B5 BD B8 F4 C0 EB CE BB D6 C3 B2 A2 D6 B4 D0 D0 CB F8 B6 A8
+00 54 44 2D 32 30 32 36 2D 30 33 2D 30 34 2D 30 30 30 30 30 31 2D C9 E8 B1 B8 BC EC D0 DE 2D B4
+F3 BA E1 C7 D9 42 32 B5 CD D1 B9 C5 E4 B5 E7 B7 BF 2D 34 31 31 B6 CF C2 B7 C6 F7 00 54 3E
+- 关键信息标注：CRC(BE)=0x543E
+
+四）多步票（stepNum > 1）
+- 已验证通过：
+  - 停电双步 344B
+  - 停电双步（长 taskName）350B
+  - 停电三步 412B
+  - 送电双步 310B
+
+五）ACK 回包（设备响应，已确认）
+- 报文类型：ACK 回包
+- 完整 HEX：
+7E 6C 01 00 FF 00 04 00 5A 03 00 00 00 74
+- 关键信息标注：回包中包含 5A 03（确认 CMD=0x03）
+==========================================
+【模块 4：项目核心进展与待办】
+- 已完成事项（按时间推进链路）：
+  - 明确整体链路：工作台 Web → 本地 HTTP 接口（localhost:8888/ywticket/WebApi/transTicket）→ 编码 → 串口票据帧
+  - Step1：Windows 上确认端口监听（netstat :8888），PowerShell Invoke-RestMethod 可打通
+  - Step2：日志体系：打印 Origin/User-Agent/pretty JSON，落盘 logs/http_ticket_*.json
+  - Step3：CORS/OPTIONS 预检支持；兼容 body 外层 data 壳；返回 JSON 字段 success/msg 满足前端 toast
+  - Step4.1：TicketFrameBuilder：支持单帧/多帧（0x83/0x03）、Len/CRC 计算与 HEX 输出
+  - Stage5.1+5.2：TicketPayloadEncoder：完成固定头区 + stepTable + GBK 字符串区；回填 taskNameOff/displayOff；可生成与字符串区对齐的帧
+  - Stage5.4：ReplayRunner：支持 --replay/--golden/--out；支持解析带前缀/注释/紧凑 HEX；支持 diff 首差异字段标注；可 PASS
+  - GUI：Replay Tab 已支持最新 HTTP JSON 跟随；Golden Tab 已支持多步解析展示
+- 待完成事项（按优先级）：
+  - P0：继续采集并验证新样本（停电/送电更多组合），只有 FAIL 时才改编码逻辑
+  - P1：auth(48B) 的真实生成/填充规则（目前 FF×48）
+  - P1：taskType 的真实偏移与编码规则（目前暂写在 offset 92，待确认）
+  - P1：taskId 16B 的真实规则，当前以 uint64+00×8 为 PASS 基线，后续继续用真实样本确认
+  - P2：rfid / stepId / stepType 字段在 payload 中的位置与编码规则（聊天记录未给出可验证落点）
+  - P2：程序内置 QSerialPort 自动发送 + ACK/超时/重试状态机（目前靠串口助手手工发）
+==========================================
+【模块 5：关键问题与解决方案】
+- 问题：PowerShell/工作台请求无法连接 localhost:8888
+  → 解决：先确认 netstat :8888 是否 LISTENING；复刻程序必须实际启动 HTTP Server 才能测；先做独立小工具验证后再移植
+- 问题：工作台前端 toast 需要 success/msg 字段
+  → 解决：接口必须返回 HTTP 200 + JSON {"success":true/false,"msg":"..."}；不能只回空 200
+- 问题：浏览器跨域导致请求被拦（嵌入 QtWebEngine 也会触发）
+  → 解决：实现 CORS 头 + OPTIONS 预检；Allow-Origin/Methods/Headers
+- 问题：VNC/复制中文变 ???? 导致无法作为黄金样本
+  → 解决：以串口帧中 GBK 字节为准；通过 golden.hex 反解 GBK 得到中文并生成 replay.json/sample_http.json
+- 问题：黄金样本 planTime 不一致导致无法对齐原产品 CRC
+  → 解决：以原产品帧中的 BCD 时间为准（例如 09:29 对应 planTime=202603050929），样本 JSON 必须匹配
+- 问题：分帧/Len/统计不一致导致难以对齐
+  → 解决：Len 统一按 Cmd+Seq+payloadChunk；日志中 payloadChunkLen 必须与 Len 一致；原产品 286B 多见单帧，优先单帧对齐
+==========================================
+【模块 6：工具操作与核心文件】
+- PowerShell 测试 HTTP 接口：
+  - 端口监听检查：netstat -ano | findstr :8888
+  - POST 验证：Invoke-RestMethod -Uri "http://localhost:8888/ywticket/WebApi/transTicket" -Method Post -ContentType "application/json" -Body '{"taskId":"123","taskName":"test","stepNum":1,"steps":[]}'
+- Golden 回放/对比（Stage5.4）：
+  - 仅生成：.\http_ticket_server.exe --replay tests\sample_http.json
+  - 生成+对比：.\http_ticket_server.exe --replay tests\sample_http.json --golden tests\sample_golden.hex
+  - 指定输出：.\http_ticket_server.exe --replay tests\sample_http.json --golden tests\sample_golden.hex --out my_frame.hex
+- 串口助手验证（手工）：
+  - 串口参数：115200 8N1 无校验 无流控；HEX 模式发送
+  - 复制 SEN_HEX[...] 到串口助手发送；观察 ACK 回包（含 5A 03）
+- 核心文件清单（聊天记录明确出现的新增/修改）：
+  - ReplayRunner.h / ReplayRunner.cpp（Golden 回放/解析/diff）
+  - TicketFrameBuilder（外层帧封包：Len/CRC/分帧/HEX 输出）
+  - TicketPayloadEncoder（JSON→payload：GBK 字符串区 + 偏移回填）
+  - main.cpp（双模式入口：GUI + --replay CLI）
+  - http_ticket_server.pro（加入上述源文件）
+  - tests/sample_http.json（真实工作台票据 JSON 样本）
+  - tests/sample_golden.hex（原产品抓包黄金帧，286B）
+  - tests/sample_golden_annotated.hex（带 SEN:/注释/验证健壮解析）
+  - logs/http_ticket_*.json（运行时落盘：每次 HTTP 收到的原始 JSON body）
+==========================================
+【模块 7：核心共识】
+- 主链路共识：本地 HTTP 接口接收工作台 JSON 是主入口；串口下发是下游；Golden 对齐是验收标准
+- 编码/验证优先级共识：先做到逐字节对齐 golden（含 CRC）→ 再真机 ACK 闭环 → 再扩展多步/扩展字段/自动串口
+- JSON 解析共识：有 data 就取 data；无 data 就用根对象；外层 code/msg/success 等不进入 payload
+- 输出/可复现共识：所有关键环节必须可落盘（logs/）与可复制（SEN_HEX），避免“口头对齐”
+- 字符串与时间共识：中文以 GBK 字节对齐原产品；时间以帧内 BCD 实测为准（不以系统当前时间推导）
