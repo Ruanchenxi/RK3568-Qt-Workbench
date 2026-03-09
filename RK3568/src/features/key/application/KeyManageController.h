@@ -16,7 +16,11 @@
 
 #include "shared/contracts/IKeySessionService.h"
 #include "shared/contracts/KeyTaskDto.h"
+#include "shared/contracts/SystemTicketDto.h"
 #include "features/key/application/SerialLogManager.h"
+
+class TicketStore;
+class TicketIngressService;
 
 class KeyManageController : public QObject
 {
@@ -32,6 +36,9 @@ public:
     void onInitClicked();
     void onQueryTasksClicked();
     void onDeleteClicked();
+    void onTransferSelectedTicket();
+    void onGetSystemTicketListClicked();
+    void onSystemTicketSelected(int row);
 
     void onExpertModeChanged(bool enabled);
     void onShowHexChanged(bool enabled);
@@ -41,11 +48,16 @@ public:
     QList<LogItem> visibleLogs() const;
     bool shouldDisplay(const LogItem &item) const;
     KeySessionSnapshot currentSnapshot() const;
+    QList<SystemTicketDto> systemTickets() const;
+    QString httpServerLogText() const;
 
 signals:
     void statusMessage(const QString &message);
     void sessionSnapshotChanged(const KeySessionSnapshot &snapshot);
     void tasksUpdated(const QList<KeyTaskDto> &tasks);
+    void systemTicketsUpdated(const QList<SystemTicketDto> &tickets);
+    void selectedSystemTicketChanged(const SystemTicketDto &ticket);
+    void httpServerLogAppended(const QString &text);
     void ackReceived(quint8 ackedCmd);
     void nakReceived(quint8 origCmd, quint8 errCode);
     void timeoutOccurred(const QString &what);
@@ -56,15 +68,26 @@ signals:
 private slots:
     void handleSessionEvent(const KeySessionEvent &event);
     void handleLogItem(const LogItem &item);
+    void handleSystemTicketsChanged(const QList<SystemTicketDto> &tickets);
+    void handleJsonReceived(const QByteArray &jsonBytes, const QString &savedPath);
+    void handleHttpServerLog(const QString &text);
 
 private:
     void tryAutoConnectKeyPort();
+    bool autoTransferEnabled() const;
+    void tryStartTicketTransfer(const QString &taskId, bool automatic);
+    void tryAutoTransferPendingTicket();
     int nextOpId();
     QList<KeyTaskDto> toTaskDtos(const QVariantList &taskList) const;
 
     IKeySessionService *m_session;
     SerialLogManager *m_logManager;
+    TicketStore *m_ticketStore;
+    TicketIngressService *m_ticketIngress;
     int m_nextOpId;
+    QString m_selectedSystemTicketId;
+    QString m_activeTransferTaskId;
+    QStringList m_httpServerLogLines;
 };
 
 #endif // KEYMANAGECONTROLLER_H

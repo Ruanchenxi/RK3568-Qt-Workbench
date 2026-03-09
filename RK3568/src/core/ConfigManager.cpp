@@ -227,6 +227,29 @@ void ConfigManager::loadDefaults()
         setValue("service/startModeMigratedV3WindowsLocalDefault", true);
     }
 #endif
+
+    // ========== 传票 HTTP 接收配置 ==========
+    if (!m_settings->contains("ticket/httpIngressHost"))
+    {
+        setValue("ticket/httpIngressHost", "127.0.0.1");
+    }
+    if (!m_settings->contains("ticket/httpIngressPort"))
+    {
+        setValue("ticket/httpIngressPort", 8888);
+    }
+    if (!m_settings->contains("ticket/httpIngressPath"))
+    {
+        setValue("ticket/httpIngressPath", "/ywticket/WebApi/transTicket");
+    }
+    if (!m_settings->contains("ticket/autoTransferEnabled"))
+    {
+        setValue("ticket/autoTransferEnabled", true);
+    }
+    if (!m_settings->contains("ticket/autoTransferEnabledMigratedV1"))
+    {
+        setValue("ticket/autoTransferEnabled", true);
+        setValue("ticket/autoTransferEnabledMigratedV1", true);
+    }
 }
 
 // ========== 系统配置 ==========

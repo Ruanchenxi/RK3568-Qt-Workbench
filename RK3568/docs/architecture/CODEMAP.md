@@ -64,10 +64,14 @@ Last Updated: 2026-03-04
 | `src/features/key/application/KeyManageController.h/.cpp` | 页面操作编排、会话驱动 | 通过会话服务抽象访问协议能力 |
 | `src/features/key/application/KeySessionService.h/.cpp` | 串口会话服务、重试/回放接入点；从 ConfigManager 注入站号并监听变更 | 调用 protocol + transport 抽象；允许依赖 ConfigManager（核心层）；禁止 UI 页面类 |
 | `src/features/key/application/SerialLogManager.h/.cpp` | 串口日志缓冲/过滤/导出组织 | 不承载协议帧解析 |
+| `src/features/key/application/TicketIngressService.h/.cpp` | 主程序内本地 HTTP 接收入口（工作台 JSON 输入源） | 放在 application，禁止下沉到 UI |
+| `src/features/key/application/TicketStore.h/.cpp` | 系统票池与传票状态管理 | 为 UI 提供列表/选中摘要，避免页面持有原始 JSON |
 | `src/features/key/protocol/KeySerialClient.h/.cpp` | 串口协议核心状态机与报文处理 | 仅允许依赖 `ISerialTransport` 抽象 |
 | `src/features/key/protocol/KeyProtocolDefs.h` | 协议命令与常量定义 | 语义锁定，谨慎改动 |
 | `src/features/key/protocol/KeyCrc16.h` | CRC 计算工具 | 协议关键算法，不随意改 |
 | `src/features/key/protocol/LogItem.h` | 串口日志数据结构 | 供 UI/Controller 渲染使用 |
+| `src/features/key/protocol/TicketPayloadEncoder.h/.cpp` | 传票 `JSON -> payload` 规则 | 不做 UI/文件 I/O |
+| `src/features/key/protocol/TicketFrameBuilder.h/.cpp` | 传票 `payload -> frame(s)` | 单帧/多帧/CRC |
 
 ## 5. features/system
 
@@ -109,6 +113,8 @@ Last Updated: 2026-03-04
 | `src/shared/contracts/IKeySessionService.h` | 钥匙会话服务抽象契约 | UI/application 面向抽象编程 |
 | `src/shared/contracts/IProcessService.h` | 进程服务抽象契约 | 避免页面直连进程实现 |
 | `src/shared/contracts/KeyTaskDto.h` | 钥匙任务 DTO | 作为跨层数据载体 |
+| `src/shared/contracts/SystemTicketDto.h` | 系统票 DTO | 系统票数据表与状态展示使用 |
+| `src/shared/contracts/TicketTransferRequest.h` | 传票发送请求 DTO | 手动/自动传票统一入口 |
 | `src/shared/contracts/SystemSettingsDto.h` | 系统设置 DTO | 作为跨层数据载体 |
 | `src/shared/shared.pri` | shared 模块编译清单 | 仅构建用途 |
 
@@ -127,6 +133,8 @@ Last Updated: 2026-03-04
 | 新增一个登录方式（先不接硬件） | `features/auth/domain/*`, `features/auth/application/*`, `features/auth/infra/http/*` | 先走 `IAuthGateway + AuthFlowCoordinator`，不要把协议字段放到 UI |
 | 接入刷卡串口采集 | `features/auth/infra/device/CardSerialSource.*`, `platform/serial/*` | 严格使用 `/dev/ttyS3`，不要并入钥匙会话 |
 | 新增钥匙协议报文 | `features/key/protocol/*`, `features/key/application/KeySessionService.*` | 协议语义锁定区，改动需最小且可回放验证 |
+| 接工作台传票 JSON 输入 | `features/key/application/TicketIngressService.*`, `features/key/application/TicketStore.*`, `features/key/application/KeyManageController.*` | 先入系统票池，再由 UI 展示 |
+| 调整手动/自动传票 | `features/key/application/KeyManageController.*`, `features/key/application/KeySessionService.*`, `features/key/protocol/*` | UI 不直接碰协议类 |
 | 调整钥匙管理串口日志页 | `features/key/ui/keymanagepage.*`, `features/key/application/SerialLogManager.*` | UI 只做渲染和交互，不下沉协议细节 |
 | 调整工作台接口接入 | `features/workbench/application/*`, `features/workbench/ui/*` | 页面不直接写网络细节 |
 | 新增系统配置项 | `features/system/application/*`, `features/system/ui/*`, `core/ConfigManager.*` | 配置读写集中到 ConfigManager |

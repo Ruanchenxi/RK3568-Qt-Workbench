@@ -36,6 +36,14 @@ QString formatHexMultiline(const QByteArray &bytes, int bytesPerLine = 16)
     }
     return lines.join('\n');
 }
+
+QString extractPositionFromTaskName(const QString &ticketNo, const QString &taskName)
+{
+    if (taskName.startsWith(ticketNo) && taskName.size() > ticketNo.size() + 1) {
+        return taskName.mid(ticketNo.size() + 1);
+    }
+    return taskName;
+}
 }
 
 // ====================================================================
@@ -71,6 +79,20 @@ void KeyManagePage::initUi()
 {
     ui->tabKey->setChecked(true);
     onTabChanged(0);
+    ui->tabHttpClient->setText(QStringLiteral("HTTP客户端"));
+    ui->tabHttpServer->setText(QStringLiteral("HTTP服务端"));
+    ui->tabKey->setMinimumWidth(84);
+    ui->tabSerial->setMinimumWidth(92);
+    ui->tabHttpClient->setMinimumWidth(116);
+    ui->tabHttpServer->setMinimumWidth(116);
+    ui->lblSelectedTicketTitle->setText(QStringLiteral("当前选中系统票"));
+    ui->lblSystemTicketTitle->setText(QStringLiteral("系统票数据"));
+    ui->lblKeyTicketTitle->setText(QStringLiteral("钥匙票数据"));
+    ui->lblTicketOpTitle->setText(QStringLiteral("票据操作"));
+    ui->btnTransferTicket->setText(QStringLiteral("传票到钥匙"));
+    ui->btnDeleteTicket->setText(QStringLiteral("删除钥匙票"));
+    ui->btnDeleteTicket->setToolTip(QStringLiteral("删除钥匙中已存在的票，请先读取钥匙票列表并选中。"));
+    ui->lblReturnHint->setText(QStringLiteral("回传默认禁用，失败时才启用"));
 
     ui->serialLogTable->setSelectionMode(QAbstractItemView::SingleSelection);
     ui->serialLogTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -130,12 +152,47 @@ void KeyManagePage::initUi()
     ui->systemTicketTable->setSelectionMode(QAbstractItemView::SingleSelection);
     ui->systemTicketTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     ui->systemTicketTable->verticalHeader()->setVisible(false);
-    ui->systemTicketTable->horizontalHeader()->setStretchLastSection(true);
+    ui->systemTicketTable->horizontalHeader()->setStretchLastSection(false);
+    ui->systemTicketTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    ui->systemTicketTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+    ui->systemTicketTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
+    ui->systemTicketTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
+    ui->systemTicketTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Fixed);
+    ui->systemTicketTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
+    ui->systemTicketTable->setColumnWidth(0, 56);
+    ui->systemTicketTable->setColumnWidth(1, 180);
+    ui->systemTicketTable->setColumnWidth(2, 90);
+    ui->systemTicketTable->setColumnWidth(3, 100);
+    ui->systemTicketTable->setColumnWidth(4, 260);
+    if (QTableWidgetItem *h = ui->systemTicketTable->horizontalHeaderItem(0)) h->setTextAlignment(Qt::AlignCenter);
+    if (QTableWidgetItem *h = ui->systemTicketTable->horizontalHeaderItem(1)) h->setTextAlignment(Qt::AlignCenter);
+    if (QTableWidgetItem *h = ui->systemTicketTable->horizontalHeaderItem(2)) h->setTextAlignment(Qt::AlignCenter);
+    if (QTableWidgetItem *h = ui->systemTicketTable->horizontalHeaderItem(3)) h->setTextAlignment(Qt::AlignCenter);
+    if (QTableWidgetItem *h = ui->systemTicketTable->horizontalHeaderItem(4)) h->setTextAlignment(Qt::AlignCenter);
 
     ui->keyTicketTable->setSelectionMode(QAbstractItemView::SingleSelection);
     ui->keyTicketTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     ui->keyTicketTable->verticalHeader()->setVisible(false);
-    ui->keyTicketTable->horizontalHeader()->setStretchLastSection(true);
+    ui->keyTicketTable->horizontalHeader()->setStretchLastSection(false);
+    ui->keyTicketTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    ui->keyTicketTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+    ui->keyTicketTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
+    ui->keyTicketTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
+    ui->keyTicketTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Fixed);
+    ui->keyTicketTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
+    ui->keyTicketTable->setColumnWidth(0, 56);
+    ui->keyTicketTable->setColumnWidth(1, 180);
+    ui->keyTicketTable->setColumnWidth(2, 90);
+    ui->keyTicketTable->setColumnWidth(3, 100);
+    ui->keyTicketTable->setColumnWidth(4, 260);
+    if (QTableWidgetItem *h = ui->keyTicketTable->horizontalHeaderItem(0)) h->setTextAlignment(Qt::AlignCenter);
+    if (QTableWidgetItem *h = ui->keyTicketTable->horizontalHeaderItem(1)) h->setTextAlignment(Qt::AlignCenter);
+    if (QTableWidgetItem *h = ui->keyTicketTable->horizontalHeaderItem(2)) h->setTextAlignment(Qt::AlignCenter);
+    if (QTableWidgetItem *h = ui->keyTicketTable->horizontalHeaderItem(3)) h->setTextAlignment(Qt::AlignCenter);
+    if (QTableWidgetItem *h = ui->keyTicketTable->horizontalHeaderItem(4)) h->setTextAlignment(Qt::AlignCenter);
+
+    ui->lblTicketPosition->setWordWrap(true);
+    ui->lblTicketPosition->setMinimumHeight(36);
 
     ui->lblBatteryInfo->setText(QStringLiteral("电量: --"));
     ui->lblTaskInfo->setText(QStringLiteral("任务数: --"));
@@ -164,6 +221,8 @@ void KeyManagePage::initConnections()
 
     connect(ui->btnGetSystemTicketList, &QPushButton::clicked, this, &KeyManagePage::onGetSystemTicketList);
     connect(ui->btnReadKeyTicketList,   &QPushButton::clicked, this, &KeyManagePage::onReadKeyTicketList);
+    connect(ui->systemTicketTable, &QTableWidget::itemSelectionChanged,
+            this, &KeyManagePage::onSystemTicketSelectionChanged);
 
     connect(ui->chkExpertMode, &QCheckBox::toggled, this, &KeyManagePage::onExpertModeToggled);
     connect(ui->chkShowHex,    &QCheckBox::toggled, this, &KeyManagePage::onShowHexToggled);
@@ -196,6 +255,12 @@ void KeyManagePage::initController()
             this, &KeyManagePage::onLogTableRefreshRequested);
     connect(m_controller, &KeyManageController::logsCleared,
             this, &KeyManagePage::onLogsCleared);
+    connect(m_controller, &KeyManageController::systemTicketsUpdated,
+            this, &KeyManagePage::onSystemTicketsUpdated);
+    connect(m_controller, &KeyManageController::selectedSystemTicketChanged,
+            this, &KeyManagePage::onSelectedSystemTicketChanged);
+    connect(m_controller, &KeyManageController::httpServerLogAppended,
+            this, &KeyManagePage::onHttpServerLogAppended);
 
     m_controller->start();
 }
@@ -211,6 +276,8 @@ void KeyManagePage::onTabChanged(int index)
     ui->tabSerial->setChecked(index == 1);
     ui->tabHttpClient->setChecked(index == 2);
     ui->tabHttpServer->setChecked(index == 3);
+    if (index == 0 || index == 3)
+        refreshSystemTicketViews();
 }
 
 // ====================================================================
@@ -248,7 +315,7 @@ void KeyManagePage::onSyncDeviceTime()
 
 void KeyManagePage::onTransferTicket()
 {
-    updateStatusBar(QStringLiteral("传票...（HTTP流程待对接）"));
+    m_controller->onTransferSelectedTicket();
 }
 
 void KeyManagePage::onDeleteTicket()
@@ -263,7 +330,8 @@ void KeyManagePage::onReturnTicket()
 
 void KeyManagePage::onGetSystemTicketList()
 {
-    updateStatusBar(QStringLiteral("获取系统票列表...（HTTP流程待对接）"));
+    m_controller->onGetSystemTicketListClicked();
+    updateStatusBar(QStringLiteral("刷新系统票列表"));
 }
 
 void KeyManagePage::onReadKeyTicketList()
@@ -432,6 +500,21 @@ void KeyManagePage::onLogsCleared()
     ui->serialLogTable->setRowCount(0);
 }
 
+void KeyManagePage::onSystemTicketsUpdated(const QList<SystemTicketDto> &tickets)
+{
+    populateSystemTicketTable(tickets);
+}
+
+void KeyManagePage::onSelectedSystemTicketChanged(const SystemTicketDto &ticket)
+{
+    updateSelectedSystemTicketCard(ticket);
+}
+
+void KeyManagePage::onHttpServerLogAppended(const QString &text)
+{
+    ui->httpServerLogText->append(text);
+}
+
 // ====================================================================
 // HTTP Tab
 // ====================================================================
@@ -444,6 +527,12 @@ void KeyManagePage::onClearHttpClient()
 void KeyManagePage::onClearHttpServer()
 {
     ui->httpServerLogText->clear();
+}
+
+void KeyManagePage::onSystemTicketSelectionChanged()
+{
+    const int row = ui->systemTicketTable->currentRow();
+    m_controller->onSystemTicketSelected(row);
 }
 
 // ====================================================================
@@ -545,12 +634,83 @@ QString KeyManagePage::cmdText(quint8 cmd) const
     case KeyProtocol::CmdSetCom:   return QStringLiteral("SET_COM");
     case KeyProtocol::CmdQTask:    return QStringLiteral("Q_TASK");
     case KeyProtocol::CmdDel:      return QStringLiteral("DEL");
+    case KeyProtocol::CmdTicket:   return QStringLiteral("TICKET");
+    case KeyProtocol::CmdTicketMore:return QStringLiteral("TICKET_MORE");
     case KeyProtocol::CmdAck:      return QStringLiteral("ACK");
     case KeyProtocol::CmdNak:      return QStringLiteral("NAK");
     case KeyProtocol::CmdKeyEvent: return QStringLiteral("KEY_EVT");
     default:
         return QStringLiteral("0x%1").arg(cmd, 2, 16, QLatin1Char('0')).toUpper();
     }
+}
+
+void KeyManagePage::populateSystemTicketTable(const QList<SystemTicketDto> &tickets)
+{
+    const QString prevSelectedTaskId = ui->systemTicketTable->currentRow() >= 0
+            ? ui->systemTicketTable->item(ui->systemTicketTable->currentRow(), 0)->data(Qt::UserRole).toString()
+            : QString();
+    ui->systemTicketTable->setRowCount(0);
+    for (int i = 0; i < tickets.size(); ++i) {
+        const SystemTicketDto &ticket = tickets.at(i);
+        const int row = ui->systemTicketTable->rowCount();
+        ui->systemTicketTable->insertRow(row);
+        QTableWidgetItem *noItem = new QTableWidgetItem(QString::number(i + 1));
+        noItem->setTextAlignment(Qt::AlignCenter);
+        ui->systemTicketTable->setItem(row, 0, noItem);
+        ui->systemTicketTable->setItem(row, 1, new QTableWidgetItem(ticket.ticketNo));
+        QTableWidgetItem *typeItem = new QTableWidgetItem(ticketTypeText(ticket.taskType));
+        typeItem->setTextAlignment(Qt::AlignCenter);
+        ui->systemTicketTable->setItem(row, 2, typeItem);
+        QTableWidgetItem *sourceItem = new QTableWidgetItem(QStringLiteral("工作台"));
+        sourceItem->setTextAlignment(Qt::AlignCenter);
+        ui->systemTicketTable->setItem(row, 3, sourceItem);
+        QTableWidgetItem *stateItem = new QTableWidgetItem(ticketStateText(ticket.transferState));
+        stateItem->setTextAlignment(Qt::AlignCenter);
+        ui->systemTicketTable->setItem(row, 4, stateItem);
+        ui->systemTicketTable->item(row, 0)->setData(Qt::UserRole, ticket.taskId);
+        if (!prevSelectedTaskId.isEmpty() && prevSelectedTaskId == ticket.taskId)
+            ui->systemTicketTable->selectRow(row);
+    }
+
+    if (tickets.isEmpty()) {
+        updateSelectedSystemTicketCard(SystemTicketDto{});
+    } else if (ui->systemTicketTable->currentRow() >= 0) {
+        m_controller->onSystemTicketSelected(ui->systemTicketTable->currentRow());
+    }
+}
+
+void KeyManagePage::updateSelectedSystemTicketCard(const SystemTicketDto &ticket)
+{
+    if (!ticket.valid) {
+        ui->lblTicketNo->setText(QStringLiteral("票号: <font color='#2E7D32'>未选择</font>"));
+        ui->lblTicketType->setText(QStringLiteral("类型: --"));
+        ui->lblTicketPosition->setText(QStringLiteral("位置: --"));
+        ui->lblTicketReturnStatus->setText(QStringLiteral("传票状态: <font color='#C62828'>未选择系统票</font>"));
+        ui->lblTicketPosition->setToolTip(QString());
+        return;
+    }
+
+    QString stateColor = "#C62828";
+    if (ticket.transferState == QLatin1String("received"))
+        stateColor = "#C62828";
+    else if (ticket.transferState == QLatin1String("auto-pending"))
+        stateColor = "#1565C0";
+    else if (ticket.transferState == QLatin1String("sending"))
+        stateColor = "#EF6C00";
+    else if (ticket.transferState == QLatin1String("success"))
+        stateColor = "#2E7D32";
+    else if (ticket.transferState == QLatin1String("failed"))
+        stateColor = "#C62828";
+
+    ui->lblTicketNo->setText(QStringLiteral("票号: <font color='#2E7D32'>%1</font>").arg(ticket.ticketNo));
+    ui->lblTicketType->setText(QStringLiteral("类型: %1  |  步骤: %2")
+                               .arg(ticketTypeText(ticket.taskType))
+                               .arg(ticket.stepNum));
+    const QString positionText = ticketPositionText(ticket.ticketNo, ticket.taskName);
+    ui->lblTicketPosition->setText(QStringLiteral("位置: %1").arg(positionText));
+    const QString statusText = ticketStateDescription(ticket);
+    ui->lblTicketReturnStatus->setText(
+        QStringLiteral("传票状态: <font color='%1'>%2</font>").arg(stateColor, statusText));
 }
 
 void KeyManagePage::populateKeyTicketTable(const QList<KeyTaskDto> &tasks)
@@ -562,12 +722,78 @@ void KeyManagePage::populateKeyTicketTable(const QList<KeyTaskDto> &tasks)
         ui->keyTicketTable->insertRow(row);
 
         const QString taskIdHex = QString(task.taskId.toHex().toUpper());
-        ui->keyTicketTable->setItem(row, 0, new QTableWidgetItem(QString::number(i + 1)));
+        QTableWidgetItem *noItem = new QTableWidgetItem(QString::number(i + 1));
+        noItem->setTextAlignment(Qt::AlignCenter);
+        ui->keyTicketTable->setItem(row, 0, noItem);
         ui->keyTicketTable->setItem(row, 1, new QTableWidgetItem(taskIdHex.left(16)));
-        ui->keyTicketTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("类型%1").arg(task.type)));
-        ui->keyTicketTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("来源%1").arg(task.source)));
-        ui->keyTicketTable->setItem(row, 4, new QTableWidgetItem(QStringLiteral("状态%1").arg(task.status)));
+        QTableWidgetItem *typeItem = new QTableWidgetItem(QStringLiteral("类型%1").arg(task.type));
+        typeItem->setTextAlignment(Qt::AlignCenter);
+        ui->keyTicketTable->setItem(row, 2, typeItem);
+        QTableWidgetItem *sourceItem = new QTableWidgetItem(QStringLiteral("来源%1").arg(task.source));
+        sourceItem->setTextAlignment(Qt::AlignCenter);
+        ui->keyTicketTable->setItem(row, 3, sourceItem);
+        QTableWidgetItem *stateItem = new QTableWidgetItem(QStringLiteral("状态%1").arg(task.status));
+        stateItem->setTextAlignment(Qt::AlignCenter);
+        ui->keyTicketTable->setItem(row, 4, stateItem);
     }
+}
+
+void KeyManagePage::refreshSystemTicketViews()
+{
+    populateSystemTicketTable(m_controller->systemTickets());
+    ui->httpServerLogText->setPlainText(m_controller->httpServerLogText());
+}
+
+QString KeyManagePage::ticketTypeText(int taskType)
+{
+    switch (taskType) {
+    case 0: return QStringLiteral("停电");
+    case 1: return QStringLiteral("送电");
+    default: return QStringLiteral("其他");
+    }
+}
+
+QString KeyManagePage::ticketStateText(const QString &state)
+{
+    if (state == QLatin1String("received"))
+        return QStringLiteral("主程序已接收，尚未开始传票");
+    if (state == QLatin1String("auto-pending"))
+        return QStringLiteral("等待自动传票（钥匙/握手未就绪）");
+    if (state == QLatin1String("sending"))
+        return QStringLiteral("正在传票到钥匙");
+    if (state == QLatin1String("success"))
+        return QStringLiteral("已传票到钥匙，等待设备后续执行");
+    if (state == QLatin1String("failed"))
+        return QStringLiteral("传票失败，请查看串口报文");
+    return state;
+}
+
+QString KeyManagePage::ticketStateDescription(const SystemTicketDto &ticket)
+{
+    if (ticket.transferState == QLatin1String("received")) {
+        return QStringLiteral("主程序已接收到工作台JSON，尚未开始向钥匙传票");
+    }
+    if (ticket.transferState == QLatin1String("auto-pending")) {
+        return QStringLiteral("主程序已接收JSON，等待串口连接和钥匙就绪后自动传票");
+    }
+    if (ticket.transferState == QLatin1String("sending")) {
+        return QStringLiteral("主程序已开始向钥匙发送传票");
+    }
+    if (ticket.transferState == QLatin1String("success")) {
+        return QStringLiteral("主程序已完成传票发送；同一任务再次触发钥匙传票时将默认忽略重复下发");
+    }
+    if (ticket.transferState == QLatin1String("failed")) {
+        if (!ticket.lastError.trimmed().isEmpty()) {
+            return QStringLiteral("传票失败：%1").arg(ticket.lastError);
+        }
+        return QStringLiteral("传票失败，请查看串口报文日志");
+    }
+    return ticket.transferState;
+}
+
+QString KeyManagePage::ticketPositionText(const QString &ticketNo, const QString &taskName)
+{
+    return extractPositionFromTaskName(ticketNo, taskName);
 }
 
 void KeyManagePage::updateStatusBar(const QString &message)

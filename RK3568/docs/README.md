@@ -2,7 +2,7 @@
 
 Status: Active  
 Owner: 项目维护者（单人开发）  
-Last Updated: 2026-03-04
+Last Updated: 2026-03-09
 
 本文件是 `docs/` 的总入口，目标是让“零历史新 Agent / 新同事”在 5 分钟内回答：
 
@@ -24,6 +24,16 @@ Last Updated: 2026-03-04
 10. 共享边界：两条链路只共享 `platform/serial` 抽象，不共享协议实现类。  
 
 ## 2. 新 Agent 推荐阅读顺序（严格按顺序）
+
+### 2.1 如果你是“没有任何历史上下文的新 Agent”
+
+先读：
+
+1. `operations/NEXT_AGENT_BRIEF.md`
+2. `operations/STATUS_SNAPSHOT.md`
+3. `operations/MIGRATION_EXECUTION_LOG.md`
+
+这 3 份是“现在做到哪、下一步干什么”的最快入口。
 
 1. `PROJECT_CONTEXT.md`  
 目的：先理解项目业务目标、平台边界、当前优先级。  
@@ -47,15 +57,26 @@ Last Updated: 2026-03-04
 7. `replay/REPLAY_SPEC.md`  
 目的：掌握无硬件回放验证方式。  
 
-8. `COMMENTING_GUIDE.md`  
+8. `operations/STATUS_SNAPSHOT.md`  
+目的：先知道当前做到哪里、哪些链路已经落地。  
+
+9. `operations/MIGRATION_EXECUTION_LOG.md`
+目的：理解当前迁移进度、已拍板规则、下一阶段重点。  
+
+10. `operations/VALIDATION_PLAYBOOK.md`  
+目的：知道每次改动后该验证哪些功能。  
+
+11. `COMMENTING_GUIDE.md`  
 目的：保证新增代码注释质量一致。  
 
-## 3. 当前工程状态（2026-03-02）
+## 3. 当前工程状态（2026-03-09）
 
-1. 迁移状态：`MIGRATION_BATCH_PLAN.md` 记录的 4 批迁移均已完成。  
-2. 构建体系：继续使用 `qmake + .pri`，暂不迁移 CMake。  
-3. 架构门禁：使用 `tools/arch_guard.ps1 -Phase 3`。  
-4. 串口体系：真机 `QtSerialTransport` 与回放 `ReplaySerialTransport` 可切换。  
+1. 迁移状态：Feature-First Lite 目录迁移已完成，传票主链已并入主程序。  
+2. 传票状态：`工作台 JSON -> 本地 HTTP 接收 -> 系统票入池 -> 手动/自动传票` 主链已落地。  
+3. 当前重点：从“传票主链”转向“回传链路”，后续再继续收 `初始化 / 下载 RFID / 回传`。  
+4. 构建体系：继续使用 `qmake + .pri`，暂不迁移 CMake。  
+5. 架构门禁：使用 `tools/arch_guard.ps1 -Phase 3`。  
+6. 串口体系：真机 `QtSerialTransport` 与回放 `ReplaySerialTransport` 可切换。  
 
 ## 4. 每次改动后的最小验证清单
 
@@ -82,8 +103,15 @@ Last Updated: 2026-03-04
 2. `docs/serial/`：串口报文专用开发手册（协议组成、链路改动与验收）。  
    - `SERIAL_PACKET_AGENT_GUIDE.md`：链路架构、状态机、改动流程、常见误区。  
    - `PROTOCOL_FRAMES_REFERENCE.md`：逐字节帧格式、各命令完整拆解、CRC 向量、拆包伪代码、常量速查。  
+   - `TICKET_PROTOCOL_GUIDE.md`：传票 JSON / payload / frame(s) / ACK 续发专用手册。  
 3. `docs/replay/`：回放规范、脚本格式、无硬件验证流程。  
-4. `docs/` 根目录：项目背景、注释规范、dead code 治理、总入口。  
+4. `docs/operations/`：当前状态、配置参考、验证清单。  
+   - `STATUS_SNAPSHOT.md`：当前项目做到哪里。  
+   - `CONFIG_REFERENCE.md`：关键配置项与默认值。  
+   - `VALIDATION_PLAYBOOK.md`：主路径 / 传票 / 真机 / replay 验证清单。  
+   - `MIGRATION_EXECUTION_LOG.md`：当前移植进度、业务规则与下一步执行顺序。  
+   - `NEXT_AGENT_BRIEF.md`：给无历史新 agent 的直接接手说明。  
+5. `docs/` 根目录：项目背景、注释规范、dead code 治理、总入口。  
 
 ## 6. 历史与治理文档说明
 

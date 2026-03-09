@@ -45,9 +45,12 @@
 #include <QElapsedTimer>
 #include <QList>
 #include <QByteArray>
+#include <QStringList>
 #include "platform/serial/ISerialTransport.h"
 #include "KeyProtocolDefs.h"
 #include "LogItem.h"
+#include "features/key/protocol/TicketPayloadEncoder.h"
+#include "features/key/protocol/TicketFrameBuilder.h"
 
 // ============================================================
 // 协议常量（来自 SerialTestWidget 验证通过，不要修改）
@@ -75,6 +78,8 @@ static const int MIN_FRAME_LEN = 11; ///< 最小帧长（Data 为空时）
 static constexpr quint8 CMD_SET_COM   = KeyProtocol::CmdSetCom;   ///< 握手命令 0x0F
 static constexpr quint8 CMD_Q_TASK    = KeyProtocol::CmdQTask;    ///< 查询任务 0x04
 static constexpr quint8 CMD_DEL       = KeyProtocol::CmdDel;      ///< 删除任务 0x06
+static constexpr quint8 CMD_TICKET    = KeyProtocol::CmdTicket;   ///< 传票单帧/最后帧 0x03
+static constexpr quint8 CMD_TICKET_MORE = KeyProtocol::CmdTicketMore; ///< 传票还有后续帧 0x83
 static constexpr quint8 CMD_ACK       = KeyProtocol::CmdAck;      ///< 设备确认 0x5A
 static constexpr quint8 CMD_NAK       = KeyProtocol::CmdNak;      ///< 设备拒绝 0x00
 static constexpr quint8 CMD_KEY_EVENT = KeyProtocol::CmdKeyEvent;  ///< 钥匙事件 0x11
@@ -109,6 +114,7 @@ static const quint8 INFLIGHT_NONE   = 0;  ///< 空闲，无待响应命令
 static const quint8 INFLIGHT_SETCOM = 1;  ///< 正在等待 SET_COM 的 ACK
 static const quint8 INFLIGHT_QTASK  = 2;  ///< 正在等待 Q_TASK 的响应帧
 static const quint8 INFLIGHT_DEL    = 3;  ///< 正在等待 DEL 的 ACK
+static const quint8 INFLIGHT_TICKET = 4;  ///< 正在等待传票分帧 ACK
 
 } // namespace KeyProto
 
@@ -174,6 +180,7 @@ public:
     void queryTasksAll();
     void deleteTask(const QByteArray &taskId16);
     void deleteFirstTask();
+    void transferTicketJson(const QByteArray &jsonBytes, quint8 stationId = 0x01);
 
     const QList<KeyTaskInfo> &tasks() const { return m_tasks; }
     bool hasVerifiedPort() const { return m_hasVerifiedPort; }
@@ -181,6 +188,7 @@ public:
     QString currentPortName() const { return m_serial ? m_serial->portName() : QString(); }
     bool isKeyPresent() const { return m_keyPlaced; }
     bool isKeyStable() const { return m_keyStable; }
+    bool isSessionReady() const { return m_sessionReady; }
 
     /**
      * @brief 设置当前操作ID（由 UI 层在用户点击按钮时调用）
@@ -230,6 +238,12 @@ signals:
     void ackReceived(quint8 ackedCmd);
     /// 收到 NAK 帧，origCmd 为被拒绝的命令码，errCode 为错误码
     void nakReceived(quint8 origCmd, quint8 errCode);
+    /// 传票发送进度（frameIndex 从 1 开始）
+    void ticketTransferProgress(int frameIndex, int totalFrames, quint8 cmd);
+    /// 传票发送完成
+    void ticketTransferFinished();
+    /// 传票发送失败
+    void ticketTransferFailed(const QString &reason);
     /// 命令超时（重试耗尽），what 为超时描述（供 UI 显示）
     void timeoutOccurred(const QString &what);
     /// 用户友好通知（如"钥匙已就绪"），供 UI 层 statusBar 或 toast 显示
@@ -264,6 +278,8 @@ private:
     void markNoiseDuringStabilizing(const QByteArray &noise, const QString &reason); ///< 标记稳定期间的噪声
     void tryDispatchDeferredCommand();                        ///< 尝试派发延迟的业务命令
     void sendSetComHandshake(const QString &reason);          ///< 发送 SET_COM 握手帧
+    void clearTicketTransferState();                         ///< 清理传票发送状态
+    bool sendNextTicketFrame();                              ///< 发送下一帧传票
 
     // --- 缓冲区管理与诊断 ---
     qint64 drainSerialInput(const QString &reason, bool clearRecvBuffer); ///< 排空串口接收缓冲区
@@ -342,6 +358,10 @@ private:
     // 站号（DEL Addr2 来源）
     quint16        m_stationId;            ///< 当前站号，DEL Addr2 Lo=m_stationId&0xFF Hi=0x00
                                            ///< 默认 1，由 KeySessionService::setStationId() 注入
+
+    // 传票发送状态
+    QList<QByteArray> m_ticketFrames;      ///< 当前待发送的传票帧列表
+    int               m_ticketFrameIndex;  ///< 当前发送中的帧索引
 };
 
 #endif // KEYSERIALCLIENT_H

@@ -22,6 +22,7 @@ public:
     void disconnectPort() override;
     KeySessionSnapshot snapshot() const override;
     void execute(const CommandRequest &request) override;
+    void transferTicket(const TicketTransferRequest &request) override;
 
 private:
     QVariantList toTaskVariantList(const QList<KeyTaskInfo> &tasks) const;

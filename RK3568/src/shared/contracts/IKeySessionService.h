@@ -16,6 +16,7 @@
 #include <QString>
 
 #include "features/key/protocol/LogItem.h"
+#include "shared/contracts/TicketTransferRequest.h"
 
 enum class CommandId
 {
@@ -38,6 +39,7 @@ struct KeySessionSnapshot
     bool connected = false;
     bool keyPresent = false;
     bool keyStable = false;
+    bool sessionReady = false;
     QString portName;
     QString verifiedPortName;  ///< 已验证的端口名（收到合法协议帧后锁定），空=未验证
 };
@@ -52,7 +54,10 @@ struct KeySessionEvent
         Nak,
         TasksUpdated,
         KeyStateChanged,
-        RawProtocol
+        RawProtocol,
+        TicketTransferProgress,
+        TicketTransferFinished,
+        TicketTransferFailed
     };
 
     Kind kind = Notice;
@@ -70,6 +75,7 @@ public:
     virtual void disconnectPort() = 0;
     virtual KeySessionSnapshot snapshot() const = 0;
     virtual void execute(const CommandRequest &request) = 0;
+    virtual void transferTicket(const TicketTransferRequest &request) = 0;
 
 signals:
     void eventOccurred(const KeySessionEvent &event);

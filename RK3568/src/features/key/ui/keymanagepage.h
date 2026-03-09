@@ -20,6 +20,7 @@
 #include <QWidget>
 
 #include "shared/contracts/KeyTaskDto.h"
+#include "shared/contracts/SystemTicketDto.h"
 #include "shared/contracts/IKeySessionService.h"
 #include "features/key/application/KeyManageController.h"
 #include "features/key/protocol/LogItem.h"
@@ -74,15 +75,24 @@ private slots:
     void onLogRowAppended(const LogItem &item);
     void onLogTableRefreshRequested();
     void onLogsCleared();
+    void onSystemTicketsUpdated(const QList<SystemTicketDto> &tickets);
+    void onSelectedSystemTicketChanged(const SystemTicketDto &ticket);
+    void onHttpServerLogAppended(const QString &text);
 
     // ---- HTTP Tab ----
     void onClearHttpClient();
     void onClearHttpServer();
+    void onSystemTicketSelectionChanged();
 
 private:
     void initUi();
     void initConnections();
     void initController();
+    void refreshSystemTicketViews();
+    static QString ticketTypeText(int taskType);
+    static QString ticketStateText(const QString &state);
+    static QString ticketStateDescription(const SystemTicketDto &ticket);
+    static QString ticketPositionText(const QString &ticketNo, const QString &taskName);
 
     // 串口日志辅助
     void appendSerialLogRow(const LogItem &item);
@@ -90,6 +100,8 @@ private:
     QColor dirColor(LogDir dir) const;
     QString dirText(LogDir dir) const;
     QString cmdText(quint8 cmd) const;
+    void populateSystemTicketTable(const QList<SystemTicketDto> &tickets);
+    void updateSelectedSystemTicketCard(const SystemTicketDto &ticket);
     void populateKeyTicketTable(const QList<KeyTaskDto> &tasks);
 
     void updateStatusBar(const QString &message);

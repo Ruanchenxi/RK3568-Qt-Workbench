@@ -24,6 +24,7 @@
 #include "features/key/application/KeySessionService.h"
 
 #include <QDebug>
+#include <QFile>
 
 #include "core/ConfigManager.h"
 #include "platform/serial/QtSerialTransport.h"
@@ -113,6 +114,9 @@ KeySessionService::KeySessionService(QObject *parent)
         event.kind = KeySessionEvent::Ack;
         event.data.insert("ackedCmd", static_cast<int>(ackedCmd));
         emit eventOccurred(event);
+        if (ackedCmd == KeyProtocol::CmdSetCom) {
+            emitStateChanged();
+        }
     });
     connect(m_client, &KeySerialClient::nakReceived, this, [this](quint8 origCmd, quint8 errCode) {
         KeySessionEvent event;
@@ -131,6 +135,26 @@ KeySessionService::KeySessionService(QObject *parent)
         KeySessionEvent event;
         event.kind = KeySessionEvent::Notice;
         event.data.insert("what", what);
+        emit eventOccurred(event);
+    });
+    connect(m_client, &KeySerialClient::ticketTransferProgress, this,
+            [this](int frameIndex, int totalFrames, quint8 cmd) {
+        KeySessionEvent event;
+        event.kind = KeySessionEvent::TicketTransferProgress;
+        event.data.insert("frameIndex", frameIndex);
+        event.data.insert("totalFrames", totalFrames);
+        event.data.insert("cmd", static_cast<int>(cmd));
+        emit eventOccurred(event);
+    });
+    connect(m_client, &KeySerialClient::ticketTransferFinished, this, [this]() {
+        KeySessionEvent event;
+        event.kind = KeySessionEvent::TicketTransferFinished;
+        emit eventOccurred(event);
+    });
+    connect(m_client, &KeySerialClient::ticketTransferFailed, this, [this](const QString &reason) {
+        KeySessionEvent event;
+        event.kind = KeySessionEvent::TicketTransferFailed;
+        event.data.insert("what", reason);
         emit eventOccurred(event);
     });
     connect(m_client, &KeySerialClient::logItemEmitted, this, &KeySessionService::logItemEmitted);
@@ -152,6 +176,7 @@ KeySessionSnapshot KeySessionService::snapshot() const
     s.connected = m_client->isConnected();
     s.keyPresent = m_client->isKeyPresent();
     s.keyStable = m_client->isKeyStable();
+    s.sessionReady = m_client->isSessionReady();
     s.portName = m_client->currentPortName();
     s.verifiedPortName = m_client->hasVerifiedPort() ? m_client->verifiedPortName() : QString();
     return s;
@@ -185,6 +210,37 @@ void KeySessionService::execute(const CommandRequest &request)
     case CommandId::Custom:
         break;
     }
+}
+
+void KeySessionService::transferTicket(const TicketTransferRequest &request)
+{
+    QByteArray jsonBytes = request.jsonBytes;
+    if (jsonBytes.isEmpty() && !request.jsonPath.trimmed().isEmpty()) {
+        QFile f(request.jsonPath);
+        if (!f.open(QIODevice::ReadOnly)) {
+            KeySessionEvent event;
+            event.kind = KeySessionEvent::Notice;
+            event.data.insert("what",
+                              QStringLiteral("传票发送失败：无法读取 JSON 文件 %1")
+                                  .arg(request.jsonPath));
+            emit eventOccurred(event);
+            return;
+        }
+        jsonBytes = f.readAll();
+        f.close();
+    }
+
+    if (jsonBytes.isEmpty()) {
+        KeySessionEvent event;
+        event.kind = KeySessionEvent::Notice;
+        event.data.insert("what", QStringLiteral("传票发送失败：JSON 内容为空"));
+        emit eventOccurred(event);
+        return;
+    }
+
+    if (request.opId >= 0)
+        m_client->setCurrentOpId(request.opId);
+    m_client->transferTicketJson(jsonBytes, request.stationId);
 }
 
 QVariantList KeySessionService::toTaskVariantList(const QList<KeyTaskInfo> &tasks) const

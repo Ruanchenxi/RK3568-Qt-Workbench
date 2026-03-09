@@ -95,6 +95,7 @@ KeySerialClient::KeySerialClient(ISerialTransport *transport, QObject *parent)
     , m_hasVerifiedPort(false)
     , m_currentOpId(-1)
     , m_stationId(1)   // 默认站号 1，由 KeySessionService 构造后通过 setStationId() 注入
+    , m_ticketFrameIndex(-1)
 {
     Q_ASSERT(m_serial != nullptr);
     connect(m_serial, &ISerialTransport::readyRead, this, &KeySerialClient::onReadyRead);
@@ -165,6 +166,7 @@ bool KeySerialClient::connectPort(const QString &portName, int baud)
     m_sessionReady = false;
     m_deferredInFlightType = INFLIGHT_NONE;
     m_deferredDeleteTaskId.clear();
+    clearTicketTransferState();
     m_qtaskRecoveryRound = 0;
     m_keyPlacedElapsed.invalidate();
     m_lastNoiseElapsed.invalidate();
@@ -220,6 +222,7 @@ void KeySerialClient::disconnectPort()
     m_sessionReady = false;
     m_deferredInFlightType = INFLIGHT_NONE;
     m_deferredDeleteTaskId.clear();
+    clearTicketTransferState();
     m_qtaskRecoveryRound = 0;
     m_keyPlacedElapsed.invalidate();
     m_lastNoiseElapsed.invalidate();
@@ -403,6 +406,107 @@ void KeySerialClient::deleteFirstTask()
         return;
     }
     deleteTask(m_tasks.first().taskId);
+}
+
+void KeySerialClient::clearTicketTransferState()
+{
+    m_ticketFrames.clear();
+    m_ticketFrameIndex = -1;
+}
+
+bool KeySerialClient::sendNextTicketFrame()
+{
+    const int nextIndex = m_ticketFrameIndex + 1;
+    if (nextIndex < 0 || nextIndex >= m_ticketFrames.size()) {
+        return false;
+    }
+
+    m_ticketFrameIndex = nextIndex;
+    const QByteArray &frame = m_ticketFrames[m_ticketFrameIndex];
+    const quint8 cmd = (frame.size() > OFF_CMD) ? static_cast<quint8>(frame[OFF_CMD]) : CMD_TICKET;
+    const quint16 lenField = (frame.size() > OFF_LEN + 1)
+            ? static_cast<quint16>(static_cast<quint8>(frame[OFF_LEN]))
+              | (static_cast<quint16>(static_cast<quint8>(frame[OFF_LEN + 1])) << 8)
+            : 0;
+    const int payloadChunkLen = qMax(0, (int)lenField - 3);
+
+    emitNotice(QString("发送传票帧 %1/%2 Cmd=0x%3 Payload=%4B")
+                   .arg(m_ticketFrameIndex + 1)
+                   .arg(m_ticketFrames.size())
+                   .arg(cmd, 2, 16, QChar('0'))
+                   .arg(payloadChunkLen));
+    emit ticketTransferProgress(m_ticketFrameIndex + 1, m_ticketFrames.size(), cmd);
+    emitLog(LogDir::EVENT, cmd, lenField,
+            QString("TICKET frame %1/%2 send")
+                .arg(m_ticketFrameIndex + 1)
+                .arg(m_ticketFrames.size()),
+            frame, true, true);
+    sendFrame(frame, cmd, INFLIGHT_TICKET);
+    return true;
+}
+
+void KeySerialClient::transferTicketJson(const QByteArray &jsonBytes, quint8 stationId)
+{
+    if (!m_serial->isOpen()) {
+        emitNotice("传票发送失败：串口未连接");
+        emit ticketTransferFailed("串口未连接");
+        return;
+    }
+    if (m_inFlight) {
+        emitNotice("传票发送失败：当前有命令在途");
+        emit ticketTransferFailed("当前有命令在途");
+        return;
+    }
+    if (!m_keyPlaced || !m_keyStable || !m_sessionReady) {
+        emitNotice("传票发送失败：钥匙未就绪，请先完成握手并保持钥匙稳定");
+        emit ticketTransferFailed("钥匙未就绪");
+        return;
+    }
+
+    QJsonObject ticketObj;
+    QString errorMsg;
+    if (!TicketPayloadEncoder::extractTicketObject(jsonBytes, ticketObj, errorMsg)) {
+        emitLog(LogDir::ERROR, 0, 0,
+                QString("Ticket JSON parse failed: %1").arg(errorMsg));
+        emitNotice(QString("传票发送失败：%1").arg(errorMsg));
+        emit ticketTransferFailed(QString("JSON 解析失败：%1").arg(errorMsg));
+        return;
+    }
+
+    const TicketPayloadEncoder::EncodeResult enc =
+        TicketPayloadEncoder::encode(ticketObj, stationId,
+                                     TicketPayloadEncoder::StringEncoding::GBK);
+    for (const QString &line : enc.fieldLog) {
+        emitLog(LogDir::RAW, 0, 0, line, {}, true, true);
+    }
+    if (!enc.ok) {
+        emitLog(LogDir::ERROR, 0, 0,
+                QString("Ticket payload encode failed: %1").arg(enc.errorMsg));
+        emitNotice(QString("传票编码失败：%1").arg(enc.errorMsg));
+        emit ticketTransferFailed(QString("payload 编码失败：%1").arg(enc.errorMsg));
+        return;
+    }
+
+    TicketFrameBuilder builder(stationId, 0x00, 0x00);
+    const QList<QByteArray> frames = builder.buildFrames(enc.payload);
+    if (frames.isEmpty()) {
+        emitLog(LogDir::ERROR, 0, 0, "Ticket frame build failed: no frames");
+        emitNotice("传票封帧失败：未生成任何帧");
+        emit ticketTransferFailed("封帧失败：未生成任何帧");
+        return;
+    }
+
+    clearTicketTransferState();
+    m_ticketFrames = frames;
+    emitNotice(QString("传票已编码：payload=%1B frameCount=%2")
+                   .arg(enc.payload.size())
+                   .arg(m_ticketFrames.size()));
+    if (!sendNextTicketFrame()) {
+        emitLog(LogDir::ERROR, 0, 0, "Ticket send failed: cannot dispatch first frame");
+        emitNotice("传票发送失败：首帧派发失败");
+        emit ticketTransferFailed("首帧派发失败");
+        clearTicketTransferState();
+    }
 }
 
 // ============================================================
@@ -683,6 +787,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
                 const bool hadInFlight = m_inFlight;
                 stopRetryTimer();
                 clearInFlight();
+                clearTicketTransferState();
                 m_pendingAfterDelQuery = false;
                 m_qtaskRecoveryTimer->stop();
                 m_qtaskRecoveryRound = 0;
@@ -709,6 +814,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
                 const bool hadInFlight = m_inFlight;
                 stopRetryTimer();
                 clearInFlight();
+                clearTicketTransferState();
                 m_pendingAfterDelQuery = false;
                 if (hadInFlight) {
                     emitNotice("钥匙已拔走，当前命令已取消");
@@ -743,6 +849,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
     // --- ACK (0x5A) ---
     if (cmd == CMD_ACK) {
         quint8 ackedCmd = dataLen > 0 ? static_cast<quint8>(data[0]) : 0x00;
+        const quint8 inFlightBeforeAck = m_inFlightType;
         log(QString("  >> ACK for Cmd=0x%1").arg(ackedCmd, 2, 16, QChar('0')));
 
         // 生成 ACK 摘要：标明被确认的命令
@@ -758,6 +865,8 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
             matched = true;
         else if (m_inFlightType == INFLIGHT_DEL && ackedCmd == CMD_DEL)
             matched = true;
+        else if (m_inFlightType == INFLIGHT_TICKET && ackedCmd == m_expectedAckCmd)
+            matched = true;
 
         if (matched) {
             stopRetryTimer();
@@ -771,11 +880,31 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
             scheduleStartupProbeQTask();
         }
 
-        if (matched) {
+        if (matched && inFlightBeforeAck != INFLIGHT_TICKET) {
             tryDispatchDeferredCommand();
         }
 
         emit ackReceived(ackedCmd);
+
+        if (ackedCmd != CMD_SET_COM && !m_ticketFrames.isEmpty() && m_ticketFrameIndex >= 0) {
+            emitLog(LogDir::EVENT, ackedCmd, lenField,
+                    QString("TICKET frame %1/%2 ACK")
+                        .arg(m_ticketFrameIndex + 1)
+                        .arg(m_ticketFrames.size()),
+                    {}, true, true);
+            if (m_ticketFrameIndex + 1 < m_ticketFrames.size()) {
+                if (!sendNextTicketFrame()) {
+                    emitNotice("传票发送失败：后续帧派发失败");
+                    emit ticketTransferFailed("后续帧派发失败");
+                    clearTicketTransferState();
+                }
+            } else {
+                emitNotice(QString("传票发送完成，共 %1 帧").arg(m_ticketFrames.size()));
+                emit ticketTransferFinished();
+                clearTicketTransferState();
+            }
+            return;
+        }
 
         // DEL ACK → 自动再查一次验证
         if (ackedCmd == CMD_DEL && m_pendingAfterDelQuery) {
@@ -812,7 +941,12 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
                 frame);
         stopRetryTimer();
         clearInFlight();
+        clearTicketTransferState();
         m_pendingAfterDelQuery = false;
+        if (origCmd == CMD_TICKET || origCmd == CMD_TICKET_MORE) {
+            emitNotice(QString("传票发送收到 NAK：%1").arg(errDesc));
+            emit ticketTransferFailed(QString("收到 NAK：%1").arg(errDesc));
+        }
         tryDispatchDeferredCommand();
         emit nakReceived(origCmd, errCode);
         return;
@@ -997,6 +1131,8 @@ void KeySerialClient::sendFrame(const QByteArray &frame, quint8 expectedAckCmd,
     switch (txCmd) {
     case CMD_SET_COM: txSummary = "SET_COM send"; break;
     case CMD_Q_TASK:  txSummary = "Q_TASK(all) send"; break;
+    case CMD_TICKET:  txSummary = "TICKET send"; break;
+    case CMD_TICKET_MORE: txSummary = "TICKET_MORE send"; break;
     case CMD_DEL: {
         // 从帧数据区提取 taskId 前4字节作为摘要
         QByteArray taskIdPart = frame.mid(OFF_DATA, qMin(4, frame.size() - OFF_DATA));
@@ -1577,6 +1713,10 @@ void KeySerialClient::onRetryTimeout()
             cmdName = "DEL";
         } else if (timeoutInFlight == INFLIGHT_SETCOM) {
             cmdName = "SET_COM";
+        } else if (timeoutInFlight == INFLIGHT_TICKET) {
+            cmdName = QString("TICKET frame %1/%2")
+                    .arg(m_ticketFrameIndex + 1)
+                    .arg(m_ticketFrames.size());
         }
 
         if (timeoutInFlight == INFLIGHT_QTASK && m_qtaskProbeInFlight) {
@@ -1616,8 +1756,12 @@ void KeySerialClient::onRetryTimeout()
         log(QString("[TIMEOUT] %1 重发 %2 次仍无响应，保持串口连接").arg(cmdName).arg(MAX_RETRIES));
         emitLog(LogDir::ERROR, timeoutCmd, 0,
                 QString("%1 timeout after %2 retries, keep port open").arg(cmdName).arg(MAX_RETRIES));
+        if (timeoutInFlight == INFLIGHT_TICKET) {
+            emit ticketTransferFailed(QString("%1 超时").arg(cmdName));
+        }
         stopRetryTimer();
         clearInFlight();
+        clearTicketTransferState();
         m_pendingAfterDelQuery = false;
         m_sessionReady = false;
         m_qtaskRecoveryRound = 0;
@@ -1655,6 +1799,9 @@ void KeySerialClient::onRetryTimeout()
     case INFLIGHT_SETCOM: retrySummary += " for SET_COM"; break;
     case INFLIGHT_DEL:    retrySummary += " for DEL"; break;
     case INFLIGHT_QTASK:  retrySummary += " for Q_TASK"; break;
+    case INFLIGHT_TICKET: retrySummary += QString(" for TICKET frame %1/%2")
+                                           .arg(m_ticketFrameIndex + 1)
+                                           .arg(m_ticketFrames.size()); break;
     default:
         retrySummary += QString(" for 0x%1").arg(m_expectedAckCmd, 2, 16, QChar('0'));
     }

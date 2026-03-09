@@ -52,6 +52,12 @@ Last Updated: 2026-03-04
 4. `src/features/key/protocol/LogItem.h`  
 作用：结构化日志数据模型（时间/方向/命令/长度/摘要/Hex/opId）。  
 
+5. `src/features/key/protocol/TicketPayloadEncoder.*`  
+作用：传票 `JSON -> payload` 纯协议逻辑。  
+
+6. `src/features/key/protocol/TicketFrameBuilder.*`  
+作用：传票 `payload -> frame(s)`、分帧与 CRC。  
+
 ### 2.2 编排层（常改）
 
 1. `src/features/key/application/KeySessionService.*`  
@@ -63,6 +69,12 @@ Last Updated: 2026-03-04
 3. `src/features/key/application/SerialLogManager.*`  
 作用：日志缓存、过滤（专家模式）、CSV 导出。  
 
+4. `src/features/key/application/TicketIngressService.*`  
+作用：工作台 JSON 的本地 HTTP 输入源。  
+
+5. `src/features/key/application/TicketStore.*`  
+作用：系统票入池、状态管理、原始 JSON 索引。  
+
 ### 2.3 UI 层（展示与交互）
 
 1. `src/features/key/ui/keymanagepage.*`  
@@ -73,6 +85,18 @@ Last Updated: 2026-03-04
 1. `src/platform/serial/ISerialTransport.h`（抽象）  
 2. `src/platform/serial/QtSerialTransport.*`（真机串口）  
 3. `src/platform/serial/ReplaySerialTransport.*`（脚本回放）  
+
+---
+
+## 2.5 传票链路（新增业务路径）
+
+说明：
+
+1. 传票属于 **钥匙协议新增业务路径**，不挂靠 `Q_TASK` 语义。  
+2. 工作台 JSON 通过 `TicketIngressService -> TicketStore` 进入主程序。  
+3. 手动/自动传票由 `KeyManageController` 编排。  
+4. 多帧 ACK 驱动续发统一放在 `KeySerialClient` 内部。  
+5. 详细规则见：`TICKET_PROTOCOL_GUIDE.md`。  
 
 ---
 

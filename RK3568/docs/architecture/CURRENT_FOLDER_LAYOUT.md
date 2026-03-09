@@ -226,6 +226,18 @@ src/
 1. 串口日志行模型管理与导出。  
 2. 处理日志过滤、摘要、HEX 展示数据。  
 
+#### `application/TicketIngressService.h/.cpp`
+
+1. 主程序内本地 HTTP 接收入口。  
+2. 接住工作台发出的传票 JSON，支持 `OPTIONS` 预检与跨域。  
+3. 只负责输入接入与落盘，不做协议编码。  
+
+#### `application/TicketStore.h/.cpp`
+
+1. 系统票池。  
+2. 负责系统票列表、原始 JSON 索引、传票状态管理。  
+3. 供 Controller/UI 展示系统票数据与当前选中票据。  
+
 #### `protocol/KeySerialClient.h/.cpp`
 
 1. 钥匙协议核心逻辑（帧处理、状态机、握手语义）。  
@@ -245,6 +257,16 @@ src/
 
 1. 串口日志结构定义（时间、方向、命令、HEX 等）。  
 2. 供 UI 层渲染表格。  
+
+#### `protocol/TicketPayloadEncoder.h/.cpp`
+
+1. 传票 `JSON -> payload` 的纯协议编码逻辑。  
+2. 不做 UI / 文件 I/O / 串口发送。  
+
+#### `protocol/TicketFrameBuilder.h/.cpp`
+
+1. 传票 `payload -> 单帧/多帧` 封装。  
+2. 提供分帧与 CRC 能力。  
 
 ---
 
@@ -346,6 +368,16 @@ src/
 #### `KeyTaskDto.h`
 
 1. 钥匙任务数据传输对象。  
+
+#### `SystemTicketDto.h`
+
+1. 系统票数据 DTO。  
+2. 承载系统票表展示字段与传票状态字段。  
+
+#### `TicketTransferRequest.h`
+
+1. 传票发送请求 DTO。  
+2. 承载手动/自动传票入口的统一输入。  
 
 #### `SystemSettingsDto.h`
 
