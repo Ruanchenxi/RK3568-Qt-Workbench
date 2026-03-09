@@ -122,9 +122,11 @@ QString SerialLogManager::cmdText(quint8 cmd)
     switch (cmd) {
     case KeyProtocol::CmdSetCom:   return QStringLiteral("SET_COM");
     case KeyProtocol::CmdQTask:    return QStringLiteral("Q_TASK");
+    case KeyProtocol::CmdITaskLog: return QStringLiteral("I_TASK_LOG");
     case KeyProtocol::CmdDel:      return QStringLiteral("DEL");
     case KeyProtocol::CmdTicket:   return QStringLiteral("TICKET");
     case KeyProtocol::CmdTicketMore:return QStringLiteral("TICKET_MORE");
+    case KeyProtocol::CmdUpTaskLog:return QStringLiteral("UP_TASK_LOG");
     case KeyProtocol::CmdAck:      return QStringLiteral("ACK");
     case KeyProtocol::CmdNak:      return QStringLiteral("NAK");
     case KeyProtocol::CmdKeyEvent: return QStringLiteral("KEY_EVT");

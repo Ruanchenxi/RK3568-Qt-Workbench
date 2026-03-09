@@ -21,6 +21,7 @@
 
 class TicketStore;
 class TicketIngressService;
+class TicketReturnHttpClient;
 
 class KeyManageController : public QObject
 {
@@ -37,6 +38,7 @@ public:
     void onQueryTasksClicked();
     void onDeleteClicked();
     void onTransferSelectedTicket();
+    void onReturnSelectedTicket();
     void onGetSystemTicketListClicked();
     void onSystemTicketSelected(int row);
 
@@ -50,6 +52,7 @@ public:
     KeySessionSnapshot currentSnapshot() const;
     QList<SystemTicketDto> systemTickets() const;
     QString httpServerLogText() const;
+    QString httpClientLogText() const;
 
 signals:
     void statusMessage(const QString &message);
@@ -58,6 +61,7 @@ signals:
     void systemTicketsUpdated(const QList<SystemTicketDto> &tickets);
     void selectedSystemTicketChanged(const SystemTicketDto &ticket);
     void httpServerLogAppended(const QString &text);
+    void httpClientLogAppended(const QString &text);
     void ackReceived(quint8 ackedCmd);
     void nakReceived(quint8 origCmd, quint8 errCode);
     void timeoutOccurred(const QString &what);
@@ -71,12 +75,19 @@ private slots:
     void handleSystemTicketsChanged(const QList<SystemTicketDto> &tickets);
     void handleJsonReceived(const QByteArray &jsonBytes, const QString &savedPath);
     void handleHttpServerLog(const QString &text);
+    void handleHttpClientLog(const QString &text);
+    void handleReturnUploadSucceeded(const QString &taskId);
+    void handleReturnUploadFailed(const QString &taskId, const QString &reason);
 
 private:
     void tryAutoConnectKeyPort();
     bool autoTransferEnabled() const;
     void tryStartTicketTransfer(const QString &taskId, bool automatic);
     void tryAutoTransferPendingTicket();
+    void tryStartTicketReturn(const QString &taskId, bool automatic);
+    void tryAutoReturnCompletedTicket(const QList<KeyTaskDto> &tasks);
+    QByteArray findKeyTaskIdRaw(const QString &taskId, quint8 *status = nullptr) const;
+    static QString taskIdFromRaw(const QByteArray &taskIdRaw);
     int nextOpId();
     QList<KeyTaskDto> toTaskDtos(const QVariantList &taskList) const;
 
@@ -84,9 +95,17 @@ private:
     SerialLogManager *m_logManager;
     TicketStore *m_ticketStore;
     TicketIngressService *m_ticketIngress;
+    TicketReturnHttpClient *m_ticketReturnClient;
     int m_nextOpId;
     QString m_selectedSystemTicketId;
     QString m_activeTransferTaskId;
+    QString m_activeReturnTaskId;
+    QByteArray m_activeReturnTaskIdRaw;
+    QString m_pendingDeletedSystemTicketId;
+    QByteArray m_pendingDeletedKeyTaskRaw;
+    bool m_pendingDeleteAllowsRetransfer = false;
+    QList<KeyTaskDto> m_lastKeyTasks;
+    QStringList m_httpClientLogLines;
     QStringList m_httpServerLogLines;
 };
 

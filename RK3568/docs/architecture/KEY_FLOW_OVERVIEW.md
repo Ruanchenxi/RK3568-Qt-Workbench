@@ -2,7 +2,7 @@
 
 Status: Active  
 Owner: 项目维护者  
-Last Updated: 2026-03-06  
+Last Updated: 2026-03-09  
 适用范围：说明当前钥匙链路、工作台 JSON 输入链、系统票链、传票发送链。  
 不适用范围：不替代逐字节协议文档。  
 
@@ -62,7 +62,7 @@ KeyManagePage(systemTicketTable 选中)
 2. 原始 JSON 由 `TicketStore` 提供  
 3. 协议状态机只在 `KeySerialClient` 内维护  
 
-## 4. 自动传票链（预埋）
+## 4. 自动传票链
 
 ```text
 TicketIngressService 收到新 JSON
@@ -74,8 +74,13 @@ TicketIngressService 收到新 JSON
 
 当前状态：
 
-1. 逻辑已预埋  
-2. 默认关闭：`ticket/autoTransferEnabled=false`  
+1. 逻辑已落地  
+2. 默认开启：`ticket/autoTransferEnabled=true`
+3. 进入发送前必须同时满足：
+   - 串口已连接
+   - 钥匙在位
+   - 钥匙稳定
+   - `sessionReady=true`
 
 ## 5. 传票发送状态
 
@@ -86,3 +91,10 @@ TicketIngressService 收到新 JSON
 3. `sending`
 4. `success`
 5. `failed`
+6. `key-cleared`
+
+说明：
+
+1. `key-cleared` 表示钥匙侧对应任务已被手动删除  
+2. 此状态下系统票允许再次传票  
+3. 当前下一阶段重点是回传链路，不在这一阶段继续扩展撤销规则  

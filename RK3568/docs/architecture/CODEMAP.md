@@ -66,6 +66,7 @@ Last Updated: 2026-03-04
 | `src/features/key/application/SerialLogManager.h/.cpp` | 串口日志缓冲/过滤/导出组织 | 不承载协议帧解析 |
 | `src/features/key/application/TicketIngressService.h/.cpp` | 主程序内本地 HTTP 接收入口（工作台 JSON 输入源） | 放在 application，禁止下沉到 UI |
 | `src/features/key/application/TicketStore.h/.cpp` | 系统票池与传票状态管理 | 为 UI 提供列表/选中摘要，避免页面持有原始 JSON |
+| `src/features/key/application/TicketReturnHttpClient.h/.cpp` | 回传日志 HTTP 上传客户端 | 只负责上传与日志；不解析串口协议，不直接触发 UI |
 | `src/features/key/protocol/KeySerialClient.h/.cpp` | 串口协议核心状态机与报文处理 | 仅允许依赖 `ISerialTransport` 抽象 |
 | `src/features/key/protocol/KeyProtocolDefs.h` | 协议命令与常量定义 | 语义锁定，谨慎改动 |
 | `src/features/key/protocol/KeyCrc16.h` | CRC 计算工具 | 协议关键算法，不随意改 |
@@ -135,6 +136,7 @@ Last Updated: 2026-03-04
 | 新增钥匙协议报文 | `features/key/protocol/*`, `features/key/application/KeySessionService.*` | 协议语义锁定区，改动需最小且可回放验证 |
 | 接工作台传票 JSON 输入 | `features/key/application/TicketIngressService.*`, `features/key/application/TicketStore.*`, `features/key/application/KeyManageController.*` | 先入系统票池，再由 UI 展示 |
 | 调整手动/自动传票 | `features/key/application/KeyManageController.*`, `features/key/application/KeySessionService.*`, `features/key/protocol/*` | UI 不直接碰协议类 |
+| 接入钥匙回传日志主链 | `features/key/protocol/*`, `features/key/application/TicketReturnHttpClient.*`, `features/key/application/KeyManageController.*`, `features/key/application/TicketStore.*` | 协议解析留在 protocol；HTTP 上传留在 application |
 | 调整钥匙管理串口日志页 | `features/key/ui/keymanagepage.*`, `features/key/application/SerialLogManager.*` | UI 只做渲染和交互，不下沉协议细节 |
 | 调整工作台接口接入 | `features/workbench/application/*`, `features/workbench/ui/*` | 页面不直接写网络细节 |
 | 新增系统配置项 | `features/system/application/*`, `features/system/ui/*`, `core/ConfigManager.*` | 配置读写集中到 ConfigManager |

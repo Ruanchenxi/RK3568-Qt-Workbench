@@ -22,6 +22,7 @@ enum class CommandId
 {
     SetCom,
     QueryTasks,
+    QueryTaskLog,
     DeleteTask,
     Custom
 };
@@ -53,6 +54,7 @@ struct KeySessionEvent
         Ack,
         Nak,
         TasksUpdated,
+        TaskLogReady,
         KeyStateChanged,
         RawProtocol,
         TicketTransferProgress,

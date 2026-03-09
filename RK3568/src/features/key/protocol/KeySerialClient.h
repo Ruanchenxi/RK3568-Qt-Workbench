@@ -12,9 +12,9 @@
  *   - 帧头：固定 0x7E 0x6C
  *   - KeyId：钥匙编号，0xFF=广播查询所有钥匙
  *   - FrameNo：帧序号，每次发送自增（用于匹配请求-响应）
- *   - Addr2：2 字节地址扩展（SET_COM/Q_TASK 用 0x0000，DEL 用 0x0001）
+ *   - Addr2：2 字节地址扩展（SET_COM/Q_TASK 用 0x0000，DEL/I_TASK_LOG 使用当前站号）
  *   - Len：2 字节小端，值 = Cmd(1) + Data(N) 的字节数
- *   - Cmd：命令码（SET_COM=0x0F, Q_TASK=0x04, DEL=0x06, ACK=0x5A, NAK=0x00, KEY_EVENT=0x11）
+ *   - Cmd：命令码（SET_COM=0x0F, Q_TASK=0x04, I_TASK_LOG=0x05, DEL=0x06, UP_TASK_LOG=0x15, ACK=0x5A）
  *   - CRC16：高字节在前，校验范围 = Cmd + Data
  *
  * 状态机概述：
@@ -45,6 +45,7 @@
 #include <QElapsedTimer>
 #include <QList>
 #include <QByteArray>
+#include <QVariantMap>
 #include <QStringList>
 #include "platform/serial/ISerialTransport.h"
 #include "KeyProtocolDefs.h"
@@ -77,12 +78,14 @@ static const int MIN_FRAME_LEN = 11; ///< 最小帧长（Data 为空时）
 // --- 命令码别名 ---
 static constexpr quint8 CMD_SET_COM   = KeyProtocol::CmdSetCom;   ///< 握手命令 0x0F
 static constexpr quint8 CMD_Q_TASK    = KeyProtocol::CmdQTask;    ///< 查询任务 0x04
+static constexpr quint8 CMD_I_TASK_LOG = KeyProtocol::CmdITaskLog; ///< 请求回传任务日志 0x05
 static constexpr quint8 CMD_DEL       = KeyProtocol::CmdDel;      ///< 删除任务 0x06
 static constexpr quint8 CMD_TICKET    = KeyProtocol::CmdTicket;   ///< 传票单帧/最后帧 0x03
 static constexpr quint8 CMD_TICKET_MORE = KeyProtocol::CmdTicketMore; ///< 传票还有后续帧 0x83
 static constexpr quint8 CMD_ACK       = KeyProtocol::CmdAck;      ///< 设备确认 0x5A
 static constexpr quint8 CMD_NAK       = KeyProtocol::CmdNak;      ///< 设备拒绝 0x00
 static constexpr quint8 CMD_KEY_EVENT = KeyProtocol::CmdKeyEvent;  ///< 钥匙事件 0x11
+static constexpr quint8 CMD_UP_TASK_LOG = KeyProtocol::CmdUpTaskLog; ///< 回传任务日志 0x15
 
 static constexpr quint8 REQ_KEYID = KeyProtocol::ReqKeyId;  ///< 广播 KeyId 0xFF
 
@@ -115,6 +118,7 @@ static const quint8 INFLIGHT_SETCOM = 1;  ///< 正在等待 SET_COM 的 ACK
 static const quint8 INFLIGHT_QTASK  = 2;  ///< 正在等待 Q_TASK 的响应帧
 static const quint8 INFLIGHT_DEL    = 3;  ///< 正在等待 DEL 的 ACK
 static const quint8 INFLIGHT_TICKET = 4;  ///< 正在等待传票分帧 ACK
+static const quint8 INFLIGHT_TASKLOG = 5; ///< 正在等待 I_TASK_LOG 的响应帧
 
 } // namespace KeyProto
 
@@ -178,6 +182,7 @@ public:
     bool isConnected() const;
 
     void queryTasksAll();
+    void requestTaskLog(const QByteArray &taskId16);
     void deleteTask(const QByteArray &taskId16);
     void deleteFirstTask();
     void transferTicketJson(const QByteArray &jsonBytes, quint8 stationId = 0x01);
@@ -238,6 +243,8 @@ signals:
     void ackReceived(quint8 ackedCmd);
     /// 收到 NAK 帧，origCmd 为被拒绝的命令码，errCode 为错误码
     void nakReceived(quint8 origCmd, quint8 errCode);
+    /// 收到并解析完整的任务回传日志（当前仅支持单帧日志）
+    void taskLogReady(const QVariantMap &payload);
     /// 传票发送进度（frameIndex 从 1 开始）
     void ticketTransferProgress(int frameIndex, int totalFrames, quint8 cmd);
     /// 传票发送完成
@@ -270,6 +277,10 @@ private:
     void startRetryTimer(quint8 expectedAckCmd);              ///< 启动重试定时器
     void stopRetryTimer();                                    ///< 停止重试定时器并清理
     void clearInFlight();                                     ///< 清除 inFlight 状态
+    void sendFrameNoWait(const QByteArray &frame,
+                         quint8 cmd,
+                         quint16 lenField,
+                         const QString &summary);             ///< 不进入 inFlight 的协议回复帧
 
     // --- 业务命令调度 ---
     void queryTasksAllInternal(bool fromRecovery, bool allowWhenUnknownKey = false); ///< Q_TASK 内部实现
@@ -279,6 +290,7 @@ private:
     void tryDispatchDeferredCommand();                        ///< 尝试派发延迟的业务命令
     void sendSetComHandshake(const QString &reason);          ///< 发送 SET_COM 握手帧
     void clearTicketTransferState();                         ///< 清理传票发送状态
+    void clearTaskLogState();                                ///< 清理回传日志状态
     bool sendNextTicketFrame();                              ///< 发送下一帧传票
 
     // --- 缓冲区管理与诊断 ---
@@ -362,6 +374,10 @@ private:
     // 传票发送状态
     QList<QByteArray> m_ticketFrames;      ///< 当前待发送的传票帧列表
     int               m_ticketFrameIndex;  ///< 当前发送中的帧索引
+
+    // 回传日志状态
+    QByteArray         m_pendingTaskLogTaskId; ///< 当前请求回传日志的任务ID（16B 原始值）
+    quint16            m_pendingTaskLogFrames; ///< I_TASK_LOG 返回的总帧数
 };
 
 #endif // KEYSERIALCLIENT_H

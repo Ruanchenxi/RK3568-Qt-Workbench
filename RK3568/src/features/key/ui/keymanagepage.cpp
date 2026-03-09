@@ -92,7 +92,7 @@ void KeyManagePage::initUi()
     ui->btnTransferTicket->setText(QStringLiteral("传票到钥匙"));
     ui->btnDeleteTicket->setText(QStringLiteral("删除钥匙票"));
     ui->btnDeleteTicket->setToolTip(QStringLiteral("删除钥匙中已存在的票，请先读取钥匙票列表并选中。"));
-    ui->lblReturnHint->setText(QStringLiteral("回传默认禁用，失败时才启用"));
+    ui->lblReturnHint->setText(QStringLiteral("回传在钥匙任务完成后自动触发；接口未配置时不会上传"));
 
     ui->serialLogTable->setSelectionMode(QAbstractItemView::SingleSelection);
     ui->serialLogTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -192,7 +192,8 @@ void KeyManagePage::initUi()
     if (QTableWidgetItem *h = ui->keyTicketTable->horizontalHeaderItem(4)) h->setTextAlignment(Qt::AlignCenter);
 
     ui->lblTicketPosition->setWordWrap(true);
-    ui->lblTicketPosition->setMinimumHeight(36);
+    ui->lblTicketPosition->setMinimumHeight(54);
+    ui->ticketInfoCard->setMinimumHeight(168);
 
     ui->lblBatteryInfo->setText(QStringLiteral("电量: --"));
     ui->lblTaskInfo->setText(QStringLiteral("任务数: --"));
@@ -261,6 +262,8 @@ void KeyManagePage::initController()
             this, &KeyManagePage::onSelectedSystemTicketChanged);
     connect(m_controller, &KeyManageController::httpServerLogAppended,
             this, &KeyManagePage::onHttpServerLogAppended);
+    connect(m_controller, &KeyManageController::httpClientLogAppended,
+            this, &KeyManagePage::onHttpClientLogAppended);
 
     m_controller->start();
 }
@@ -276,7 +279,7 @@ void KeyManagePage::onTabChanged(int index)
     ui->tabSerial->setChecked(index == 1);
     ui->tabHttpClient->setChecked(index == 2);
     ui->tabHttpServer->setChecked(index == 3);
-    if (index == 0 || index == 3)
+    if (index == 0 || index == 2 || index == 3)
         refreshSystemTicketViews();
 }
 
@@ -325,7 +328,7 @@ void KeyManagePage::onDeleteTicket()
 
 void KeyManagePage::onReturnTicket()
 {
-    updateStatusBar(QStringLiteral("回传...（HTTP流程待对接）"));
+    m_controller->onReturnSelectedTicket();
 }
 
 void KeyManagePage::onGetSystemTicketList()
@@ -515,6 +518,11 @@ void KeyManagePage::onHttpServerLogAppended(const QString &text)
     ui->httpServerLogText->append(text);
 }
 
+void KeyManagePage::onHttpClientLogAppended(const QString &text)
+{
+    ui->httpClientLogText->append(text);
+}
+
 // ====================================================================
 // HTTP Tab
 // ====================================================================
@@ -633,9 +641,11 @@ QString KeyManagePage::cmdText(quint8 cmd) const
     switch (cmd) {
     case KeyProtocol::CmdSetCom:   return QStringLiteral("SET_COM");
     case KeyProtocol::CmdQTask:    return QStringLiteral("Q_TASK");
+    case KeyProtocol::CmdITaskLog: return QStringLiteral("I_TASK_LOG");
     case KeyProtocol::CmdDel:      return QStringLiteral("DEL");
     case KeyProtocol::CmdTicket:   return QStringLiteral("TICKET");
     case KeyProtocol::CmdTicketMore:return QStringLiteral("TICKET_MORE");
+    case KeyProtocol::CmdUpTaskLog:return QStringLiteral("UP_TASK_LOG");
     case KeyProtocol::CmdAck:      return QStringLiteral("ACK");
     case KeyProtocol::CmdNak:      return QStringLiteral("NAK");
     case KeyProtocol::CmdKeyEvent: return QStringLiteral("KEY_EVT");
@@ -664,7 +674,10 @@ void KeyManagePage::populateSystemTicketTable(const QList<SystemTicketDto> &tick
         QTableWidgetItem *sourceItem = new QTableWidgetItem(QStringLiteral("工作台"));
         sourceItem->setTextAlignment(Qt::AlignCenter);
         ui->systemTicketTable->setItem(row, 3, sourceItem);
-        QTableWidgetItem *stateItem = new QTableWidgetItem(ticketStateText(ticket.transferState));
+        const QString displayState = (ticket.returnState.isEmpty() || ticket.returnState == QLatin1String("idle"))
+                ? ticket.transferState
+                : ticket.returnState;
+        QTableWidgetItem *stateItem = new QTableWidgetItem(ticketStateText(displayState));
         stateItem->setTextAlignment(Qt::AlignCenter);
         ui->systemTicketTable->setItem(row, 4, stateItem);
         ui->systemTicketTable->item(row, 0)->setData(Qt::UserRole, ticket.taskId);
@@ -691,16 +704,26 @@ void KeyManagePage::updateSelectedSystemTicketCard(const SystemTicketDto &ticket
     }
 
     QString stateColor = "#C62828";
-    if (ticket.transferState == QLatin1String("received"))
-        stateColor = "#C62828";
-    else if (ticket.transferState == QLatin1String("auto-pending"))
+    if (ticket.returnState == QLatin1String("return-requesting-log")
+            || ticket.returnState == QLatin1String("return-uploading")) {
         stateColor = "#1565C0";
-    else if (ticket.transferState == QLatin1String("sending"))
-        stateColor = "#EF6C00";
-    else if (ticket.transferState == QLatin1String("success"))
+    } else if (ticket.returnState == QLatin1String("return-success")) {
         stateColor = "#2E7D32";
-    else if (ticket.transferState == QLatin1String("failed"))
+    } else if (ticket.returnState == QLatin1String("return-failed")) {
         stateColor = "#C62828";
+    } else if (ticket.transferState == QLatin1String("received")) {
+        stateColor = "#C62828";
+    } else if (ticket.transferState == QLatin1String("auto-pending")) {
+        stateColor = "#1565C0";
+    } else if (ticket.transferState == QLatin1String("sending")) {
+        stateColor = "#EF6C00";
+    } else if (ticket.transferState == QLatin1String("success")) {
+        stateColor = "#2E7D32";
+    } else if (ticket.transferState == QLatin1String("key-cleared")) {
+        stateColor = "#1565C0";
+    } else if (ticket.transferState == QLatin1String("failed")) {
+        stateColor = "#C62828";
+    }
 
     ui->lblTicketNo->setText(QStringLiteral("票号: <font color='#2E7D32'>%1</font>").arg(ticket.ticketNo));
     ui->lblTicketType->setText(QStringLiteral("类型: %1  |  步骤: %2")
@@ -741,6 +764,7 @@ void KeyManagePage::populateKeyTicketTable(const QList<KeyTaskDto> &tasks)
 void KeyManagePage::refreshSystemTicketViews()
 {
     populateSystemTicketTable(m_controller->systemTickets());
+    ui->httpClientLogText->setPlainText(m_controller->httpClientLogText());
     ui->httpServerLogText->setPlainText(m_controller->httpServerLogText());
 }
 
@@ -755,6 +779,14 @@ QString KeyManagePage::ticketTypeText(int taskType)
 
 QString KeyManagePage::ticketStateText(const QString &state)
 {
+    if (state == QLatin1String("return-requesting-log"))
+        return QStringLiteral("钥匙已完成，正在读取回传日志");
+    if (state == QLatin1String("return-uploading"))
+        return QStringLiteral("日志已读取，正在回传到服务端");
+    if (state == QLatin1String("return-success"))
+        return QStringLiteral("已回传到系统，并准备清理钥匙任务");
+    if (state == QLatin1String("return-failed"))
+        return QStringLiteral("回传失败，请查看HTTP客户端报文");
     if (state == QLatin1String("received"))
         return QStringLiteral("主程序已接收，尚未开始传票");
     if (state == QLatin1String("auto-pending"))
@@ -763,6 +795,8 @@ QString KeyManagePage::ticketStateText(const QString &state)
         return QStringLiteral("正在传票到钥匙");
     if (state == QLatin1String("success"))
         return QStringLiteral("已传票到钥匙，等待设备后续执行");
+    if (state == QLatin1String("key-cleared"))
+        return QStringLiteral("钥匙任务已删除，可再次传票");
     if (state == QLatin1String("failed"))
         return QStringLiteral("传票失败，请查看串口报文");
     return state;
@@ -770,6 +804,21 @@ QString KeyManagePage::ticketStateText(const QString &state)
 
 QString KeyManagePage::ticketStateDescription(const SystemTicketDto &ticket)
 {
+    if (ticket.returnState == QLatin1String("return-requesting-log")) {
+        return QStringLiteral("钥匙任务已完成，主程序正在读取回传日志");
+    }
+    if (ticket.returnState == QLatin1String("return-uploading")) {
+        return QStringLiteral("主程序已读取钥匙日志，正在回传到服务端");
+    }
+    if (ticket.returnState == QLatin1String("return-success")) {
+        return QStringLiteral("主程序已完成回传上传，钥匙任务将进入清理流程");
+    }
+    if (ticket.returnState == QLatin1String("return-failed")) {
+        if (!ticket.returnError.trimmed().isEmpty()) {
+            return QStringLiteral("回传失败：%1").arg(ticket.returnError);
+        }
+        return QStringLiteral("回传失败，请查看HTTP客户端报文");
+    }
     if (ticket.transferState == QLatin1String("received")) {
         return QStringLiteral("主程序已接收到工作台JSON，尚未开始向钥匙传票");
     }
@@ -781,6 +830,9 @@ QString KeyManagePage::ticketStateDescription(const SystemTicketDto &ticket)
     }
     if (ticket.transferState == QLatin1String("success")) {
         return QStringLiteral("主程序已完成传票发送；同一任务再次触发钥匙传票时将默认忽略重复下发");
+    }
+    if (ticket.transferState == QLatin1String("key-cleared")) {
+        return QStringLiteral("钥匙中的同任务已被删除；当前系统票可再次手动传票，也可在工作台重新触发后再次自动传票");
     }
     if (ticket.transferState == QLatin1String("failed")) {
         if (!ticket.lastError.trimmed().isEmpty()) {

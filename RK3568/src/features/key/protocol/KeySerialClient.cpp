@@ -35,6 +35,77 @@
 
 using namespace KeyProto;
 
+namespace {
+
+quint16 readLe16(const QByteArray &bytes, int offset)
+{
+    const quint8 b0 = (offset >= 0 && offset < bytes.size())
+            ? static_cast<quint8>(bytes.at(offset))
+            : 0;
+    const quint8 b1 = (offset + 1 >= 0 && offset + 1 < bytes.size())
+            ? static_cast<quint8>(bytes.at(offset + 1))
+            : 0;
+    return static_cast<quint16>(b0)
+            | (static_cast<quint16>(b1) << 8);
+}
+
+quint32 readLe32(const QByteArray &bytes, int offset)
+{
+    const quint8 b0 = (offset >= 0 && offset < bytes.size())
+            ? static_cast<quint8>(bytes.at(offset))
+            : 0;
+    const quint8 b1 = (offset + 1 >= 0 && offset + 1 < bytes.size())
+            ? static_cast<quint8>(bytes.at(offset + 1))
+            : 0;
+    const quint8 b2 = (offset + 2 >= 0 && offset + 2 < bytes.size())
+            ? static_cast<quint8>(bytes.at(offset + 2))
+            : 0;
+    const quint8 b3 = (offset + 3 >= 0 && offset + 3 < bytes.size())
+            ? static_cast<quint8>(bytes.at(offset + 3))
+            : 0;
+    return static_cast<quint32>(b0)
+            | (static_cast<quint32>(b1) << 8)
+            | (static_cast<quint32>(b2) << 16)
+            | (static_cast<quint32>(b3) << 24);
+}
+
+QString rawTaskIdToDecimalString(const QByteArray &taskId16)
+{
+    if (taskId16.size() < 8) {
+        return QString();
+    }
+
+    qulonglong value = 0;
+    for (int i = 0; i < 8; ++i) {
+        value |= (static_cast<qulonglong>(static_cast<quint8>(taskId16[i])) << (i * 8));
+    }
+    return QString::number(value);
+}
+
+QString compactHex(const QByteArray &bytes)
+{
+    return QString(bytes.toHex().toUpper());
+}
+
+QString bcd6ToDateTimeString(const QByteArray &bytes)
+{
+    if (bytes.size() < 6) {
+        return QString();
+    }
+
+    auto part = [&bytes](int index) -> QString {
+        const quint8 value = static_cast<quint8>(bytes[index]);
+        return QStringLiteral("%1%2")
+                .arg((value >> 4) & 0x0F)
+                .arg(value & 0x0F);
+    };
+
+    return QStringLiteral("20%1-%2-%3 %4:%5:%6")
+            .arg(part(0), part(1), part(2), part(3), part(4), part(5));
+}
+
+} // namespace
+
 /**
  * @brief CRC16 计算委托（静态方法）
  * @param cmdPlusData Cmd(1) + Data(N) 拼接
@@ -96,6 +167,8 @@ KeySerialClient::KeySerialClient(ISerialTransport *transport, QObject *parent)
     , m_currentOpId(-1)
     , m_stationId(1)   // 默认站号 1，由 KeySessionService 构造后通过 setStationId() 注入
     , m_ticketFrameIndex(-1)
+    , m_pendingTaskLogTaskId()
+    , m_pendingTaskLogFrames(0)
 {
     Q_ASSERT(m_serial != nullptr);
     connect(m_serial, &ISerialTransport::readyRead, this, &KeySerialClient::onReadyRead);
@@ -167,6 +240,7 @@ bool KeySerialClient::connectPort(const QString &portName, int baud)
     m_deferredInFlightType = INFLIGHT_NONE;
     m_deferredDeleteTaskId.clear();
     clearTicketTransferState();
+    clearTaskLogState();
     m_qtaskRecoveryRound = 0;
     m_keyPlacedElapsed.invalidate();
     m_lastNoiseElapsed.invalidate();
@@ -223,6 +297,7 @@ void KeySerialClient::disconnectPort()
     m_deferredInFlightType = INFLIGHT_NONE;
     m_deferredDeleteTaskId.clear();
     clearTicketTransferState();
+    clearTaskLogState();
     m_qtaskRecoveryRound = 0;
     m_keyPlacedElapsed.invalidate();
     m_lastNoiseElapsed.invalidate();
@@ -257,6 +332,40 @@ bool KeySerialClient::isConnected() const
 void KeySerialClient::queryTasksAll()
 {
     queryTasksAllInternal(false, false);
+}
+
+void KeySerialClient::requestTaskLog(const QByteArray &taskId16)
+{
+    if (taskId16.size() != TASK_ID_LEN) {
+        emitLog(LogDir::WARN, CMD_I_TASK_LOG, 0,
+                QString("requestTaskLog: taskId长度异常(%1!=16), 已拒绝发送").arg(taskId16.size()));
+        return;
+    }
+    if (!m_serial->isOpen()) {
+        emitNotice("I_TASK_LOG 失败：串口未连接");
+        return;
+    }
+    if (m_inFlight) {
+        emitNotice("I_TASK_LOG 失败：当前有命令在途");
+        return;
+    }
+    if (!m_keyPlaced || !m_keyStable || !m_sessionReady) {
+        emitNotice("I_TASK_LOG 失败：钥匙未就绪");
+        return;
+    }
+
+    clearTaskLogState();
+    m_pendingTaskLogTaskId = taskId16;
+
+    log(QString("发送 I_TASK_LOG(0x05) taskId: %1")
+            .arg(QString(taskId16.toHex(' ').toUpper())));
+    drainBeforeBusinessSend("I_TASK_LOG");
+
+    QByteArray addr2;
+    addr2.append(static_cast<char>(m_stationId & 0xFF));
+    addr2.append(static_cast<char>((m_stationId >> 8) & 0xFF));
+    const QByteArray frame = buildFrame(CMD_I_TASK_LOG, taskId16, addr2);
+    sendFrame(frame, CMD_I_TASK_LOG, INFLIGHT_TASKLOG);
 }
 
 /**
@@ -412,6 +521,12 @@ void KeySerialClient::clearTicketTransferState()
 {
     m_ticketFrames.clear();
     m_ticketFrameIndex = -1;
+}
+
+void KeySerialClient::clearTaskLogState()
+{
+    m_pendingTaskLogTaskId.clear();
+    m_pendingTaskLogFrames = 0;
 }
 
 bool KeySerialClient::sendNextTicketFrame()
@@ -788,6 +903,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
                 stopRetryTimer();
                 clearInFlight();
                 clearTicketTransferState();
+                clearTaskLogState();
                 m_pendingAfterDelQuery = false;
                 m_qtaskRecoveryTimer->stop();
                 m_qtaskRecoveryRound = 0;
@@ -815,6 +931,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
                 stopRetryTimer();
                 clearInFlight();
                 clearTicketTransferState();
+                clearTaskLogState();
                 m_pendingAfterDelQuery = false;
                 if (hadInFlight) {
                     emitNotice("钥匙已拔走，当前命令已取消");
@@ -915,6 +1032,44 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
         return;
     }
 
+    // --- I_TASK_LOG 回包 (0x05) ---
+    if (cmd == CMD_I_TASK_LOG) {
+        const quint16 totalFrames = (dataLen >= 2) ? readLe16(data, 0) : 0;
+        emitLog(LogDir::RX, CMD_I_TASK_LOG, lenField,
+                QString("I_TASK_LOG resp: totalFrames=%1").arg(totalFrames),
+                frame);
+
+        if (m_inFlightType == INFLIGHT_TASKLOG) {
+            stopRetryTimer();
+            clearInFlight();
+        }
+
+        m_pendingTaskLogFrames = totalFrames;
+        if (m_pendingTaskLogTaskId.isEmpty()) {
+            emitLog(LogDir::WARN, CMD_I_TASK_LOG, lenField,
+                    "I_TASK_LOG resp without active task context",
+                    {}, true, true);
+        }
+
+        QByteArray ackData;
+        ackData.append(static_cast<char>(CMD_I_TASK_LOG));
+        ackData.append('\x00');
+        ackData.append('\x00');
+        QByteArray addr2;
+        addr2.append(static_cast<char>(KeyProtocol::Addr2DefaultLo));
+        addr2.append(static_cast<char>(KeyProtocol::Addr2DefaultHi));
+        const QByteArray ackFrame = buildFrame(CMD_ACK, ackData, addr2);
+        sendFrameNoWait(ackFrame,
+                        CMD_ACK,
+                        static_cast<quint16>(1 + ackData.size()),
+                        QString("ACK for I_TASK_LOG, start upload from frame 0"));
+
+        if (totalFrames > 1) {
+            emitNotice(QString("检测到 %1 帧回传日志，当前主程序仅验证过单帧场景").arg(totalFrames));
+        }
+        return;
+    }
+
     // --- NAK (0x00) ---
     if (cmd == CMD_NAK) {
         quint8 origCmd = dataLen > 0 ? static_cast<quint8>(data[0]) : 0xFF;
@@ -942,10 +1097,13 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
         stopRetryTimer();
         clearInFlight();
         clearTicketTransferState();
+        clearTaskLogState();
         m_pendingAfterDelQuery = false;
         if (origCmd == CMD_TICKET || origCmd == CMD_TICKET_MORE) {
             emitNotice(QString("传票发送收到 NAK：%1").arg(errDesc));
             emit ticketTransferFailed(QString("收到 NAK：%1").arg(errDesc));
+        } else if (origCmd == CMD_I_TASK_LOG || origCmd == CMD_UP_TASK_LOG) {
+            emitNotice(QString("回传日志收到 NAK：%1").arg(errDesc));
         }
         tryDispatchDeferredCommand();
         emit nakReceived(origCmd, errCode);
@@ -1023,6 +1181,112 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
 
         emit tasksUpdated(m_tasks);
         tryDispatchDeferredCommand();
+        return;
+    }
+
+    // --- UP_TASK_LOG 回包 (0x15) ---
+    if (cmd == CMD_UP_TASK_LOG) {
+        emitLog(LogDir::RX, CMD_UP_TASK_LOG, lenField,
+                QString("UP_TASK_LOG recv: payload=%1B").arg(dataLen),
+                frame);
+
+        if (m_pendingTaskLogFrames == 0) {
+            emitLog(LogDir::WARN, CMD_UP_TASK_LOG, lenField,
+                    "UP_TASK_LOG ignored: no active I_TASK_LOG context",
+                    {}, true, true);
+            return;
+        }
+
+        if (m_pendingTaskLogFrames > 1) {
+            emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
+                    QString("UP_TASK_LOG multi-frame unsupported: totalFrames=%1")
+                        .arg(m_pendingTaskLogFrames),
+                    frame);
+            emitNotice("检测到多帧回传日志，当前主程序暂不支持该场景");
+            clearTaskLogState();
+            return;
+        }
+
+        if (dataLen < 2) {
+            emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
+                    "UP_TASK_LOG payload too short", frame);
+            clearTaskLogState();
+            return;
+        }
+
+        const quint16 frameSeq = readLe16(data, 0);
+        const QByteArray filePayload = data.mid(2);
+        if (filePayload.size() < 28) {
+            emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
+                    "UP_TASK_LOG file payload too short", frame);
+            clearTaskLogState();
+            return;
+        }
+
+        const quint32 fileSize = readLe32(filePayload, 0);
+        if (fileSize < 28 || static_cast<int>(fileSize) > filePayload.size()) {
+            emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
+                    QString("UP_TASK_LOG invalid fileSize=%1 payload=%2")
+                        .arg(fileSize).arg(filePayload.size()),
+                    frame);
+            clearTaskLogState();
+            return;
+        }
+
+        int offset = 4;
+        const QByteArray versionBytes = filePayload.mid(offset, 2);
+        offset += 2;
+        offset += 2; // reserved
+        const QByteArray taskIdRaw = filePayload.mid(offset, TASK_ID_LEN);
+        offset += TASK_ID_LEN;
+        if (!m_pendingTaskLogTaskId.isEmpty() && taskIdRaw != m_pendingTaskLogTaskId) {
+            emitLog(LogDir::WARN, CMD_UP_TASK_LOG, lenField,
+                    "UP_TASK_LOG taskId mismatch with pending request",
+                    {}, true, true);
+        }
+        const int stationNo = static_cast<int>(static_cast<quint8>(filePayload[offset++]));
+        const int taskAttr = static_cast<int>(static_cast<quint8>(filePayload[offset++]));
+        const int steps = static_cast<int>(readLe16(filePayload, offset));
+        offset += 2;
+
+        const int itemsBytes = static_cast<int>(fileSize) - offset;
+        if (itemsBytes < 0 || (itemsBytes % 16) != 0) {
+            emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
+                    QString("UP_TASK_LOG invalid item bytes=%1").arg(itemsBytes),
+                    frame);
+            clearTaskLogState();
+            return;
+        }
+
+        QVariantList items;
+        for (int itemOffset = offset; itemOffset < static_cast<int>(fileSize); itemOffset += 16) {
+            QVariantMap item;
+            item.insert("serialNumber", static_cast<int>(readLe16(filePayload, itemOffset)));
+            item.insert("opStatus", static_cast<int>(static_cast<quint8>(filePayload[itemOffset + 2])));
+            item.insert("rfid", compactHex(filePayload.mid(itemOffset + 3, 5)));
+            item.insert("opTime", bcd6ToDateTimeString(filePayload.mid(itemOffset + 8, 6)));
+            item.insert("opType", static_cast<int>(static_cast<quint8>(filePayload[itemOffset + 14])));
+            items.append(item);
+        }
+
+        QVariantMap payload;
+        payload.insert("taskId", rawTaskIdToDecimalString(taskIdRaw));
+        payload.insert("taskIdRaw", taskIdRaw);
+        payload.insert("stationNo", stationNo);
+        payload.insert("taskAttr", taskAttr);
+        payload.insert("steps", steps);
+        payload.insert("frameSeq", static_cast<int>(frameSeq));
+        payload.insert("totalFrames", static_cast<int>(m_pendingTaskLogFrames));
+        payload.insert("version", QString(versionBytes.toHex().toUpper()));
+        payload.insert("items", items);
+
+        emitLog(LogDir::EVENT, CMD_UP_TASK_LOG, lenField,
+                QString("UP_TASK_LOG parsed: taskId=%1 items=%2")
+                    .arg(payload.value("taskId").toString())
+                    .arg(items.size()),
+                {}, true, true);
+        emit taskLogReady(payload);
+        clearTaskLogState();
         return;
     }
 
@@ -1131,6 +1395,7 @@ void KeySerialClient::sendFrame(const QByteArray &frame, quint8 expectedAckCmd,
     switch (txCmd) {
     case CMD_SET_COM: txSummary = "SET_COM send"; break;
     case CMD_Q_TASK:  txSummary = "Q_TASK(all) send"; break;
+    case CMD_I_TASK_LOG: txSummary = "I_TASK_LOG send"; break;
     case CMD_TICKET:  txSummary = "TICKET send"; break;
     case CMD_TICKET_MORE: txSummary = "TICKET_MORE send"; break;
     case CMD_DEL: {
@@ -1212,6 +1477,37 @@ void KeySerialClient::clearInFlight()
     }
     m_inFlight = false;
     m_inFlightType = INFLIGHT_NONE;
+}
+
+void KeySerialClient::sendFrameNoWait(const QByteArray &frame,
+                                      quint8 cmd,
+                                      quint16 lenField,
+                                      const QString &summary)
+{
+    if (!m_serial->isOpen()) {
+        emitLog(LogDir::WARN, cmd, lenField,
+                QString("skip immediate frame: port closed (%1)").arg(summary),
+                {}, true, true);
+        return;
+    }
+
+    logHex("SEN", frame);
+    const qint64 written = m_serial->write(frame);
+    const bool flushOk = m_serial->flush();
+    const bool waitOk = m_serial->waitForBytesWritten(200);
+    emitLog(LogDir::TX, cmd, lenField, summary, frame);
+    if (written != frame.size() || !waitOk) {
+        emitLog(LogDir::WARN, cmd, lenField,
+                QString("immediate write: %1/%2 bytes, wait=%3")
+                    .arg(written).arg(frame.size())
+                    .arg(waitOk ? "OK" : "FAIL"),
+                {}, true, true);
+    }
+    if (!flushOk) {
+        emitLog(LogDir::WARN, cmd, lenField,
+                "immediate flush returned false (non-fatal)",
+                {}, true, true);
+    }
 }
 
 /**
@@ -1665,6 +1961,7 @@ void KeySerialClient::onSerialError(int errorCode, const QString &errorMessage)
     m_sessionReady = false;
     m_deferredInFlightType = INFLIGHT_NONE;
     m_deferredDeleteTaskId.clear();
+    clearTaskLogState();
     m_qtaskRecoveryRound = 0;
     m_keyPlacedElapsed.invalidate();
     m_lastNoiseElapsed.invalidate();
@@ -1709,6 +2006,8 @@ void KeySerialClient::onRetryTimeout()
         QString cmdName = QString("0x%1").arg(timeoutCmd, 2, 16, QChar('0')).toUpper();
         if (timeoutInFlight == INFLIGHT_QTASK) {
             cmdName = "Q_TASK";
+        } else if (timeoutInFlight == INFLIGHT_TASKLOG) {
+            cmdName = "I_TASK_LOG";
         } else if (timeoutInFlight == INFLIGHT_DEL) {
             cmdName = "DEL";
         } else if (timeoutInFlight == INFLIGHT_SETCOM) {
@@ -1762,6 +2061,7 @@ void KeySerialClient::onRetryTimeout()
         stopRetryTimer();
         clearInFlight();
         clearTicketTransferState();
+        clearTaskLogState();
         m_pendingAfterDelQuery = false;
         m_sessionReady = false;
         m_qtaskRecoveryRound = 0;
@@ -1799,6 +2099,7 @@ void KeySerialClient::onRetryTimeout()
     case INFLIGHT_SETCOM: retrySummary += " for SET_COM"; break;
     case INFLIGHT_DEL:    retrySummary += " for DEL"; break;
     case INFLIGHT_QTASK:  retrySummary += " for Q_TASK"; break;
+    case INFLIGHT_TASKLOG: retrySummary += " for I_TASK_LOG"; break;
     case INFLIGHT_TICKET: retrySummary += QString(" for TICKET frame %1/%2")
                                            .arg(m_ticketFrameIndex + 1)
                                            .arg(m_ticketFrames.size()); break;

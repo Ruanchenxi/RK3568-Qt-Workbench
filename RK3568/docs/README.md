@@ -104,6 +104,7 @@ Last Updated: 2026-03-09
    - `SERIAL_PACKET_AGENT_GUIDE.md`：链路架构、状态机、改动流程、常见误区。  
    - `PROTOCOL_FRAMES_REFERENCE.md`：逐字节帧格式、各命令完整拆解、CRC 向量、拆包伪代码、常量速查。  
    - `TICKET_PROTOCOL_GUIDE.md`：传票 JSON / payload / frame(s) / ACK 续发专用手册。  
+   - `RETURN_PROTOCOL_BASELINE.md`：回传链路当前实测基线（Q_TASK / I_TASK_LOG / UP_TASK_LOG / HTTP 回传）。
 3. `docs/replay/`：回放规范、脚本格式、无硬件验证流程。  
 4. `docs/operations/`：当前状态、配置参考、验证清单。  
    - `STATUS_SNAPSHOT.md`：当前项目做到哪里。  

@@ -34,10 +34,12 @@ static constexpr quint8  Addr2DefaultHi = 0x00;  ///< SET_COM/Q_TASK/Q_KEYEQ：H
 // ---------- 命令码 ----------
 static constexpr quint8  CmdSetCom      = 0x0F;  ///< 握手命令
 static constexpr quint8  CmdQTask       = 0x04;  ///< 查询任务列表
+static constexpr quint8  CmdITaskLog    = 0x05;  ///< 请求任务操作日志
 static constexpr quint8  CmdDel         = 0x06;  ///< 删除任务
 static constexpr quint8  CmdTicket      = 0x03;  ///< 传票单帧/最后帧
 static constexpr quint8  CmdTicketMore  = 0x83;  ///< 传票还有后续帧
 static constexpr quint8  CmdQKeyEq      = 0x14;  ///< 查询钥匙电量（TX: Data 空；RX: Data[0]=0~100%，0xFF=无效）
+static constexpr quint8  CmdUpTaskLog   = 0x15;  ///< 回传任务操作日志
 static constexpr quint8  CmdAck         = 0x5A;  ///< 设备确认
 static constexpr quint8  CmdNak         = 0x00;  ///< 设备拒绝
 static constexpr quint8  CmdKeyEvent    = 0x11;  ///< 钥匙事件（在位/离位）

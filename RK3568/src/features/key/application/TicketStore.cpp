@@ -49,6 +49,8 @@ bool TicketStore::buildDto(const QByteArray &jsonBytes,
     dto.source = QStringLiteral("workbench-http");
     dto.transferState = QStringLiteral("received");
     dto.lastError.clear();
+    dto.returnState = QStringLiteral("idle");
+    dto.returnError.clear();
     dto.jsonPath = jsonPath;
     dto.receivedAt = QDateTime::currentDateTime();
     dto.valid = !dto.taskId.trimmed().isEmpty();
@@ -76,6 +78,8 @@ bool TicketStore::ingestJson(const QByteArray &jsonBytes,
             // 保留已有的发送状态，避免同一 taskId 被新的 HTTP JSON 覆盖成 received。
             dto.transferState = m_tickets[i].transferState;
             dto.lastError = m_tickets[i].lastError;
+            dto.returnState = m_tickets[i].returnState;
+            dto.returnError = m_tickets[i].returnError;
             m_tickets[i] = dto;
             replaced = true;
             break;
@@ -97,6 +101,34 @@ bool TicketStore::updateTransferState(const QString &taskId,
         if (m_tickets[i].taskId == taskId) {
             m_tickets[i].transferState = state;
             m_tickets[i].lastError = lastError;
+            emit ticketsChanged(m_tickets);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool TicketStore::markKeyTaskDeleted(const QString &taskId)
+{
+    for (int i = 0; i < m_tickets.size(); ++i) {
+        if (m_tickets[i].taskId == taskId) {
+            m_tickets[i].transferState = QStringLiteral("key-cleared");
+            m_tickets[i].lastError.clear();
+            emit ticketsChanged(m_tickets);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool TicketStore::updateReturnState(const QString &taskId,
+                                    const QString &state,
+                                    const QString &returnError)
+{
+    for (int i = 0; i < m_tickets.size(); ++i) {
+        if (m_tickets[i].taskId == taskId) {
+            m_tickets[i].returnState = state;
+            m_tickets[i].returnError = returnError;
             emit ticketsChanged(m_tickets);
             return true;
         }

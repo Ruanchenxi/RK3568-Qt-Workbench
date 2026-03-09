@@ -78,6 +78,7 @@ private slots:
     void onSystemTicketsUpdated(const QList<SystemTicketDto> &tickets);
     void onSelectedSystemTicketChanged(const SystemTicketDto &ticket);
     void onHttpServerLogAppended(const QString &text);
+    void onHttpClientLogAppended(const QString &text);
 
     // ---- HTTP Tab ----
     void onClearHttpClient();

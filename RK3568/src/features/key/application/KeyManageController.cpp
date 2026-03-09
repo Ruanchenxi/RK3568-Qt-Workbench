@@ -5,6 +5,7 @@
 #include "features/key/application/KeyManageController.h"
 
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QStringList>
@@ -13,6 +14,25 @@
 #include "features/key/application/KeySessionService.h"
 #include "features/key/application/TicketStore.h"
 #include "features/key/application/TicketIngressService.h"
+#include "features/key/application/TicketReturnHttpClient.h"
+#include "features/key/protocol/KeyProtocolDefs.h"
+
+namespace {
+
+QString rawTaskIdToDecimalString(const QByteArray &taskIdRaw)
+{
+    if (taskIdRaw.size() < 8) {
+        return QString();
+    }
+
+    qulonglong value = 0;
+    for (int i = 0; i < 8; ++i) {
+        value |= (static_cast<qulonglong>(static_cast<quint8>(taskIdRaw[i])) << (i * 8));
+    }
+    return QString::number(value);
+}
+
+}
 
 KeyManageController::KeyManageController(IKeySessionService *session,
                                          SerialLogManager *logManager,
@@ -22,9 +42,12 @@ KeyManageController::KeyManageController(IKeySessionService *session,
     , m_logManager(logManager)
     , m_ticketStore(new TicketStore(this))
     , m_ticketIngress(new TicketIngressService(this))
+    , m_ticketReturnClient(new TicketReturnHttpClient(this))
     , m_nextOpId(1)
     , m_selectedSystemTicketId()
     , m_activeTransferTaskId()
+    , m_activeReturnTaskId()
+    , m_activeReturnTaskIdRaw()
 {
     if (!m_session) {
         m_session = new KeySessionService(this);
@@ -43,6 +66,12 @@ KeyManageController::KeyManageController(IKeySessionService *session,
             this, &KeyManageController::handleHttpServerLog);
     connect(m_ticketIngress, &TicketIngressService::jsonReceived,
             this, &KeyManageController::handleJsonReceived);
+    connect(m_ticketReturnClient, &TicketReturnHttpClient::logAppended,
+            this, &KeyManageController::handleHttpClientLog);
+    connect(m_ticketReturnClient, &TicketReturnHttpClient::uploadSucceeded,
+            this, &KeyManageController::handleReturnUploadSucceeded);
+    connect(m_ticketReturnClient, &TicketReturnHttpClient::uploadFailed,
+            this, &KeyManageController::handleReturnUploadFailed);
     connect(m_logManager, &SerialLogManager::overflowDropped, this, [this]() {
         emit statusMessage(QStringLiteral("日志达到上限，已自动丢弃旧日志"));
     });
@@ -88,6 +117,18 @@ void KeyManageController::onDeleteClicked()
         return;
     }
 
+    m_pendingDeletedSystemTicketId.clear();
+    m_pendingDeletedKeyTaskRaw.clear();
+    m_pendingDeleteAllowsRetransfer = false;
+
+    if (!m_lastKeyTasks.isEmpty()) {
+        m_pendingDeletedKeyTaskRaw = m_lastKeyTasks.first().taskId;
+        m_pendingDeletedSystemTicketId = taskIdFromRaw(m_pendingDeletedKeyTaskRaw);
+        const SystemTicketDto mappedTicket = m_ticketStore->ticketById(m_pendingDeletedSystemTicketId);
+        m_pendingDeleteAllowsRetransfer = mappedTicket.valid
+                && (mappedTicket.returnState.isEmpty() || mappedTicket.returnState == QLatin1String("idle"));
+    }
+
     CommandRequest req;
     req.id = CommandId::DeleteTask;
     req.opId = nextOpId();
@@ -103,6 +144,16 @@ void KeyManageController::onTransferSelectedTicket()
     }
 
     tryStartTicketTransfer(m_selectedSystemTicketId, false);
+}
+
+void KeyManageController::onReturnSelectedTicket()
+{
+    if (m_selectedSystemTicketId.trimmed().isEmpty()) {
+        emit statusMessage(QStringLiteral("未选中系统票，无法执行回传"));
+        return;
+    }
+
+    tryStartTicketReturn(m_selectedSystemTicketId, false);
 }
 
 void KeyManageController::onGetSystemTicketListClicked()
@@ -171,6 +222,11 @@ QString KeyManageController::httpServerLogText() const
     return m_httpServerLogLines.join("\n");
 }
 
+QString KeyManageController::httpClientLogText() const
+{
+    return m_httpClientLogLines.join("\n");
+}
+
 void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
 {
     switch (event.kind) {
@@ -179,6 +235,18 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
         break;
     case KeySessionEvent::Timeout: {
         const QString what = event.data.value("what").toString();
+        if (what.contains(QStringLiteral("DEL"), Qt::CaseInsensitive)) {
+            m_pendingDeletedSystemTicketId.clear();
+            m_pendingDeletedKeyTaskRaw.clear();
+            m_pendingDeleteAllowsRetransfer = false;
+        }
+        if (!m_activeReturnTaskId.isEmpty()
+                && (what.contains(QStringLiteral("I_TASK_LOG"), Qt::CaseInsensitive)
+                    || what.contains(QStringLiteral("0X05"), Qt::CaseInsensitive))) {
+            m_ticketStore->updateReturnState(m_activeReturnTaskId, QStringLiteral("return-failed"), what);
+            m_activeReturnTaskId.clear();
+            m_activeReturnTaskIdRaw.clear();
+        }
         emit timeoutOccurred(what);
         emit statusMessage(what);
         break;
@@ -187,13 +255,79 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
         emit ackReceived(static_cast<quint8>(event.data.value("ackedCmd").toInt()));
         break;
     case KeySessionEvent::Nak:
+        if (static_cast<quint8>(event.data.value("origCmd").toInt()) == KeyProtocol::CmdDel) {
+            m_pendingDeletedSystemTicketId.clear();
+            m_pendingDeletedKeyTaskRaw.clear();
+            m_pendingDeleteAllowsRetransfer = false;
+        }
+        if (!m_activeReturnTaskId.isEmpty()) {
+            const quint8 origCmd = static_cast<quint8>(event.data.value("origCmd").toInt());
+            if (origCmd == KeyProtocol::CmdITaskLog || origCmd == KeyProtocol::CmdUpTaskLog) {
+                const QString reason = QStringLiteral("收到 NAK，origCmd=0x%1")
+                        .arg(origCmd, 2, 16, QLatin1Char('0'))
+                        .toUpper();
+                m_ticketStore->updateReturnState(m_activeReturnTaskId, QStringLiteral("return-failed"), reason);
+                m_activeReturnTaskId.clear();
+                m_activeReturnTaskIdRaw.clear();
+            }
+        }
         emit nakReceived(static_cast<quint8>(event.data.value("origCmd").toInt()),
                          static_cast<quint8>(event.data.value("errCode").toInt()));
         break;
     case KeySessionEvent::TasksUpdated: {
         const QList<KeyTaskDto> tasks = toTaskDtos(event.data.value("tasks").toList());
+        m_lastKeyTasks = tasks;
         emit tasksUpdated(tasks);
         emit statusMessage(QStringLiteral("Q_TASK 完成，任务数=%1").arg(tasks.size()));
+        if (!m_pendingDeletedSystemTicketId.isEmpty()) {
+            bool stillExists = false;
+            for (const KeyTaskDto &task : tasks) {
+                if (task.taskId == m_pendingDeletedKeyTaskRaw) {
+                    stillExists = true;
+                    break;
+                }
+            }
+            if (!stillExists) {
+                if (m_pendingDeleteAllowsRetransfer) {
+                    m_ticketStore->markKeyTaskDeleted(m_pendingDeletedSystemTicketId);
+                    emit statusMessage(QStringLiteral("钥匙任务已删除，可再次传票"));
+                } else {
+                    emit statusMessage(QStringLiteral("钥匙任务已删除"));
+                }
+            } else {
+                emit statusMessage(QStringLiteral("删除后验证发现钥匙任务仍存在，请重新读取钥匙票列表确认"));
+            }
+            m_pendingDeletedSystemTicketId.clear();
+            m_pendingDeletedKeyTaskRaw.clear();
+            m_pendingDeleteAllowsRetransfer = false;
+        }
+        tryAutoReturnCompletedTicket(tasks);
+        if (!m_selectedSystemTicketId.isEmpty()) {
+            emit selectedSystemTicketChanged(m_ticketStore->ticketById(m_selectedSystemTicketId));
+        }
+        break;
+    }
+    case KeySessionEvent::TaskLogReady: {
+        if (m_activeReturnTaskId.isEmpty()) {
+            emit statusMessage(QStringLiteral("收到任务回传日志，但当前无活动回传任务"));
+            break;
+        }
+
+        QJsonObject payload;
+        payload.insert("stationNo", event.data.value("stationNo").toInt());
+        payload.insert("steps", event.data.value("steps").toInt());
+        payload.insert("taskId", event.data.value("taskId").toString());
+
+        QJsonArray items;
+        const QVariantList rawItems = event.data.value("items").toList();
+        for (const QVariant &itemVar : rawItems) {
+            items.append(QJsonObject::fromVariantMap(itemVar.toMap()));
+        }
+        payload.insert("taskLogItems", items);
+
+        m_ticketStore->updateReturnState(m_activeReturnTaskId, QStringLiteral("return-uploading"));
+        m_ticketReturnClient->uploadReturnPayload(payload);
+        emit statusMessage(QStringLiteral("已解析钥匙回传日志，准备上传到服务端"));
         break;
     }
     case KeySessionEvent::TicketTransferProgress: {
@@ -281,6 +415,15 @@ void KeyManageController::handleJsonReceived(const QByteArray &jsonBytes, const 
             emit statusMessage(QStringLiteral("系统票正在传票到钥匙，本次重复请求已忽略"));
             return;
         }
+        if (oldTicket.transferState == QLatin1String("key-cleared")) {
+            if (autoTransferEnabled()) {
+                emit statusMessage(QStringLiteral("系统票对应钥匙任务已删除，准备再次自动传票"));
+                tryStartTicketTransfer(taskId, true);
+            } else {
+                emit statusMessage(QStringLiteral("系统票对应钥匙任务已删除，可手动再次传票"));
+            }
+            return;
+        }
     }
 
     if (autoTransferEnabled()) {
@@ -297,9 +440,158 @@ void KeyManageController::handleHttpServerLog(const QString &text)
     emit httpServerLogAppended(text);
 }
 
+void KeyManageController::handleHttpClientLog(const QString &text)
+{
+    m_httpClientLogLines << text;
+    emit httpClientLogAppended(text);
+}
+
+void KeyManageController::handleReturnUploadSucceeded(const QString &taskId)
+{
+    m_ticketStore->updateReturnState(taskId, QStringLiteral("return-success"));
+    emit statusMessage(QStringLiteral("回传上传成功：%1").arg(taskId));
+
+    if (!m_activeReturnTaskIdRaw.isEmpty()) {
+        CommandRequest req;
+        req.id = CommandId::DeleteTask;
+        req.opId = nextOpId();
+        req.payload = m_activeReturnTaskIdRaw;
+        m_session->execute(req);
+    }
+
+    m_activeReturnTaskId.clear();
+    m_activeReturnTaskIdRaw.clear();
+}
+
+void KeyManageController::handleReturnUploadFailed(const QString &taskId, const QString &reason)
+{
+    m_ticketStore->updateReturnState(taskId, QStringLiteral("return-failed"), reason);
+    emit statusMessage(QStringLiteral("回传上传失败：%1").arg(reason));
+    m_activeReturnTaskId.clear();
+    m_activeReturnTaskIdRaw.clear();
+}
+
 bool KeyManageController::autoTransferEnabled() const
 {
     return ConfigManager::instance()->value("ticket/autoTransferEnabled", false).toBool();
+}
+
+void KeyManageController::tryStartTicketReturn(const QString &taskId, bool automatic)
+{
+    if (taskId.trimmed().isEmpty()) {
+        emit statusMessage(QStringLiteral("回传失败：taskId 为空"));
+        return;
+    }
+
+    if (!m_activeReturnTaskId.isEmpty()) {
+        if (!automatic) {
+            emit statusMessage(QStringLiteral("已有系统票正在回传中，请稍后再试"));
+        }
+        return;
+    }
+
+    const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
+    if (!ticket.valid) {
+        emit statusMessage(QStringLiteral("回传失败：系统票不存在"));
+        return;
+    }
+    if (ticket.transferState != QLatin1String("success")) {
+        emit statusMessage(QStringLiteral("回传失败：该系统票尚未完成传票到钥匙"));
+        return;
+    }
+    if (ticket.returnState == QLatin1String("return-success")) {
+        if (!automatic) {
+            emit statusMessage(QStringLiteral("该系统票已完成回传，本次不重复上传"));
+        }
+        return;
+    }
+    if (!m_ticketReturnClient->isConfigured()) {
+        emit statusMessage(QStringLiteral("回传接口未配置，暂不发起回传"));
+        return;
+    }
+
+    quint8 keyTaskStatus = 0;
+    const QByteArray taskIdRaw = findKeyTaskIdRaw(taskId, &keyTaskStatus);
+    if (taskIdRaw.isEmpty()) {
+        if (!automatic) {
+            emit statusMessage(QStringLiteral("钥匙内未找到该系统票，请先读取钥匙票列表"));
+        }
+        return;
+    }
+    if (keyTaskStatus != 0x02) {
+        if (!automatic) {
+            emit statusMessage(QStringLiteral("该系统票在钥匙中的状态未完成，暂不回传"));
+        }
+        return;
+    }
+
+    m_activeReturnTaskId = taskId;
+    m_activeReturnTaskIdRaw = taskIdRaw;
+    m_ticketStore->updateReturnState(taskId, QStringLiteral("return-requesting-log"));
+
+    CommandRequest req;
+    req.id = CommandId::QueryTaskLog;
+    req.opId = nextOpId();
+    req.payload = taskIdRaw;
+    m_session->execute(req);
+    emit statusMessage(QStringLiteral("%1回传日志请求：%2")
+                           .arg(automatic ? QStringLiteral("自动") : QStringLiteral("执行"))
+                           .arg(taskId));
+}
+
+void KeyManageController::tryAutoReturnCompletedTicket(const QList<KeyTaskDto> &tasks)
+{
+    if (!m_activeReturnTaskId.isEmpty()) {
+        return;
+    }
+    if (!m_ticketReturnClient->isConfigured()) {
+        return;
+    }
+
+    for (const KeyTaskDto &task : tasks) {
+        if (task.status != 0x02) {
+            continue;
+        }
+
+        const QString taskId = taskIdFromRaw(task.taskId);
+        const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
+        if (!ticket.valid) {
+            continue;
+        }
+        if (ticket.transferState != QLatin1String("success")) {
+            continue;
+        }
+        if (ticket.returnState == QLatin1String("return-success")
+                || ticket.returnState == QLatin1String("return-uploading")
+                || ticket.returnState == QLatin1String("return-requesting-log")
+                || ticket.returnState == QLatin1String("return-failed")) {
+            continue;
+        }
+
+        tryStartTicketReturn(taskId, true);
+        return;
+    }
+}
+
+QByteArray KeyManageController::findKeyTaskIdRaw(const QString &taskId, quint8 *status) const
+{
+    for (const KeyTaskDto &task : m_lastKeyTasks) {
+        if (taskIdFromRaw(task.taskId) == taskId) {
+            if (status) {
+                *status = task.status;
+            }
+            return task.taskId;
+        }
+    }
+    if (status) {
+        *status = 0xFF;
+    }
+    return QByteArray();
+}
+
+QString KeyManageController::taskIdFromRaw(const QByteArray &taskIdRaw)
+{
+    return rawTaskIdToDecimalString(taskIdRaw);
 }
 
 void KeyManageController::tryStartTicketTransfer(const QString &taskId, bool automatic)
@@ -389,7 +681,7 @@ void KeyManageController::tryAutoTransferPendingTicket()
 
     const QList<SystemTicketDto> tickets = systemTickets();
     for (const SystemTicketDto &ticket : tickets) {
-        if (ticket.transferState == QLatin1String("received")
+    if (ticket.transferState == QLatin1String("received")
                 || ticket.transferState == QLatin1String("auto-pending")) {
             emit statusMessage(QStringLiteral("发现可自动传票任务：%1").arg(ticket.taskId));
             tryStartTicketTransfer(ticket.taskId, true);

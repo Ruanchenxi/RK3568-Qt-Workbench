@@ -238,6 +238,12 @@ src/
 2. 负责系统票列表、原始 JSON 索引、传票状态管理。  
 3. 供 Controller/UI 展示系统票数据与当前选中票据。  
 
+#### `application/TicketReturnHttpClient.h/.cpp`
+
+1. 钥匙回传 HTTP 客户端。  
+2. 负责将已解析的钥匙日志 JSON 上传到可配置接口。  
+3. 输出 `HTTP客户端报文` 页所需日志，但不决定回传时机。  
+
 #### `protocol/KeySerialClient.h/.cpp`
 
 1. 钥匙协议核心逻辑（帧处理、状态机、握手语义）。  

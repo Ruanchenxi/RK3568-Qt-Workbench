@@ -20,6 +20,8 @@ struct SystemTicketDto
     QString source;
     QString transferState;
     QString lastError;
+    QString returnState;
+    QString returnError;
     QString jsonPath;
     QDateTime receivedAt;
     bool valid = false;

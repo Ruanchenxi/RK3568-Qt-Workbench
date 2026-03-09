@@ -109,6 +109,12 @@ KeySessionService::KeySessionService(QObject *parent)
         event.data.insert("tasks", toTaskVariantList(tasks));
         emit eventOccurred(event);
     });
+    connect(m_client, &KeySerialClient::taskLogReady, this, [this](const QVariantMap &payload) {
+        KeySessionEvent event;
+        event.kind = KeySessionEvent::TaskLogReady;
+        event.data = payload;
+        emit eventOccurred(event);
+    });
     connect(m_client, &KeySerialClient::ackReceived, this, [this](quint8 ackedCmd) {
         KeySessionEvent event;
         event.kind = KeySessionEvent::Ack;
@@ -199,6 +205,9 @@ void KeySessionService::execute(const CommandRequest &request)
         break;
     case CommandId::QueryTasks:
         m_client->queryTasksAll();
+        break;
+    case CommandId::QueryTaskLog:
+        m_client->requestTaskLog(request.payload);
         break;
     case CommandId::DeleteTask:
         if (request.payload.isEmpty()) {

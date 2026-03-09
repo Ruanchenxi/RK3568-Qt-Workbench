@@ -250,6 +250,10 @@ void ConfigManager::loadDefaults()
         setValue("ticket/autoTransferEnabled", true);
         setValue("ticket/autoTransferEnabledMigratedV1", true);
     }
+    if (!m_settings->contains("ticket/httpReturnUrl"))
+    {
+        setValue("ticket/httpReturnUrl", "");
+    }
 }
 
 // ========== 系统配置 ==========

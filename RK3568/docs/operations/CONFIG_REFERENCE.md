@@ -34,6 +34,7 @@ Last Updated: 2026-03-06
 | `ticket/httpIngressPort` | `8888` | 本地 HTTP 接收监听端口 |
 | `ticket/httpIngressPath` | `/ywticket/WebApi/transTicket` | 工作台传票 JSON 的接收路径 |
 | `ticket/autoTransferEnabled` | `true` | 是否自动传票；当前默认开启，但仍受串口/钥匙/握手状态约束 |
+| `ticket/httpReturnUrl` | 空字符串 | 钥匙回传 HTTP 接口完整地址；为空时回退到 `system/apiUrl + /finish-step-batch` |
 
 说明：
 

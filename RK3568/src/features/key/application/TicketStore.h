@@ -24,6 +24,10 @@ public:
     bool updateTransferState(const QString &taskId,
                              const QString &state,
                              const QString &lastError = QString());
+    bool markKeyTaskDeleted(const QString &taskId);
+    bool updateReturnState(const QString &taskId,
+                           const QString &state,
+                           const QString &returnError = QString());
 
     QList<SystemTicketDto> tickets() const;
     SystemTicketDto ticketById(const QString &taskId) const;
