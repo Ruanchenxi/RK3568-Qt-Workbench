@@ -1,6 +1,15 @@
 ﻿# Build directories
 */build*
 RK3568/build*/
+**/build/
+**/build*/
+
+# Build system generated files
+**/.qmake.stash
+**/.qtc_clangd/
+**/Makefile
+**/Makefile.Debug
+**/Makefile.Release
 
 # Compiled object files
 *.obj
@@ -32,3 +41,13 @@ qrc_*.cpp
 *.ilk
 *.pdb
 *.vc.pdb
+
+# Generated test outputs
+test/http_ticket_server/tests/*generated.bin
+test/http_ticket_server/tests/*generated.hex
+test/http_ticket_server/tests/[0-9]*.hex
+
+# Local temp docs and logs
+RK3568/tmp_doc/*.csv
+RK3568/tmp_doc/*.txt
+RK3568/tmp_doc/*.log

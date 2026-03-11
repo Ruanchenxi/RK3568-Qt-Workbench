@@ -1,0 +1,576 @@
+第一次测试：
+申请停电：
+客服端报文：[2026-03-10 10:11:17] 发送请求数据：
+正在回传 1 号座钥匙任务数据。。。
+[2026-03-10 10:11:17] 发送请求数据：
+{
+    "stationNo": 1,
+    "steps": 1,
+    "taskId": "2031190956502003713",
+    "taskLogItems": [
+        {
+            "opStatus": 1,
+            "opTime": "2026-03-10 10:10:38",
+            "opType": 1,
+            "rfid": "C90499A001",
+            "serialNumber": 0
+        }
+    ]
+}
+[2026-03-10 10:11:17] 收到响应数据：
+{
+    "code": 200,
+    "data": "2031190956502003713",
+    "msg": "操作成功",
+    "success": true
+}
+服务端报文：
+[HTTP-INGRESS] listening http://127.0.0.1:8888/ywticket/WebApi/transTicket
+[2026-03-10 10:10:49.139] OPTIONS /ywticket/WebApi/transTicket -> 200 OK
+[2026-03-10 10:10:49.404] POST /ywticket/WebApi/transTicket
+已保存到: D:/Desktop/QTtest/RK3568/RK3568/build/Desktop_Qt_5_15_2_MSVC2019_64bit-Debug/debug/logs/http_ticket_20260310_101049_403.json
+{
+    "data": {
+        "createTime": "202603101010",
+        "planTime": "202603111010",
+        "stepNum": 1,
+        "steps": [
+            {
+                "innerCode": 1,
+                "lockerOperate": 2,
+                "rfid": "C9:04:99:A0:02",
+                "stepDetail": "解除锁定，将411断路器操作到隔离位置并执行锁定",
+                "stepId": "2031190956954988546",
+                "stepType": 1
+            }
+        ],
+        "taskId": "2031190956502003713",
+        "taskName": "TD-2026-03-10-000001-设备检修-大横琴B2低压配电房-411断路器",
+        "taskType": 0
+    }
+}
+串口报文：
+时间,方向,OpId,命令,长度,摘要,Hex
+2026-03-10 10:09:43.660,EVT*,-1,NAK,0,"串口已连接: COM10 (115200/8N1)","--"
+2026-03-10 10:09:43.678,TX>,-1,SET_COM,2,"SET_COM send","7E 6C FF 00 00 00 02 00 0F 01 1C 11"
+2026-03-10 10:09:44.227,RAW~,-1,NAK,0,"RAW_RX +12 bytes","7E 6C FF 02 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:09:44.227,EVT*,-1,NAK,0,"Verified port: COM10 (cmd=0x5a)","--"
+2026-03-10 10:09:44.230,RX<,-1,ACK,2,"ACK for SET_COM","7E 6C FF 02 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:09:44.233,EVT*,-1,NAK,0,"SET_COM ACK without KEY_EVT, schedule Q_TASK probe in 200ms","--"
+2026-03-10 10:09:44.433,EVT*,-1,NAK,0,"RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:09:44.433,EVT*,-1,Q_TASK,0,"Startup probe Q_TASK send (skip keyPresent gate)","--"
+2026-03-10 10:09:44.433,TX>,-1,Q_TASK,17,"Q_TASK(all) send","7E 6C FF 01 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26"
+2026-03-10 10:09:44.444,RAW~,-1,NAK,0,"RAW_RX +12 bytes","7E 6C 01 01 FF 00 02 00 04 00 D1 4C"
+2026-03-10 10:09:44.444,EVT*,-1,Q_TASK,0,"Q_TASK RX observed frame header 7E6C","--"
+2026-03-10 10:09:44.444,EVT*,-1,Q_TASK,2,"Q_TASK probe confirmed key present","--"
+2026-03-10 10:09:44.447,EVT*,-1,Q_TASK,2,"Q_TASK response marked key stable","--"
+2026-03-10 10:09:44.450,RX<,-1,Q_TASK,2,"Q_TASK resp: count=0","7E 6C 01 01 FF 00 02 00 04 00 D1 4C"
+2026-03-10 10:10:49.408,RAW~,1,NAK,0,"[TICKET_PAYLOAD] STATIONID=0X01 HEADER=160B","--"
+2026-03-10 10:10:49.408,RAW~,1,NAK,0,"────────────────────────────────────────────","--"
+2026-03-10 10:10:49.408,RAW~,1,NAK,0,"  taskId=2031190956502003713 convOk=true taskType=0","--"
+2026-03-10 10:10:49.408,RAW~,1,NAK,0,"  stepNum=1 stepTableStart=160 stringAreaStart=168","--"
+2026-03-10 10:10:49.408,RAW~,1,NAK,0,"  stepDetail[0] off=168 len=46","--"
+2026-03-10 10:10:49.408,RAW~,1,NAK,0,"  taskName off=214 len=59","--"
+2026-03-10 10:10:49.408,RAW~,1,NAK,0,"  payloadLen=273 fileSize=273 check=11 01 00 00 01 11 00 00","--"
+2026-03-10 10:10:49.408,EVT*,-1,NAK,0,"传票已编码：payload=273B frameCount=1","--"
+2026-03-10 10:10:49.416,EVT*,-1,NAK,0,"发送传票帧 1/1 Cmd=0x03 Payload=273B","--"
+2026-03-10 10:10:49.420,EVT*,-1,TICKET,276,"TICKET frame 1/1 send","7E 6C 00 00 01 00 14 01 03 00 00 11 01 00 00 01 11 00 00 01 B0 49 C9 69 3D 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 D6 00 00 00 20 26 03 10 10 10 FF FF 20 26 03 11 10 10 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF 01 00 02 00 A8 00 00 00 BD E2 B3 FD CB F8 B6 A8 A3 AC BD AB 34 31 31 B6 CF C2 B7 C6 F7 B2 D9 D7 F7 B5 BD B8 F4 C0 EB CE BB D6 C3 B2 A2 D6 B4 D0 D0 CB F8 B6 A8 00 54 44 2D 32 30 32 36 2D 30 33 2D 31 30 2D 30 30 30 30 30 31 2D C9 E8 B1 B8 BC EC D0 DE 2D B4 F3 BA E1 C7 D9 42 32 B5 CD D1 B9 C5 E4 B5 E7 B7 BF 2D 34 31 31 B6 CF C2 B7 C6 F7 00 28 5A"
+2026-03-10 10:10:49.420,TX>,1,TICKET,276,"TICKET send","7E 6C 00 00 01 00 14 01 03 00 00 11 01 00 00 01 11 00 00 01 B0 49 C9 69 3D 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 D6 00 00 00 20 26 03 10 10 10 FF FF 20 26 03 11 10 10 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF 01 00 02 00 A8 00 00 00 BD E2 B3 FD CB F8 B6 A8 A3 AC BD AB 34 31 31 B6 CF C2 B7 C6 F7 B2 D9 D7 F7 B5 BD B8 F4 C0 EB CE BB D6 C3 B2 A2 D6 B4 D0 D0 CB F8 B6 A8 00 54 44 2D 32 30 32 36 2D 30 33 2D 31 30 2D 30 30 30 30 30 31 2D C9 E8 B1 B8 BC EC D0 DE 2D B4 F3 BA E1 C7 D9 42 32 B5 CD D1 B9 C5 E4 B5 E7 B7 BF 2D 34 31 31 B6 CF C2 B7 C6 F7 00 28 5A"
+2026-03-10 10:10:49.594,RAW~,1,NAK,0,"RAW_RX +14 bytes","7E 6C 01 00 FF 00 04 00 5A 03 00 00 00 74"
+2026-03-10 10:10:49.594,RX<,1,ACK,4,"ACK for 0x03","7E 6C 01 00 FF 00 04 00 5A 03 00 00 00 74"
+2026-03-10 10:10:49.598,EVT*,-1,TICKET,4,"TICKET frame 1/1 ACK","--"
+2026-03-10 10:10:49.598,EVT*,-1,NAK,0,"传票发送完成，共 1 帧","--"
+2026-03-10 10:10:53.295,RAW~,1,NAK,0,"RAW_RX +15 bytes","7E 6C 00 03 01 00 05 00 11 00 00 00 00 44 A0"
+2026-03-10 10:10:53.295,EVT*,-1,KEY_EVT,5,"KEY_REMOVED (钥匙拿走)","7E 6C 00 03 01 00 05 00 11 00 00 00 00 44 A0"
+2026-03-10 10:11:14.820,RAW~,1,NAK,0,"RAW_RX +15 bytes","7E 6C 00 04 01 00 05 00 11 01 00 00 00 D1 62"
+2026-03-10 10:11:14.820,EVT*,-1,NAK,0,"RX drain reason=KEY_PLACED drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:11:14.820,EVT*,-1,KEY_EVT,5,"KEY_PLACED (钥匙放上), drainBytes=0","7E 6C 00 04 01 00 05 00 11 01 00 00 00 D1 62"
+2026-03-10 10:11:14.825,EVT*,-1,NAK,0,"KEY_STABLE window start (key placed, 600ms)","--"
+2026-03-10 10:11:15.425,TX>,1,SET_COM,2,"SET_COM send","7E 6C FF 02 00 00 02 00 0F 01 1C 11"
+2026-03-10 10:11:15.435,EVT*,-1,NAK,0,"KEY_STABLE_PRESENT","--"
+2026-03-10 10:11:15.438,EVT*,-1,NAK,0,"钥匙已就绪，可发送 Q_TASK/DEL","--"
+2026-03-10 10:11:15.483,RAW~,1,NAK,0,"RAW_RX +12 bytes","7E 6C FF 05 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:11:15.483,RX<,1,ACK,2,"ACK for SET_COM","7E 6C FF 05 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:11:17.554,EVT*,-1,NAK,0,"RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:11:17.554,TX>,2,Q_TASK,17,"Q_TASK(all) send","7E 6C FF 03 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26"
+2026-03-10 10:11:17.567,RAW~,2,NAK,0,"RAW_RX +32 bytes","7E 6C 01 03 FF 00 16 00 04 01 01 B0 49 C9 69 3D 30 1C 00 00 00 00 00 00 00 00 02 00 FF FF B3 5B"
+2026-03-10 10:11:17.567,EVT*,-1,Q_TASK,0,"Q_TASK RX observed frame header 7E6C","--"
+2026-03-10 10:11:17.567,RX<,2,Q_TASK,22,"Q_TASK resp: count=1, first=01 B0 49 C9 69 3D 30 1C","7E 6C 01 03 FF 00 16 00 04 01 01 B0 49 C9 69 3D 30 1C 00 00 00 00 00 00 00 00 02 00 FF FF B3 5B"
+2026-03-10 10:11:17.571,EVT*,-1,NAK,0,"RX drain reason=pre-send I_TASK_LOG drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:11:17.571,TX>,3,I_TASK_LOG,17,"I_TASK_LOG send","7E 6C FF 04 01 00 11 00 05 01 B0 49 C9 69 3D 30 1C 00 00 00 00 00 00 00 00 64 B4"
+2026-03-10 10:11:17.595,RAW~,3,NAK,0,"RAW_RX +13 bytes","7E 6C 01 04 FF 00 03 00 05 01 00 D7 68"
+2026-03-10 10:11:17.595,RX<,3,I_TASK_LOG,3,"I_TASK_LOG resp: totalFrames=1","7E 6C 01 04 FF 00 03 00 05 01 00 D7 68"
+2026-03-10 10:11:17.598,TX>,3,ACK,4,"ACK for I_TASK_LOG, start upload from frame 0","7E 6C FF 05 00 00 04 00 5A 05 00 00 5C A9"
+2026-03-10 10:11:17.608,RAW~,3,NAK,0,"RAW_RX +57 bytes","7E 6C 01 02 FF 00 2F 00 15 00 00 2C 00 00 00 01 11 00 00 01 B0 49 C9 69 3D 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 00 00 01 C9 04 99 A0 01 26 03 10 10 10 38 01 FF 0E 1E"
+2026-03-10 10:11:17.608,RX<,3,UP_TASK_LOG,47,"UP_TASK_LOG recv: payload=46B","7E 6C 01 02 FF 00 2F 00 15 00 00 2C 00 00 00 01 11 00 00 01 B0 49 C9 69 3D 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 00 00 01 C9 04 99 A0 01 26 03 10 10 10 38 01 FF 0E 1E"
+2026-03-10 10:11:17.611,EVT*,-1,UP_TASK_LOG,47,"UP_TASK_LOG parsed: taskId=2031190956502003713 items=1","--"
+2026-03-10 10:11:17.724,EVT*,-1,NAK,0,"RX drain reason=pre-send DEL drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:11:17.724,TX>,4,DEL,17,"DEL send: taskId=01B049C9...","7E 6C FF 06 01 00 11 00 06 01 B0 49 C9 69 3D 30 1C 00 00 00 00 00 00 00 00 F9 E3"
+2026-03-10 10:11:17.811,RAW~,4,NAK,0,"RAW_RX +12 bytes","7E 6C 01 06 FF 00 02 00 5A 06 36 09"
+2026-03-10 10:11:17.811,RX<,4,ACK,2,"ACK for DEL","7E 6C 01 06 FF 00 02 00 5A 06 36 09"
+2026-03-10 10:11:17.814,EVT*,-1,NAK,0,"RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:11:17.814,TX>,4,Q_TASK,17,"Q_TASK(all) send","7E 6C FF 07 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26"
+2026-03-10 10:11:18.578,RAW~,4,NAK,0,"RAW_RX +12 bytes","7E 6C 01 07 FF 00 02 00 04 00 D1 4C"
+2026-03-10 10:11:18.578,EVT*,-1,Q_TASK,0,"Q_TASK RX observed frame header 7E6C","--"
+2026-03-10 10:11:18.578,RX<,4,Q_TASK,2,"Q_TASK resp: count=0","7E 6C 01 07 FF 00 02 00 04 00 D1 4C"
+
+
+
+
+申请送电：
+客户端报文：
+[2026-03-10 10:15:33] 发送请求数据：
+正在回传 1 号座钥匙任务数据。。。
+[2026-03-10 10:15:33] 发送请求数据：
+{
+    "stationNo": 1,
+    "steps": 1,
+    "taskId": "2031191918524346369",
+    "taskLogItems": [
+        {
+            "opStatus": 1,
+            "opTime": "2026-03-10 10:14:54",
+            "opType": 1,
+            "rfid": "C90499A000",
+            "serialNumber": 0
+        }
+    ]
+}
+[2026-03-10 10:15:33] 收到响应数据：
+{
+    "code": 200,
+    "data": "2031191918524346369",
+    "msg": "操作成功",
+    "success": true
+}
+服务端报文：
+[HTTP-INGRESS] listening http://127.0.0.1:8888/ywticket/WebApi/transTicket
+[2026-03-10 10:15:06.071] OPTIONS /ywticket/WebApi/transTicket -> 200 OK
+[2026-03-10 10:15:06.339] POST /ywticket/WebApi/transTicket
+已保存到: D:/Desktop/QTtest/RK3568/RK3568/build/Desktop_Qt_5_15_2_MSVC2019_64bit-Debug/debug/logs/http_ticket_20260310_101506_338.json
+{
+    "data": {
+        "createTime": "202603101014",
+        "planTime": "202603111015",
+        "stepNum": 1,
+        "steps": [
+            {
+                "innerCode": 1,
+                "lockerOperate": 3,
+                "rfid": "C9:04:99:A0:02",
+                "stepDetail": "将411断路器合上并执行锁定",
+                "stepId": "2031191918721478657",
+                "stepType": 1
+            }
+        ],
+        "taskId": "2031191918524346369",
+        "taskName": "SD-2026-03-10-000001-检修完成-大横琴B2低压配电房-411断路器",
+        "taskType": 1
+    }
+}
+串口报文：
+时间,方向,OpId,命令,长度,摘要,Hex
+2026-03-10 10:13:09.922,EVT*,-1,NAK,0,"串口已连接: COM10 (115200/8N1)","--"
+2026-03-10 10:13:09.940,TX>,-1,SET_COM,2,"SET_COM send","7E 6C FF 00 00 00 02 00 0F 01 1C 11"
+2026-03-10 10:13:10.427,RAW~,-1,NAK,0,"RAW_RX +12 bytes","7E 6C FF 06 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:13:10.427,EVT*,-1,NAK,0,"Verified port: COM10 (cmd=0x5a)","--"
+2026-03-10 10:13:10.430,RX<,-1,ACK,2,"ACK for SET_COM","7E 6C FF 06 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:13:10.433,EVT*,-1,NAK,0,"SET_COM ACK without KEY_EVT, schedule Q_TASK probe in 200ms","--"
+2026-03-10 10:13:10.634,EVT*,-1,NAK,0,"RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:13:10.634,EVT*,-1,Q_TASK,0,"Startup probe Q_TASK send (skip keyPresent gate)","--"
+2026-03-10 10:13:10.634,TX>,-1,Q_TASK,17,"Q_TASK(all) send","7E 6C FF 01 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26"
+2026-03-10 10:13:10.645,RAW~,-1,NAK,0,"RAW_RX +12 bytes","7E 6C 01 01 FF 00 02 00 04 00 D1 4C"
+2026-03-10 10:13:10.645,EVT*,-1,Q_TASK,0,"Q_TASK RX observed frame header 7E6C","--"
+2026-03-10 10:13:10.645,EVT*,-1,Q_TASK,2,"Q_TASK probe confirmed key present","--"
+2026-03-10 10:13:10.649,EVT*,-1,Q_TASK,2,"Q_TASK response marked key stable","--"
+2026-03-10 10:13:10.652,RX<,-1,Q_TASK,2,"Q_TASK resp: count=0","7E 6C 01 01 FF 00 02 00 04 00 D1 4C"
+2026-03-10 10:15:06.351,RAW~,1,NAK,0,"[TICKET_PAYLOAD] STATIONID=0X01 HEADER=160B","--"
+2026-03-10 10:15:06.351,RAW~,1,NAK,0,"────────────────────────────────────────────","--"
+2026-03-10 10:15:06.351,RAW~,1,NAK,0,"  taskId=2031191918524346369 convOk=true taskType=1","--"
+2026-03-10 10:15:06.351,RAW~,1,NAK,0,"  stepNum=1 stepTableStart=160 stringAreaStart=168","--"
+2026-03-10 10:15:06.351,RAW~,1,NAK,0,"  stepDetail[0] off=168 len=26","--"
+2026-03-10 10:15:06.351,RAW~,1,NAK,0,"  taskName off=194 len=59","--"
+2026-03-10 10:15:06.351,RAW~,1,NAK,0,"  payloadLen=253 fileSize=253 check=FD 00 00 00 01 11 00 00","--"
+2026-03-10 10:15:06.351,EVT*,-1,NAK,0,"传票已编码：payload=253B frameCount=1","--"
+2026-03-10 10:15:06.357,EVT*,-1,NAK,0,"发送传票帧 1/1 Cmd=0x03 Payload=253B","--"
+2026-03-10 10:15:06.360,EVT*,-1,TICKET,256,"TICKET frame 1/1 send","7E 6C 00 00 01 00 00 01 03 00 00 FD 00 00 00 01 11 00 00 01 B0 49 C6 49 3E 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 C2 00 00 00 20 26 03 10 10 14 FF FF 20 26 03 11 10 15 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF 01 00 03 00 A8 00 00 00 BD AB 34 31 31 B6 CF C2 B7 C6 F7 BA CF C9 CF B2 A2 D6 B4 D0 D0 CB F8 B6 A8 00 53 44 2D 32 30 32 36 2D 30 33 2D 31 30 2D 30 30 30 30 30 31 2D BC EC D0 DE CD EA B3 C9 2D B4 F3 BA E1 C7 D9 42 32 B5 CD D1 B9 C5 E4 B5 E7 B7 BF 2D 34 31 31 B6 CF C2 B7 C6 F7 00 60 39"
+2026-03-10 10:15:06.360,TX>,1,TICKET,256,"TICKET send","7E 6C 00 00 01 00 00 01 03 00 00 FD 00 00 00 01 11 00 00 01 B0 49 C6 49 3E 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 C2 00 00 00 20 26 03 10 10 14 FF FF 20 26 03 11 10 15 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF 01 00 03 00 A8 00 00 00 BD AB 34 31 31 B6 CF C2 B7 C6 F7 BA CF C9 CF B2 A2 D6 B4 D0 D0 CB F8 B6 A8 00 53 44 2D 32 30 32 36 2D 30 33 2D 31 30 2D 30 30 30 30 30 31 2D BC EC D0 DE CD EA B3 C9 2D B4 F3 BA E1 C7 D9 42 32 B5 CD D1 B9 C5 E4 B5 E7 B7 BF 2D 34 31 31 B6 CF C2 B7 C6 F7 00 60 39"
+2026-03-10 10:15:06.531,RAW~,1,NAK,0,"RAW_RX +14 bytes","7E 6C 01 00 FF 00 04 00 5A 03 00 00 00 74"
+2026-03-10 10:15:06.531,RX<,1,ACK,4,"ACK for 0x03","7E 6C 01 00 FF 00 04 00 5A 03 00 00 00 74"
+2026-03-10 10:15:06.534,EVT*,-1,TICKET,4,"TICKET frame 1/1 ACK","--"
+2026-03-10 10:15:06.534,EVT*,-1,NAK,0,"传票发送完成，共 1 帧","--"
+2026-03-10 10:15:12.671,RAW~,1,NAK,0,"RAW_RX +15 bytes","7E 6C 00 07 01 00 05 00 11 00 00 00 00 44 A0"
+2026-03-10 10:15:12.671,EVT*,-1,KEY_EVT,5,"KEY_REMOVED (钥匙拿走)","7E 6C 00 07 01 00 05 00 11 00 00 00 00 44 A0"
+2026-03-10 10:15:30.786,RAW~,1,NAK,0,"RAW_RX +15 bytes","7E 6C 00 08 01 00 05 00 11 01 00 00 00 D1 62"
+2026-03-10 10:15:30.786,EVT*,-1,NAK,0,"RX drain reason=KEY_PLACED drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:15:30.786,EVT*,-1,KEY_EVT,5,"KEY_PLACED (钥匙放上), drainBytes=0","7E 6C 00 08 01 00 05 00 11 01 00 00 00 D1 62"
+2026-03-10 10:15:30.791,EVT*,-1,NAK,0,"KEY_STABLE window start (key placed, 600ms)","--"
+2026-03-10 10:15:31.392,TX>,1,SET_COM,2,"SET_COM send","7E 6C FF 02 00 00 02 00 0F 01 1C 11"
+2026-03-10 10:15:31.405,EVT*,-1,NAK,0,"KEY_STABLE_PRESENT","--"
+2026-03-10 10:15:31.408,EVT*,-1,NAK,0,"钥匙已就绪，可发送 Q_TASK/DEL","--"
+2026-03-10 10:15:31.444,RAW~,1,NAK,0,"RAW_RX +12 bytes","7E 6C FF 09 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:15:31.444,RX<,1,ACK,2,"ACK for SET_COM","7E 6C FF 09 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:15:33.162,EVT*,-1,NAK,0,"RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:15:33.162,TX>,2,Q_TASK,17,"Q_TASK(all) send","7E 6C FF 03 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26"
+2026-03-10 10:15:33.174,RAW~,2,NAK,0,"RAW_RX +32 bytes","7E 6C 01 03 FF 00 16 00 04 01 01 B0 49 C6 49 3E 30 1C 00 00 00 00 00 00 00 00 02 00 FF FF 9D 82"
+2026-03-10 10:15:33.174,EVT*,-1,Q_TASK,0,"Q_TASK RX observed frame header 7E6C","--"
+2026-03-10 10:15:33.174,RX<,2,Q_TASK,22,"Q_TASK resp: count=1, first=01 B0 49 C6 49 3E 30 1C","7E 6C 01 03 FF 00 16 00 04 01 01 B0 49 C6 49 3E 30 1C 00 00 00 00 00 00 00 00 02 00 FF FF 9D 82"
+2026-03-10 10:15:33.177,EVT*,-1,NAK,0,"RX drain reason=pre-send I_TASK_LOG drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:15:33.177,TX>,3,I_TASK_LOG,17,"I_TASK_LOG send","7E 6C FF 04 01 00 11 00 05 01 B0 49 C6 49 3E 30 1C 00 00 00 00 00 00 00 00 93 9A"
+2026-03-10 10:15:33.381,RAW~,3,NAK,0,"RAW_RX +13 bytes","7E 6C 01 04 FF 00 03 00 05 01 00 D7 68"
+2026-03-10 10:15:33.381,RX<,3,I_TASK_LOG,3,"I_TASK_LOG resp: totalFrames=1","7E 6C 01 04 FF 00 03 00 05 01 00 D7 68"
+2026-03-10 10:15:33.384,TX>,3,ACK,4,"ACK for I_TASK_LOG, start upload from frame 0","7E 6C FF 05 00 00 04 00 5A 05 00 00 5C A9"
+2026-03-10 10:15:33.394,RAW~,3,NAK,0,"RAW_RX +57 bytes","7E 6C 01 03 FF 00 2F 00 15 00 00 2C 00 00 00 01 11 00 00 01 B0 49 C6 49 3E 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 00 00 01 C9 04 99 A0 00 26 03 10 10 14 54 01 FF 58 DF"
+2026-03-10 10:15:33.394,RX<,3,UP_TASK_LOG,47,"UP_TASK_LOG recv: payload=46B","7E 6C 01 03 FF 00 2F 00 15 00 00 2C 00 00 00 01 11 00 00 01 B0 49 C6 49 3E 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 00 00 01 C9 04 99 A0 00 26 03 10 10 14 54 01 FF 58 DF"
+2026-03-10 10:15:33.397,EVT*,-1,UP_TASK_LOG,47,"UP_TASK_LOG parsed: taskId=2031191918524346369 items=1","--"
+2026-03-10 10:15:33.476,EVT*,-1,NAK,0,"RX drain reason=pre-send DEL drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:15:33.476,TX>,4,DEL,17,"DEL send: taskId=01B049C6...","7E 6C FF 06 01 00 11 00 06 01 B0 49 C6 49 3E 30 1C 00 00 00 00 00 00 00 00 0E CD"
+2026-03-10 10:15:33.563,RAW~,4,NAK,0,"RAW_RX +12 bytes","7E 6C 01 06 FF 00 02 00 5A 06 36 09"
+2026-03-10 10:15:33.563,RX<,4,ACK,2,"ACK for DEL","7E 6C 01 06 FF 00 02 00 5A 06 36 09"
+2026-03-10 10:15:33.567,EVT*,-1,NAK,0,"RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:15:33.567,TX>,4,Q_TASK,17,"Q_TASK(all) send","7E 6C FF 07 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26"
+2026-03-10 10:15:34.322,RAW~,4,NAK,0,"RAW_RX +12 bytes","7E 6C 01 07 FF 00 02 00 04 00 D1 4C"
+2026-03-10 10:15:34.322,EVT*,-1,Q_TASK,0,"Q_TASK RX observed frame header 7E6C","--"
+2026-03-10 10:15:34.322,RX<,4,Q_TASK,2,"Q_TASK resp: count=0","7E 6C 01 07 FF 00 02 00 04 00 D1 4C"
+
+第二次测试：
+申请停电：
+客户端报文：
+[2026-03-10 10:19:11] 发送请求数据：
+正在回传 1 号座钥匙任务数据。。。
+[2026-03-10 10:19:11] 发送请求数据：
+{
+    "stationNo": 1,
+    "steps": 1,
+    "taskId": "2031192974515875842",
+    "taskLogItems": [
+        {
+            "opStatus": 1,
+            "opTime": "2026-03-10 10:18:31",
+            "opType": 1,
+            "rfid": "C90499A001",
+            "serialNumber": 0
+        }
+    ]
+}
+[2026-03-10 10:19:11] 收到响应数据：
+{
+    "code": 200,
+    "data": "2031192974515875842",
+    "msg": "操作成功",
+    "success": true
+}
+服务端报文：
+[HTTP-INGRESS] listening http://127.0.0.1:8888/ywticket/WebApi/transTicket
+[2026-03-10 10:18:47.387] OPTIONS /ywticket/WebApi/transTicket -> 200 OK
+[2026-03-10 10:18:47.655] POST /ywticket/WebApi/transTicket
+已保存到: D:/Desktop/QTtest/RK3568/RK3568/build/Desktop_Qt_5_15_2_MSVC2019_64bit-Debug/debug/logs/http_ticket_20260310_101847_654.json
+{
+    "data": {
+        "createTime": "202603101018",
+        "planTime": "202603111018",
+        "stepNum": 1,
+        "steps": [
+            {
+                "innerCode": 1,
+                "lockerOperate": 2,
+                "rfid": "C9:04:99:A0:02",
+                "stepDetail": "解除锁定，将411断路器操作到隔离位置并执行锁定",
+                "stepId": "2031192974650093570",
+                "stepType": 1
+            }
+        ],
+        "taskId": "2031192974515875842",
+        "taskName": "TD-2026-03-10-000002-设备检修-大横琴B2低压配电房-411断路器",
+        "taskType": 0
+    }
+}
+串口报文：
+时间,方向,OpId,命令,长度,摘要,Hex
+2026-03-10 10:18:16.225,EVT*,-1,NAK,0,"串口已连接: COM10 (115200/8N1)","--"
+2026-03-10 10:18:16.242,TX>,-1,SET_COM,2,"SET_COM send","7E 6C FF 00 00 00 02 00 0F 01 1C 11"
+2026-03-10 10:18:16.734,RAW~,-1,NAK,0,"RAW_RX +12 bytes","7E 6C FF 0B 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:18:16.734,EVT*,-1,NAK,0,"Verified port: COM10 (cmd=0x5a)","--"
+2026-03-10 10:18:16.738,RX<,-1,ACK,2,"ACK for SET_COM","7E 6C FF 0B 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:18:16.740,EVT*,-1,NAK,0,"SET_COM ACK without KEY_EVT, schedule Q_TASK probe in 200ms","--"
+2026-03-10 10:18:16.940,EVT*,-1,NAK,0,"RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:18:16.940,EVT*,-1,Q_TASK,0,"Startup probe Q_TASK send (skip keyPresent gate)","--"
+2026-03-10 10:18:16.940,TX>,-1,Q_TASK,17,"Q_TASK(all) send","7E 6C FF 01 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26"
+2026-03-10 10:18:17.932,WARN!,-1,Q_TASK,0,"Retry 1/3 for Q_TASK","--"
+2026-03-10 10:18:18.933,WARN!,-1,Q_TASK,0,"Retry 2/3 for Q_TASK","--"
+2026-03-10 10:18:19.946,EVT*,-1,Q_TASK,0,"Startup Q_TASK probe timeout, key remains not-present","--"
+2026-03-10 10:18:27.898,RAW~,-1,NAK,0,"RAW_RX +15 bytes","7E 6C FF 0C 00 00 05 00 11 01 00 00 00 D1 62"
+2026-03-10 10:18:27.898,EVT*,-1,NAK,0,"RX drain reason=KEY_PLACED drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:18:27.898,EVT*,-1,KEY_EVT,5,"KEY_PLACED (钥匙放上), drainBytes=0","7E 6C FF 0C 00 00 05 00 11 01 00 00 00 D1 62"
+2026-03-10 10:18:27.903,EVT*,-1,NAK,0,"KEY_STABLE window start (key placed, 600ms)","--"
+2026-03-10 10:18:28.503,TX>,-1,SET_COM,2,"SET_COM send","7E 6C FF 02 00 00 02 00 0F 01 1C 11"
+2026-03-10 10:18:28.507,EVT*,-1,NAK,0,"KEY_STABLE_PRESENT","--"
+2026-03-10 10:18:28.509,EVT*,-1,NAK,0,"钥匙已就绪，可发送 Q_TASK/DEL","--"
+2026-03-10 10:18:28.559,RAW~,-1,NAK,0,"RAW_RX +12 bytes","7E 6C FF 0D 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:18:28.559,RX<,-1,ACK,2,"ACK for SET_COM","7E 6C FF 0D 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:18:47.656,RAW~,1,NAK,0,"[TICKET_PAYLOAD] STATIONID=0X01 HEADER=160B","--"
+2026-03-10 10:18:47.656,RAW~,1,NAK,0,"────────────────────────────────────────────","--"
+2026-03-10 10:18:47.656,RAW~,1,NAK,0,"  taskId=2031192974515875842 convOk=true taskType=0","--"
+2026-03-10 10:18:47.656,RAW~,1,NAK,0,"  stepNum=1 stepTableStart=160 stringAreaStart=168","--"
+2026-03-10 10:18:47.656,RAW~,1,NAK,0,"  stepDetail[0] off=168 len=46","--"
+2026-03-10 10:18:47.656,RAW~,1,NAK,0,"  taskName off=214 len=59","--"
+2026-03-10 10:18:47.656,RAW~,1,NAK,0,"  payloadLen=273 fileSize=273 check=11 01 00 00 01 11 00 00","--"
+2026-03-10 10:18:47.656,EVT*,-1,NAK,0,"传票已编码：payload=273B frameCount=1","--"
+2026-03-10 10:18:47.662,EVT*,-1,NAK,0,"发送传票帧 1/1 Cmd=0x03 Payload=273B","--"
+2026-03-10 10:18:47.665,EVT*,-1,TICKET,276,"TICKET frame 1/1 send","7E 6C 00 00 01 00 14 01 03 00 00 11 01 00 00 01 11 00 00 02 B0 49 A4 3F 3F 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 D6 00 00 00 20 26 03 10 10 18 FF FF 20 26 03 11 10 18 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF 01 00 02 00 A8 00 00 00 BD E2 B3 FD CB F8 B6 A8 A3 AC BD AB 34 31 31 B6 CF C2 B7 C6 F7 B2 D9 D7 F7 B5 BD B8 F4 C0 EB CE BB D6 C3 B2 A2 D6 B4 D0 D0 CB F8 B6 A8 00 54 44 2D 32 30 32 36 2D 30 33 2D 31 30 2D 30 30 30 30 30 32 2D C9 E8 B1 B8 BC EC D0 DE 2D B4 F3 BA E1 C7 D9 42 32 B5 CD D1 B9 C5 E4 B5 E7 B7 BF 2D 34 31 31 B6 CF C2 B7 C6 F7 00 99 88"
+2026-03-10 10:18:47.665,TX>,1,TICKET,276,"TICKET send","7E 6C 00 00 01 00 14 01 03 00 00 11 01 00 00 01 11 00 00 02 B0 49 A4 3F 3F 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 D6 00 00 00 20 26 03 10 10 18 FF FF 20 26 03 11 10 18 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF 01 00 02 00 A8 00 00 00 BD E2 B3 FD CB F8 B6 A8 A3 AC BD AB 34 31 31 B6 CF C2 B7 C6 F7 B2 D9 D7 F7 B5 BD B8 F4 C0 EB CE BB D6 C3 B2 A2 D6 B4 D0 D0 CB F8 B6 A8 00 54 44 2D 32 30 32 36 2D 30 33 2D 31 30 2D 30 30 30 30 30 32 2D C9 E8 B1 B8 BC EC D0 DE 2D B4 F3 BA E1 C7 D9 42 32 B5 CD D1 B9 C5 E4 B5 E7 B7 BF 2D 34 31 31 B6 CF C2 B7 C6 F7 00 99 88"
+2026-03-10 10:18:47.841,RAW~,1,NAK,0,"RAW_RX +14 bytes","7E 6C 01 00 FF 00 04 00 5A 03 00 00 00 74"
+2026-03-10 10:18:47.841,RX<,1,ACK,4,"ACK for 0x03","7E 6C 01 00 FF 00 04 00 5A 03 00 00 00 74"
+2026-03-10 10:18:47.844,EVT*,-1,TICKET,4,"TICKET frame 1/1 ACK","--"
+2026-03-10 10:18:47.844,EVT*,-1,NAK,0,"传票发送完成，共 1 帧","--"
+2026-03-10 10:18:51.874,RAW~,1,NAK,0,"RAW_RX +15 bytes","7E 6C 00 0E 01 00 05 00 11 00 00 00 00 44 A0"
+2026-03-10 10:18:51.874,EVT*,-1,KEY_EVT,5,"KEY_REMOVED (钥匙拿走)","7E 6C 00 0E 01 00 05 00 11 00 00 00 00 44 A0"
+2026-03-10 10:19:07.492,RAW~,1,NAK,0,"RAW_RX +15 bytes","7E 6C 00 0F 01 00 05 00 11 01 00 00 00 D1 62"
+2026-03-10 10:19:07.492,EVT*,-1,NAK,0,"RX drain reason=KEY_PLACED drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:19:07.492,EVT*,-1,KEY_EVT,5,"KEY_PLACED (钥匙放上), drainBytes=0","7E 6C 00 0F 01 00 05 00 11 01 00 00 00 D1 62"
+2026-03-10 10:19:07.498,EVT*,-1,NAK,0,"KEY_STABLE window start (key placed, 600ms)","--"
+2026-03-10 10:19:08.098,TX>,1,SET_COM,2,"SET_COM send","7E 6C FF 03 00 00 02 00 0F 01 1C 11"
+2026-03-10 10:19:08.102,EVT*,-1,NAK,0,"KEY_STABLE_PRESENT","--"
+2026-03-10 10:19:08.104,EVT*,-1,NAK,0,"钥匙已就绪，可发送 Q_TASK/DEL","--"
+2026-03-10 10:19:08.150,RAW~,1,NAK,0,"RAW_RX +12 bytes","7E 6C FF 10 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:19:08.150,RX<,1,ACK,2,"ACK for SET_COM","7E 6C FF 10 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:19:11.424,EVT*,-1,NAK,0,"RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:19:11.424,TX>,2,Q_TASK,17,"Q_TASK(all) send","7E 6C FF 04 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26"
+2026-03-10 10:19:11.436,RAW~,2,NAK,0,"RAW_RX +32 bytes","7E 6C 01 04 FF 00 16 00 04 01 02 B0 49 A4 3F 3F 30 1C 00 00 00 00 00 00 00 00 02 00 FF FF 42 59"
+2026-03-10 10:19:11.436,EVT*,-1,Q_TASK,0,"Q_TASK RX observed frame header 7E6C","--"
+2026-03-10 10:19:11.436,RX<,2,Q_TASK,22,"Q_TASK resp: count=1, first=02 B0 49 A4 3F 3F 30 1C","7E 6C 01 04 FF 00 16 00 04 01 02 B0 49 A4 3F 3F 30 1C 00 00 00 00 00 00 00 00 02 00 FF FF 42 59"
+2026-03-10 10:19:11.440,EVT*,-1,NAK,0,"RX drain reason=pre-send I_TASK_LOG drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:19:11.440,TX>,3,I_TASK_LOG,17,"I_TASK_LOG send","7E 6C FF 05 01 00 11 00 05 02 B0 49 A4 3F 3F 30 1C 00 00 00 00 00 00 00 00 5E 24"
+2026-03-10 10:19:11.465,RAW~,3,NAK,0,"RAW_RX +13 bytes","7E 6C 01 05 FF 00 03 00 05 01 00 D7 68"
+2026-03-10 10:19:11.465,RX<,3,I_TASK_LOG,3,"I_TASK_LOG resp: totalFrames=1","7E 6C 01 05 FF 00 03 00 05 01 00 D7 68"
+2026-03-10 10:19:11.467,TX>,3,ACK,4,"ACK for I_TASK_LOG, start upload from frame 0","7E 6C FF 06 00 00 04 00 5A 05 00 00 5C A9"
+2026-03-10 10:19:11.477,RAW~,3,NAK,0,"RAW_RX +57 bytes","7E 6C 01 04 FF 00 2F 00 15 00 00 2C 00 00 00 01 11 00 00 02 B0 49 A4 3F 3F 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 00 00 01 C9 04 99 A0 01 26 03 10 10 18 31 01 FF 42 D8"
+2026-03-10 10:19:11.477,RX<,3,UP_TASK_LOG,47,"UP_TASK_LOG recv: payload=46B","7E 6C 01 04 FF 00 2F 00 15 00 00 2C 00 00 00 01 11 00 00 02 B0 49 A4 3F 3F 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 00 00 01 C9 04 99 A0 01 26 03 10 10 18 31 01 FF 42 D8"
+2026-03-10 10:19:11.480,EVT*,-1,UP_TASK_LOG,47,"UP_TASK_LOG parsed: taskId=2031192974515875842 items=1","--"
+2026-03-10 10:19:11.553,EVT*,-1,NAK,0,"RX drain reason=pre-send DEL drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:19:11.553,TX>,4,DEL,17,"DEL send: taskId=02B049A4...","7E 6C FF 07 01 00 11 00 06 02 B0 49 A4 3F 3F 30 1C 00 00 00 00 00 00 00 00 C3 73"
+2026-03-10 10:19:11.640,RAW~,4,NAK,0,"RAW_RX +12 bytes","7E 6C 01 07 FF 00 02 00 5A 06 36 09"
+2026-03-10 10:19:11.640,RX<,4,ACK,2,"ACK for DEL","7E 6C 01 07 FF 00 02 00 5A 06 36 09"
+2026-03-10 10:19:11.643,EVT*,-1,NAK,0,"RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:19:11.643,TX>,4,Q_TASK,17,"Q_TASK(all) send","7E 6C FF 08 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26"
+2026-03-10 10:19:12.409,RAW~,4,NAK,0,"RAW_RX +12 bytes","7E 6C 01 08 FF 00 02 00 04 00 D1 4C"
+2026-03-10 10:19:12.409,EVT*,-1,Q_TASK,0,"Q_TASK RX observed frame header 7E6C","--"
+2026-03-10 10:19:12.409,RX<,4,Q_TASK,2,"Q_TASK resp: count=0","7E 6C 01 08 FF 00 02 00 04 00 D1 4C"
+
+申请送电：
+客户端报文：
+[2026-03-10 10:19:11] 发送请求数据：
+正在回传 1 号座钥匙任务数据。。。
+[2026-03-10 10:19:11] 发送请求数据：
+{
+    "stationNo": 1,
+    "steps": 1,
+    "taskId": "2031192974515875842",
+    "taskLogItems": [
+        {
+            "opStatus": 1,
+            "opTime": "2026-03-10 10:18:31",
+            "opType": 1,
+            "rfid": "C90499A001",
+            "serialNumber": 0
+        }
+    ]
+}
+[2026-03-10 10:19:11] 收到响应数据：
+{
+    "code": 200,
+    "data": "2031192974515875842",
+    "msg": "操作成功",
+    "success": true
+}
+[2026-03-10 10:21:37] 发送请求数据：
+正在回传 1 号座钥匙任务数据。。。
+[2026-03-10 10:21:37] 发送请求数据：
+{
+    "stationNo": 1,
+    "steps": 1,
+    "taskId": "2031193593700003841",
+    "taskLogItems": [
+        {
+            "opStatus": 1,
+            "opTime": "2026-03-10 10:20:59",
+            "opType": 1,
+            "rfid": "C90499A000",
+            "serialNumber": 0
+        }
+    ]
+}
+[2026-03-10 10:21:38] 收到响应数据：
+{
+    "code": 200,
+    "data": "2031193593700003841",
+    "msg": "操作成功",
+    "success": true
+}
+服务端报文：
+[HTTP-INGRESS] listening http://127.0.0.1:8888/ywticket/WebApi/transTicket
+[2026-03-10 10:18:47.387] OPTIONS /ywticket/WebApi/transTicket -> 200 OK
+[2026-03-10 10:18:47.655] POST /ywticket/WebApi/transTicket
+已保存到: D:/Desktop/QTtest/RK3568/RK3568/build/Desktop_Qt_5_15_2_MSVC2019_64bit-Debug/debug/logs/http_ticket_20260310_101847_654.json
+{
+    "data": {
+        "createTime": "202603101018",
+        "planTime": "202603111018",
+        "stepNum": 1,
+        "steps": [
+            {
+                "innerCode": 1,
+                "lockerOperate": 2,
+                "rfid": "C9:04:99:A0:02",
+                "stepDetail": "解除锁定，将411断路器操作到隔离位置并执行锁定",
+                "stepId": "2031192974650093570",
+                "stepType": 1
+            }
+        ],
+        "taskId": "2031192974515875842",
+        "taskName": "TD-2026-03-10-000002-设备检修-大横琴B2低压配电房-411断路器",
+        "taskType": 0
+    }
+}
+
+[2026-03-10 10:21:17.129] POST /ywticket/WebApi/transTicket
+已保存到: D:/Desktop/QTtest/RK3568/RK3568/build/Desktop_Qt_5_15_2_MSVC2019_64bit-Debug/debug/logs/http_ticket_20260310_102117_128.json
+{
+    "data": {
+        "createTime": "202603101021",
+        "planTime": "202603111021",
+        "stepNum": 1,
+        "steps": [
+            {
+                "innerCode": 1,
+                "lockerOperate": 3,
+                "rfid": "C9:04:99:A0:02",
+                "stepDetail": "将411断路器合上并执行锁定",
+                "stepId": "2031193593767112706",
+                "stepType": 1
+            }
+        ],
+        "taskId": "2031193593700003841",
+        "taskName": "SD-2026-03-10-000002-检修完成-大横琴B2低压配电房-411断路器",
+        "taskType": 1
+    }
+}
+串口报文：
+时间,方向,OpId,命令,长度,摘要,Hex
+2026-03-10 10:18:16.225,EVT*,-1,NAK,0,"串口已连接: COM10 (115200/8N1)","--"
+2026-03-10 10:18:16.242,TX>,-1,SET_COM,2,"SET_COM send","7E 6C FF 00 00 00 02 00 0F 01 1C 11"
+2026-03-10 10:18:16.734,RAW~,-1,NAK,0,"RAW_RX +12 bytes","7E 6C FF 0B 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:18:16.734,EVT*,-1,NAK,0,"Verified port: COM10 (cmd=0x5a)","--"
+2026-03-10 10:18:16.738,RX<,-1,ACK,2,"ACK for SET_COM","7E 6C FF 0B 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:18:16.740,EVT*,-1,NAK,0,"SET_COM ACK without KEY_EVT, schedule Q_TASK probe in 200ms","--"
+2026-03-10 10:18:16.940,EVT*,-1,NAK,0,"RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:18:16.940,EVT*,-1,Q_TASK,0,"Startup probe Q_TASK send (skip keyPresent gate)","--"
+2026-03-10 10:18:16.940,TX>,-1,Q_TASK,17,"Q_TASK(all) send","7E 6C FF 01 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26"
+2026-03-10 10:18:17.932,WARN!,-1,Q_TASK,0,"Retry 1/3 for Q_TASK","--"
+2026-03-10 10:18:18.933,WARN!,-1,Q_TASK,0,"Retry 2/3 for Q_TASK","--"
+2026-03-10 10:18:19.946,EVT*,-1,Q_TASK,0,"Startup Q_TASK probe timeout, key remains not-present","--"
+2026-03-10 10:18:27.898,RAW~,-1,NAK,0,"RAW_RX +15 bytes","7E 6C FF 0C 00 00 05 00 11 01 00 00 00 D1 62"
+2026-03-10 10:18:27.898,EVT*,-1,NAK,0,"RX drain reason=KEY_PLACED drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:18:27.898,EVT*,-1,KEY_EVT,5,"KEY_PLACED (钥匙放上), drainBytes=0","7E 6C FF 0C 00 00 05 00 11 01 00 00 00 D1 62"
+2026-03-10 10:18:27.903,EVT*,-1,NAK,0,"KEY_STABLE window start (key placed, 600ms)","--"
+2026-03-10 10:18:28.503,TX>,-1,SET_COM,2,"SET_COM send","7E 6C FF 02 00 00 02 00 0F 01 1C 11"
+2026-03-10 10:18:28.507,EVT*,-1,NAK,0,"KEY_STABLE_PRESENT","--"
+2026-03-10 10:18:28.509,EVT*,-1,NAK,0,"钥匙已就绪，可发送 Q_TASK/DEL","--"
+2026-03-10 10:18:28.559,RAW~,-1,NAK,0,"RAW_RX +12 bytes","7E 6C FF 0D 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:18:28.559,RX<,-1,ACK,2,"ACK for SET_COM","7E 6C FF 0D 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:18:47.656,RAW~,1,NAK,0,"[TICKET_PAYLOAD] STATIONID=0X01 HEADER=160B","--"
+2026-03-10 10:18:47.656,RAW~,1,NAK,0,"────────────────────────────────────────────","--"
+2026-03-10 10:18:47.656,RAW~,1,NAK,0,"  taskId=2031192974515875842 convOk=true taskType=0","--"
+2026-03-10 10:18:47.656,RAW~,1,NAK,0,"  stepNum=1 stepTableStart=160 stringAreaStart=168","--"
+2026-03-10 10:18:47.656,RAW~,1,NAK,0,"  stepDetail[0] off=168 len=46","--"
+2026-03-10 10:18:47.656,RAW~,1,NAK,0,"  taskName off=214 len=59","--"
+2026-03-10 10:18:47.656,RAW~,1,NAK,0,"  payloadLen=273 fileSize=273 check=11 01 00 00 01 11 00 00","--"
+2026-03-10 10:18:47.656,EVT*,-1,NAK,0,"传票已编码：payload=273B frameCount=1","--"
+2026-03-10 10:18:47.662,EVT*,-1,NAK,0,"发送传票帧 1/1 Cmd=0x03 Payload=273B","--"
+2026-03-10 10:18:47.665,EVT*,-1,TICKET,276,"TICKET frame 1/1 send","7E 6C 00 00 01 00 14 01 03 00 00 11 01 00 00 01 11 00 00 02 B0 49 A4 3F 3F 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 D6 00 00 00 20 26 03 10 10 18 FF FF 20 26 03 11 10 18 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF 01 00 02 00 A8 00 00 00 BD E2 B3 FD CB F8 B6 A8 A3 AC BD AB 34 31 31 B6 CF C2 B7 C6 F7 B2 D9 D7 F7 B5 BD B8 F4 C0 EB CE BB D6 C3 B2 A2 D6 B4 D0 D0 CB F8 B6 A8 00 54 44 2D 32 30 32 36 2D 30 33 2D 31 30 2D 30 30 30 30 30 32 2D C9 E8 B1 B8 BC EC D0 DE 2D B4 F3 BA E1 C7 D9 42 32 B5 CD D1 B9 C5 E4 B5 E7 B7 BF 2D 34 31 31 B6 CF C2 B7 C6 F7 00 99 88"
+2026-03-10 10:18:47.665,TX>,1,TICKET,276,"TICKET send","7E 6C 00 00 01 00 14 01 03 00 00 11 01 00 00 01 11 00 00 02 B0 49 A4 3F 3F 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 D6 00 00 00 20 26 03 10 10 18 FF FF 20 26 03 11 10 18 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF 01 00 02 00 A8 00 00 00 BD E2 B3 FD CB F8 B6 A8 A3 AC BD AB 34 31 31 B6 CF C2 B7 C6 F7 B2 D9 D7 F7 B5 BD B8 F4 C0 EB CE BB D6 C3 B2 A2 D6 B4 D0 D0 CB F8 B6 A8 00 54 44 2D 32 30 32 36 2D 30 33 2D 31 30 2D 30 30 30 30 30 32 2D C9 E8 B1 B8 BC EC D0 DE 2D B4 F3 BA E1 C7 D9 42 32 B5 CD D1 B9 C5 E4 B5 E7 B7 BF 2D 34 31 31 B6 CF C2 B7 C6 F7 00 99 88"
+2026-03-10 10:18:47.841,RAW~,1,NAK,0,"RAW_RX +14 bytes","7E 6C 01 00 FF 00 04 00 5A 03 00 00 00 74"
+2026-03-10 10:18:47.841,RX<,1,ACK,4,"ACK for 0x03","7E 6C 01 00 FF 00 04 00 5A 03 00 00 00 74"
+2026-03-10 10:18:47.844,EVT*,-1,TICKET,4,"TICKET frame 1/1 ACK","--"
+2026-03-10 10:18:47.844,EVT*,-1,NAK,0,"传票发送完成，共 1 帧","--"
+2026-03-10 10:18:51.874,RAW~,1,NAK,0,"RAW_RX +15 bytes","7E 6C 00 0E 01 00 05 00 11 00 00 00 00 44 A0"
+2026-03-10 10:18:51.874,EVT*,-1,KEY_EVT,5,"KEY_REMOVED (钥匙拿走)","7E 6C 00 0E 01 00 05 00 11 00 00 00 00 44 A0"
+2026-03-10 10:19:07.492,RAW~,1,NAK,0,"RAW_RX +15 bytes","7E 6C 00 0F 01 00 05 00 11 01 00 00 00 D1 62"
+2026-03-10 10:19:07.492,EVT*,-1,NAK,0,"RX drain reason=KEY_PLACED drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:19:07.492,EVT*,-1,KEY_EVT,5,"KEY_PLACED (钥匙放上), drainBytes=0","7E 6C 00 0F 01 00 05 00 11 01 00 00 00 D1 62"
+2026-03-10 10:19:07.498,EVT*,-1,NAK,0,"KEY_STABLE window start (key placed, 600ms)","--"
+2026-03-10 10:19:08.098,TX>,1,SET_COM,2,"SET_COM send","7E 6C FF 03 00 00 02 00 0F 01 1C 11"
+2026-03-10 10:19:08.102,EVT*,-1,NAK,0,"KEY_STABLE_PRESENT","--"
+2026-03-10 10:19:08.104,EVT*,-1,NAK,0,"钥匙已就绪，可发送 Q_TASK/DEL","--"
+2026-03-10 10:19:08.150,RAW~,1,NAK,0,"RAW_RX +12 bytes","7E 6C FF 10 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:19:08.150,RX<,1,ACK,2,"ACK for SET_COM","7E 6C FF 10 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:19:11.424,EVT*,-1,NAK,0,"RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:19:11.424,TX>,2,Q_TASK,17,"Q_TASK(all) send","7E 6C FF 04 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26"
+2026-03-10 10:19:11.436,RAW~,2,NAK,0,"RAW_RX +32 bytes","7E 6C 01 04 FF 00 16 00 04 01 02 B0 49 A4 3F 3F 30 1C 00 00 00 00 00 00 00 00 02 00 FF FF 42 59"
+2026-03-10 10:19:11.436,EVT*,-1,Q_TASK,0,"Q_TASK RX observed frame header 7E6C","--"
+2026-03-10 10:19:11.436,RX<,2,Q_TASK,22,"Q_TASK resp: count=1, first=02 B0 49 A4 3F 3F 30 1C","7E 6C 01 04 FF 00 16 00 04 01 02 B0 49 A4 3F 3F 30 1C 00 00 00 00 00 00 00 00 02 00 FF FF 42 59"
+2026-03-10 10:19:11.440,EVT*,-1,NAK,0,"RX drain reason=pre-send I_TASK_LOG drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:19:11.440,TX>,3,I_TASK_LOG,17,"I_TASK_LOG send","7E 6C FF 05 01 00 11 00 05 02 B0 49 A4 3F 3F 30 1C 00 00 00 00 00 00 00 00 5E 24"
+2026-03-10 10:19:11.465,RAW~,3,NAK,0,"RAW_RX +13 bytes","7E 6C 01 05 FF 00 03 00 05 01 00 D7 68"
+2026-03-10 10:19:11.465,RX<,3,I_TASK_LOG,3,"I_TASK_LOG resp: totalFrames=1","7E 6C 01 05 FF 00 03 00 05 01 00 D7 68"
+2026-03-10 10:19:11.467,TX>,3,ACK,4,"ACK for I_TASK_LOG, start upload from frame 0","7E 6C FF 06 00 00 04 00 5A 05 00 00 5C A9"
+2026-03-10 10:19:11.477,RAW~,3,NAK,0,"RAW_RX +57 bytes","7E 6C 01 04 FF 00 2F 00 15 00 00 2C 00 00 00 01 11 00 00 02 B0 49 A4 3F 3F 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 00 00 01 C9 04 99 A0 01 26 03 10 10 18 31 01 FF 42 D8"
+2026-03-10 10:19:11.477,RX<,3,UP_TASK_LOG,47,"UP_TASK_LOG recv: payload=46B","7E 6C 01 04 FF 00 2F 00 15 00 00 2C 00 00 00 01 11 00 00 02 B0 49 A4 3F 3F 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 00 00 01 C9 04 99 A0 01 26 03 10 10 18 31 01 FF 42 D8"
+2026-03-10 10:19:11.480,EVT*,-1,UP_TASK_LOG,47,"UP_TASK_LOG parsed: taskId=2031192974515875842 items=1","--"
+2026-03-10 10:19:11.553,EVT*,-1,NAK,0,"RX drain reason=pre-send DEL drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:19:11.553,TX>,4,DEL,17,"DEL send: taskId=02B049A4...","7E 6C FF 07 01 00 11 00 06 02 B0 49 A4 3F 3F 30 1C 00 00 00 00 00 00 00 00 C3 73"
+2026-03-10 10:19:11.640,RAW~,4,NAK,0,"RAW_RX +12 bytes","7E 6C 01 07 FF 00 02 00 5A 06 36 09"
+2026-03-10 10:19:11.640,RX<,4,ACK,2,"ACK for DEL","7E 6C 01 07 FF 00 02 00 5A 06 36 09"
+2026-03-10 10:19:11.643,EVT*,-1,NAK,0,"RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:19:11.643,TX>,4,Q_TASK,17,"Q_TASK(all) send","7E 6C FF 08 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26"
+2026-03-10 10:19:12.409,RAW~,4,NAK,0,"RAW_RX +12 bytes","7E 6C 01 08 FF 00 02 00 04 00 D1 4C"
+2026-03-10 10:19:12.409,EVT*,-1,Q_TASK,0,"Q_TASK RX observed frame header 7E6C","--"
+2026-03-10 10:19:12.409,RX<,4,Q_TASK,2,"Q_TASK resp: count=0","7E 6C 01 08 FF 00 02 00 04 00 D1 4C"
+2026-03-10 10:21:17.133,RAW~,5,NAK,0,"[TICKET_PAYLOAD] STATIONID=0X01 HEADER=160B","--"
+2026-03-10 10:21:17.133,RAW~,5,NAK,0,"────────────────────────────────────────────","--"
+2026-03-10 10:21:17.133,RAW~,5,NAK,0,"  taskId=2031193593700003841 convOk=true taskType=1","--"
+2026-03-10 10:21:17.133,RAW~,5,NAK,0,"  stepNum=1 stepTableStart=160 stringAreaStart=168","--"
+2026-03-10 10:21:17.133,RAW~,5,NAK,0,"  stepDetail[0] off=168 len=26","--"
+2026-03-10 10:21:17.133,RAW~,5,NAK,0,"  taskName off=194 len=59","--"
+2026-03-10 10:21:17.133,RAW~,5,NAK,0,"  payloadLen=253 fileSize=253 check=FD 00 00 00 01 11 00 00","--"
+2026-03-10 10:21:17.133,EVT*,-1,NAK,0,"传票已编码：payload=253B frameCount=1","--"
+2026-03-10 10:21:17.138,EVT*,-1,NAK,0,"发送传票帧 1/1 Cmd=0x03 Payload=253B","--"
+2026-03-10 10:21:17.141,EVT*,-1,TICKET,256,"TICKET frame 1/1 send","7E 6C 00 00 01 00 00 01 03 00 00 FD 00 00 00 01 11 00 00 01 B0 89 CE CF 3F 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 C2 00 00 00 20 26 03 10 10 21 FF FF 20 26 03 11 10 21 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF 01 00 03 00 A8 00 00 00 BD AB 34 31 31 B6 CF C2 B7 C6 F7 BA CF C9 CF B2 A2 D6 B4 D0 D0 CB F8 B6 A8 00 53 44 2D 32 30 32 36 2D 30 33 2D 31 30 2D 30 30 30 30 30 32 2D BC EC D0 DE CD EA B3 C9 2D B4 F3 BA E1 C7 D9 42 32 B5 CD D1 B9 C5 E4 B5 E7 B7 BF 2D 34 31 31 B6 CF C2 B7 C6 F7 00 83 70"
+2026-03-10 10:21:17.141,TX>,5,TICKET,256,"TICKET send","7E 6C 00 00 01 00 00 01 03 00 00 FD 00 00 00 01 11 00 00 01 B0 89 CE CF 3F 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 C2 00 00 00 20 26 03 10 10 21 FF FF 20 26 03 11 10 21 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF 01 00 03 00 A8 00 00 00 BD AB 34 31 31 B6 CF C2 B7 C6 F7 BA CF C9 CF B2 A2 D6 B4 D0 D0 CB F8 B6 A8 00 53 44 2D 32 30 32 36 2D 30 33 2D 31 30 2D 30 30 30 30 30 32 2D BC EC D0 DE CD EA B3 C9 2D B4 F3 BA E1 C7 D9 42 32 B5 CD D1 B9 C5 E4 B5 E7 B7 BF 2D 34 31 31 B6 CF C2 B7 C6 F7 00 83 70"
+2026-03-10 10:21:17.311,RAW~,5,NAK,0,"RAW_RX +14 bytes","7E 6C 01 00 FF 00 04 00 5A 03 00 00 00 74"
+2026-03-10 10:21:17.311,RX<,5,ACK,4,"ACK for 0x03","7E 6C 01 00 FF 00 04 00 5A 03 00 00 00 74"
+2026-03-10 10:21:17.314,EVT*,-1,TICKET,4,"TICKET frame 1/1 ACK","--"
+2026-03-10 10:21:17.314,EVT*,-1,NAK,0,"传票发送完成，共 1 帧","--"
+2026-03-10 10:21:20.059,RAW~,5,NAK,0,"RAW_RX +15 bytes","7E 6C 00 11 01 00 05 00 11 00 00 00 00 44 A0"
+2026-03-10 10:21:20.059,EVT*,-1,KEY_EVT,5,"KEY_REMOVED (钥匙拿走)","7E 6C 00 11 01 00 05 00 11 00 00 00 00 44 A0"
+2026-03-10 10:21:34.699,RAW~,5,NAK,0,"RAW_RX +15 bytes","7E 6C 00 12 01 00 05 00 11 01 00 00 00 D1 62"
+2026-03-10 10:21:34.699,EVT*,-1,NAK,0,"RX drain reason=KEY_PLACED drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:21:34.699,EVT*,-1,KEY_EVT,5,"KEY_PLACED (钥匙放上), drainBytes=0","7E 6C 00 12 01 00 05 00 11 01 00 00 00 D1 62"
+2026-03-10 10:21:34.702,EVT*,-1,NAK,0,"KEY_STABLE window start (key placed, 600ms)","--"
+2026-03-10 10:21:35.303,TX>,5,SET_COM,2,"SET_COM send","7E 6C FF 09 00 00 02 00 0F 01 1C 11"
+2026-03-10 10:21:35.306,EVT*,-1,NAK,0,"KEY_STABLE_PRESENT","--"
+2026-03-10 10:21:35.308,EVT*,-1,NAK,0,"钥匙已就绪，可发送 Q_TASK/DEL","--"
+2026-03-10 10:21:35.433,RAW~,5,NAK,0,"RAW_RX +12 bytes","7E 6C FF 13 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:21:35.433,RX<,5,ACK,2,"ACK for SET_COM","7E 6C FF 13 00 00 02 00 5A 0F A7 20"
+2026-03-10 10:21:37.762,EVT*,-1,NAK,0,"RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:21:37.762,TX>,6,Q_TASK,17,"Q_TASK(all) send","7E 6C FF 0A 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26"
+2026-03-10 10:21:37.921,RAW~,6,NAK,0,"RAW_RX +32 bytes","7E 6C 01 0A FF 00 16 00 04 01 01 B0 89 CE CF 3F 30 1C 00 00 00 00 00 00 00 00 02 00 FF FF 72 87"
+2026-03-10 10:21:37.921,EVT*,-1,Q_TASK,0,"Q_TASK RX observed frame header 7E6C","--"
+2026-03-10 10:21:37.921,RX<,6,Q_TASK,22,"Q_TASK resp: count=1, first=01 B0 89 CE CF 3F 30 1C","7E 6C 01 0A FF 00 16 00 04 01 01 B0 89 CE CF 3F 30 1C 00 00 00 00 00 00 00 00 02 00 FF FF 72 87"
+2026-03-10 10:21:37.925,EVT*,-1,NAK,0,"RX drain reason=pre-send I_TASK_LOG drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:21:37.925,TX>,7,I_TASK_LOG,17,"I_TASK_LOG send","7E 6C FF 0B 01 00 11 00 05 01 B0 89 CE CF 3F 30 1C 00 00 00 00 00 00 00 00 5E F9"
+2026-03-10 10:21:37.942,RAW~,7,NAK,0,"RAW_RX +13 bytes","7E 6C 01 0B FF 00 03 00 05 01 00 D7 68"
+2026-03-10 10:21:37.942,RX<,7,I_TASK_LOG,3,"I_TASK_LOG resp: totalFrames=1","7E 6C 01 0B FF 00 03 00 05 01 00 D7 68"
+2026-03-10 10:21:37.945,TX>,7,ACK,4,"ACK for I_TASK_LOG, start upload from frame 0","7E 6C FF 0C 00 00 04 00 5A 05 00 00 5C A9"
+2026-03-10 10:21:37.955,RAW~,7,NAK,0,"RAW_RX +57 bytes","7E 6C 01 05 FF 00 2F 00 15 00 00 2C 00 00 00 01 11 00 00 01 B0 89 CE CF 3F 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 00 00 01 C9 04 99 A0 00 26 03 10 10 20 59 01 FF 12 BA"
+2026-03-10 10:21:37.955,RX<,7,UP_TASK_LOG,47,"UP_TASK_LOG recv: payload=46B","7E 6C 01 05 FF 00 2F 00 15 00 00 2C 00 00 00 01 11 00 00 01 B0 89 CE CF 3F 30 1C 00 00 00 00 00 00 00 00 01 00 01 00 00 00 01 C9 04 99 A0 00 26 03 10 10 20 59 01 FF 12 BA"
+2026-03-10 10:21:37.958,EVT*,-1,UP_TASK_LOG,47,"UP_TASK_LOG parsed: taskId=2031193593700003841 items=1","--"
+2026-03-10 10:21:38.025,EVT*,-1,NAK,0,"RX drain reason=pre-send DEL drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:21:38.025,TX>,8,DEL,17,"DEL send: taskId=01B089CE...","7E 6C FF 0D 01 00 11 00 06 01 B0 89 CE CF 3F 30 1C 00 00 00 00 00 00 00 00 C3 AE"
+2026-03-10 10:21:38.113,RAW~,8,NAK,0,"RAW_RX +12 bytes","7E 6C 01 0D FF 00 02 00 5A 06 36 09"
+2026-03-10 10:21:38.113,RX<,8,ACK,2,"ACK for DEL","7E 6C 01 0D FF 00 02 00 5A 06 36 09"
+2026-03-10 10:21:38.116,EVT*,-1,NAK,0,"RX drain reason=pre-send Q_TASK drainBytes=0 recvBufSizeBefore=0 recvBufSizeAfter=0","--"
+2026-03-10 10:21:38.116,TX>,8,Q_TASK,17,"Q_TASK(all) send","7E 6C FF 0E 00 00 11 00 04 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF F3 26"
+2026-03-10 10:21:38.879,RAW~,8,NAK,0,"RAW_RX +12 bytes","7E 6C 01 0E FF 00 02 00 04 00 D1 4C"
+2026-03-10 10:21:38.879,EVT*,-1,Q_TASK,0,"Q_TASK RX observed frame header 7E6C","--"
+2026-03-10 10:21:38.879,RX<,8,Q_TASK,2,"Q_TASK resp: count=0","7E 6C 01 0E FF 00 02 00 04 00 D1 4C"
