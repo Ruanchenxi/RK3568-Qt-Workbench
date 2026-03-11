@@ -4,7 +4,7 @@
 
 Status: Active  
 Owner: 钥匙链路维护者  
-Last Updated: 2026-03-04  
+Last Updated: 2026-03-10  
 适用范围：`features/key` 串口协议链路（UI -> Controller -> Session -> Protocol -> Transport）。  
 
 ---
@@ -137,15 +137,17 @@ Last Updated: 2026-03-04
 
 1. `SET_COM = 0x0F`：握手命令。  
 2. `Q_TASK = 0x04`：查询任务列表。  
-3. `DEL = 0x06`：删除任务。  
-4. `ACK = 0x5A`：设备确认。  
-5. `NAK = 0x00`：设备拒绝。  
-6. `KEY_EVENT = 0x11`：钥匙在位/离位事件。  
+3. `I_TASK_LOG = 0x05`：请求任务回传日志。  
+4. `DEL = 0x06`：删除任务。  
+5. `ACK = 0x5A`：设备确认。  
+6. `NAK = 0x00`：设备拒绝。  
+7. `KEY_EVENT = 0x11`：钥匙在位/离位事件。  
+8. `UP_TASK_LOG = 0x15`：回传任务日志。  
 
 ### 3.4 Addr2 规则
 
 1. `SET_COM / Q_TASK`：`0x0000`。  
-2. `DEL`：`0x0001`。  
+2. `DEL / I_TASK_LOG`：当前站号（Lo=stationId, Hi=0x00）。  
 
 ### 3.5 NAK 常见错误码
 
@@ -174,51 +176,58 @@ Last Updated: 2026-03-04
    - `CRC=F326`  
    - 示例：`7E 6C FF <FrameNo> 00 00 11 00 04 FF..FF F3 26`
 
-3. `DEL` 删除请求  
+3. `I_TASK_LOG` 请求  
+   - `Cmd=0x05`
+   - `Addr2=stationId`
+   - `Data=taskId(16字节)`
+   - `Len=0x0011`
+   - 当前单帧主链已接入，多帧回放已验证
+
+4. `DEL` 删除请求  
    - `Cmd=0x06`  
-   - `Addr2=0x0001`（和 Q_TASK 不同）  
+   - `Addr2=stationId`（和 Q_TASK 不同）  
    - `Data=taskId(16字节)`  
    - `Len=0x0011`  
    - `CRC` 随 taskId 变化  
    - 参考：taskId 全 0 时 CRC 可为 `1A8C`
 
-4. `ACK(SET_COM)` 响应  
+5. `ACK(SET_COM)` 响应  
    - `Cmd=0x5A`  
    - `Data=0x0F`（被确认命令）  
    - `Len=0x0002`  
    - `CRC=A720`
 
-5. `ACK(DEL)` 响应  
+6. `ACK(DEL)` 响应  
    - `Cmd=0x5A`  
    - `Data=0x06`  
    - `Len=0x0002`  
    - `CRC=3609`
 
-6. `Q_TASK` 响应（count=0）  
+7. `Q_TASK` 响应（count=0）  
    - `Cmd=0x04`  
    - `Data=00`（任务数）  
    - `Len=0x0002`  
    - `CRC=D14C`
 
-7. `Q_TASK` 响应（count=1）  
+8. `Q_TASK` 响应（count=1）  
    - `Cmd=0x04`  
    - `Data = count(1) + item(20)`  
    - `item = taskId(16) + status(1) + type(1) + source(1) + reserved(1)`  
    - `Len=0x0016`（Cmd 1 + Data 21）
 
-8. `KEY_EVENT` 放上  
+9. `KEY_EVENT` 放上  
    - `Cmd=0x11`  
    - `Data=01 00 00 00`  
    - `Len=0x0005`  
    - `CRC=D162`
 
-9. `KEY_EVENT` 拿走  
+10. `KEY_EVENT` 拿走  
    - `Cmd=0x11`  
    - `Data=00 00 00 00`  
    - `Len=0x0005`  
    - `CRC=44A0`
 
-10. `NAK` 响应  
+11. `NAK` 响应  
    - `Cmd=0x00`  
    - `Data` 至少包含 `origCmd`，常见还会带 `errCode`  
    - `Len` 与 data 字节数相关（不是固定值）  
@@ -227,7 +236,7 @@ Last Updated: 2026-03-04
 说明：
 
 1. 上述组成规则来自“当前代码 + 你提供的历史文档交叉验证”。  
-2. 对于你历史文档里涉及的长报文命令（如 `0x03` 传票、`0x1A` 下载 RFID、`0x02` 初始化），本手册目前只保留“协议组成参考”，不宣称当前分支已完整实现。  
+2. 对于你历史文档里涉及的长报文命令（如 `0x03` 传票、`0x05/0x15` 回传、`0x1A` 下载 RFID、`0x02` 初始化），应优先以当前代码和最新样本为准。  
 
 ---
 
@@ -369,6 +378,7 @@ Last Updated: 2026-03-04
 1. `serial/replayEnabled=true`。  
 2. `serial/replayScript=test/replay/<scenario>.jsonl`  
    默认值（代码写死）：`test/replay/scenario_half_and_sticky.jsonl`。  
+   多帧回传验证可切到：`test/replay/scenario_up_task_log_multiframe.jsonl`  
 3. 若脚本加载失败，`KeySessionService` 自动回退真实串口。  
 
 ---

@@ -2,7 +2,7 @@
 
 Status: Active  
 Owner: 架构维护  
-Last Updated: 2026-03-02  
+Last Updated: 2026-03-10  
 适用范围：`platform/serial/ReplaySerialTransport` 与 `KeySessionService` 回放注入流程。  
 
 ---
@@ -162,6 +162,7 @@ Last Updated: 2026-03-02
 2. `scenario_timeout_retry_3x.jsonl`  
 3. `scenario_error_crc_like.jsonl`  
 4. `scenario_mixed_long_run.jsonl`  
+5. `scenario_up_task_log_multiframe.jsonl`
 
 命名应体现“输入特征 + 预期行为”。
 
@@ -184,6 +185,12 @@ Last Updated: 2026-03-02
    - JSON 是否合法  
    - `hex` 是否可解析  
    - `replayEnabled` 是否开启  
+
+补充场景说明：
+
+1. `scenario_up_task_log_multiframe.jsonl`
+   - 目标：验证 `UP_TASK_LOG(0x15)` 两帧累计与逐帧 ACK
+   - 注意：该场景主要验证协议层拼帧能力，不代表真实钥匙时序已被真机确认
 
 ---
 

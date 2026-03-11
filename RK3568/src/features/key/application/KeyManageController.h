@@ -82,6 +82,7 @@ private slots:
 private:
     void tryAutoConnectKeyPort();
     bool autoTransferEnabled() const;
+    void tryAutoRefreshKeyTasksOnReady(const KeySessionSnapshot &snapshot);
     void tryStartTicketTransfer(const QString &taskId, bool automatic);
     void tryAutoTransferPendingTicket();
     void tryStartTicketReturn(const QString &taskId, bool automatic);
@@ -105,6 +106,7 @@ private:
     QByteArray m_pendingDeletedKeyTaskRaw;
     bool m_pendingDeleteAllowsRetransfer = false;
     QList<KeyTaskDto> m_lastKeyTasks;
+    bool m_lastReadyState = false;
     QStringList m_httpClientLogLines;
     QStringList m_httpServerLogLines;
 };

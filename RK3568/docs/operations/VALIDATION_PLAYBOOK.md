@@ -2,7 +2,7 @@
 
 Status: Active  
 Owner: 项目维护者  
-Last Updated: 2026-03-06  
+Last Updated: 2026-03-10  
 适用范围：主程序各链路验证步骤。  
 不适用范围：不替代协议字段文档。  
 
@@ -87,7 +87,23 @@ Last Updated: 2026-03-06
 
 参考：`docs/replay/REPLAY_SPEC.md`
 
-后续需要补充：
+至少验证：
 
 1. 传票单帧 replay
 2. 传票多帧 replay
+3. `UP_TASK_LOG` 多帧 replay：
+   - `I_TASK_LOG resp: totalFrames=2`
+   - `UP_TASK_LOG frame 1/2 buffered`
+   - `ACK for UP_TASK_LOG frame 0`
+   - `UP_TASK_LOG frame 2/2 buffered`
+   - `ACK for UP_TASK_LOG frame 1`
+   - `UP_TASK_LOG parsed: ... frames=2`
+
+## 8. 回传自动触发验证
+
+1. 真实钥匙完成任务后放回底座。  
+2. 不手工点击“读取钥匙列表”。  
+3. 预期：
+   - 钥匙 ready 后主程序自动触发一次 `Q_TASK`
+   - 若 `status=0x02`，自动进入回传链
+   - 若 `status=0x00/0x01`，只提示“任务未完成”，不回传、不 DEL

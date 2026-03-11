@@ -2,8 +2,8 @@
 
 Status: Active  
 Owner: 钥匙链路维护者  
-Last Updated: 2026-03-04  
-真值来源：`KeyProtocolDefs.h` / `KeySerialClient.h` / `KeyCrc16.h` + 2026-03-03 真机抓包验证
+Last Updated: 2026-03-10  
+真值来源：`KeyProtocolDefs.h` / `KeySerialClient.h` / `KeyCrc16.h` + 2026-03-03 ~ 2026-03-10 真机抓包验证 + 多帧 replay 验证
 
 ---
 
@@ -41,8 +41,10 @@ Last Updated: 2026-03-04
 |--------|------------|----------------|--------------------------|
 | 0x0F   | SET_COM    | TX（主发）     | 握手命令                 |
 | 0x04   | Q_TASK     | TX / RX        | 查询任务列表             |
+| 0x05   | I_TASK_LOG | TX / RX        | 请求任务操作日志         |
 | 0x06   | DEL        | TX（主发）     | 删除指定任务             |
 | 0x14   | Q_KEYEQ    | TX / RX        | 查询/上报钥匙电量        |
+| 0x15   | UP_TASK_LOG| RX（设备回）   | 回传任务操作日志         |
 | 0x5A   | ACK        | RX（设备回）   | 确认响应                 |
 | 0x00   | NAK        | RX（设备回）   | 拒绝/错误响应            |
 | 0x11   | KEY_EVENT  | RX（设备推送） | 钥匙在位/离位事件        |
@@ -52,7 +54,7 @@ Last Updated: 2026-03-04
 | 命令方向 | 命令             | TX Addr2          | 说明                         |
 |----------|------------------|-------------------|------------------------------|
 | 主机→设备 | SET_COM / Q_TASK / Q_KEYEQ / SET_TIME | `00 00` | 固定，与系统站号无关 |
-| 主机→设备 | DEL              | `stationId 00`    | Lo=当前站号，Hi=0x00         |
+| 主机→设备 | DEL / I_TASK_LOG | `stationId 00`    | Lo=当前站号，Hi=0x00         |
 | 设备→主机 | 所有回包         | 常为 `FF 00`      | 解析器不以 RX Addr2 做过滤   |
 
 ---
@@ -78,6 +80,8 @@ Last Updated: 2026-03-04
 |---------------------------|--------|---------------|
 | `0F 01`                   | 1C11   | SET_COM 发送  |
 | `04 FF×16`                | F326   | Q_TASK 发送   |
+| `05 01 00`                | D768   | I_TASK_LOG resp(totalFrames=1) |
+| `5A 05 00 00`             | 5CA9   | ACK(I_TASK_LOG, start frame 0) |
 | `11 01 00 00 00`          | D162   | KEY_PLACED    |
 | `11 00 00 00 00`          | 44A0   | KEY_REMOVED   |
 | `5A 0F`                   | A720   | ACK(SET_COM)  |
@@ -319,6 +323,175 @@ NAK 错误码：
 
 ---
 
+### §4.13 I_TASK_LOG 请求帧（TX，主机→设备）
+
+> 用途：请求钥匙返回指定任务的操作日志。当前回传主链由 `Q_TASK.status=0x02` 触发该请求。
+
+```text
+偏移   值           字段
+4      stationId   Addr2 Lo  ← 当前站号（和 DEL 一致）
+5      00          Addr2 Hi
+6      11          Len Lo
+7      00          Len Hi    → Len = 0x0011（Cmd1 + Data16）
+8      05          Cmd = I_TASK_LOG
+9~24   taskId      Data（16 字节 GUID，来自 Q_TASK 响应）
+25~26  **          CRC（随 taskId 变化）
+```
+
+说明：
+
+1. `I_TASK_LOG` 的 `Addr2` 规则与 `DEL` 相同，取当前站号。  
+2. 当前单帧真机样本与多帧 replay 场景都按此规则工作。  
+
+---
+
+### §4.14 I_TASK_LOG 响应帧（RX，设备→主机）
+
+```text
+偏移  值    字段
+8     05    Cmd = I_TASK_LOG
+9     **    totalFrames Lo
+10    **    totalFrames Hi  → LE 小端，总日志帧数
+11~12 **    CRC16
+```
+
+当前已确认：
+
+1. 真机单帧样本：`05 01 00 D7 68`
+2. replay 多帧样本：`05 02 00 8B 9D`
+
+说明：
+
+1. `Data=01 00` 表示后续会上传 1 帧 `UP_TASK_LOG`。  
+2. `Data=02 00` 当前仅在 replay 场景验证过，不代表真机已确认。  
+
+---
+
+### §4.15 ACK(I_TASK_LOG) 确认帧（TX，主机→设备）
+
+> 当前真实样本里，主机不是只发 `ACK 05`，而是固定发送：
+>
+> `7E 6C FF .. 00 00 04 00 5A 05 00 00 5C A9`
+
+```text
+偏移  值    字段
+8     5A    Cmd = ACK
+9     05    Data[0] = 被确认命令码（I_TASK_LOG）
+10    00    Data[1] = 起始日志帧序号 Lo
+11    00    Data[2] = 起始日志帧序号 Hi
+12    5C    CRC Hi
+13    A9    CRC Lo    → CRC = 0x5CA9
+```
+
+说明：
+
+1. 当前主机侧实现把它解释为“确认 I_TASK_LOG，并从日志帧 0 开始上传”。  
+2. 该格式已被真机单帧样本支持。  
+
+---
+
+### §4.16 UP_TASK_LOG 回包（RX，设备→主机）
+
+#### §4.16.1 外层帧
+
+```text
+偏移   值      字段
+6~7    **      Len = 1(Cmd) + 2(frameSeq) + payload(N)
+8      15      Cmd = UP_TASK_LOG
+9      **      frameSeq Lo
+10     **      frameSeq Hi   → 从 0 开始，LE 小端
+11~    **      payload 分片
+末尾2B **      CRC16
+```
+
+#### §4.16.2 当前单帧 payload 结构
+
+```text
+fileSize(4B LE)
+version(2B BCD)
+reserved(2B)
+taskId(16B)
+stationNo(1B)
+taskAttr(1B)
+steps(2B LE)
+logItem[0](16B)
+logItem[1](16B)
+...
+```
+
+每条 `logItem` 当前按 16B 解释：
+
+```text
+serialNumber(2B LE)
+opStatus(1B)
+rfid(5B)
+opTime(6B BCD, yyMMddHHmmss)
+opType(1B)
+reserved(1B)
+```
+
+#### §4.16.3 真机单帧样本（count=1）
+
+示例：
+
+```text
+7E 6C 01 02 FF 00 2F 00 15 00 00
+2C 00 00 00 01 11 00 00
+02 70 EE 88 23 49 30 1C 00 00 00 00 00 00 00 00
+01 00 01 00
+00 00 01 C9 04 99 A0 01 26 03 10 11 01 40 01 FF
+E1 96
+```
+
+可解为：
+
+1. `frameSeq = 0`
+2. `fileSize = 0x0000002C = 44`
+3. `version = 0x01 0x11`
+4. `steps = 1`
+5. `logItem count = 1`
+
+#### §4.16.4 多帧回放验证
+
+当前代码已支持按 `frameSeq` 累积多帧 `UP_TASK_LOG`，并在 replay 场景中验证：
+
+1. `I_TASK_LOG resp: totalFrames=2`
+2. `UP_TASK_LOG frame 1/2 buffered`
+3. `ACK for UP_TASK_LOG frame 0`
+4. `UP_TASK_LOG frame 2/2 buffered`
+5. `ACK for UP_TASK_LOG frame 1`
+6. `UP_TASK_LOG parsed: ... frames=2`
+
+注意：
+
+1. 上述规则当前是“代码 + replay 已验证”。  
+2. 真实钥匙多帧回传样本尚未拿到，因此不能宣称真机完全确认。  
+
+---
+
+### §4.17 ACK(UP_TASK_LOG) 确认帧（TX，主机→设备）
+
+当前代码对每帧 `UP_TASK_LOG` 回复：
+
+```text
+Cmd = 0x5A
+Data[0] = 0x15
+Data[1] = frameSeq Lo
+Data[2] = frameSeq Hi
+```
+
+示例：
+
+1. 第 0 帧确认：`5A 15 00 00`
+2. 第 1 帧确认：`5A 15 01 00`
+
+说明：
+
+1. 该规则当前用于多帧 replay 验证。  
+2. 真实设备是否要求完全一致，仍待真机样本确认。  
+
+---
+
 ## §5 完整时序图
 
 ```text
@@ -350,6 +523,48 @@ NAK 错误码：
 │◄─── KEY_EVENT(0x11, Data=00 00 00 00) ──│  keyPlaced/keyStable/sessionReady 全 false
 │                                           │
 ```
+
+### §5.1 回传单帧时序（当前真机已确认）
+
+```text
+主机                                        设备
+│                                           │
+│──── Q_TASK(all) ────────────────────────►│
+│◄─── Q_TASK resp(count=1, status=0x02) ──│
+│                                           │
+│──── I_TASK_LOG(taskId) ─────────────────►│
+│◄─── I_TASK_LOG resp(totalFrames=1) ─────│
+│──── ACK(5A 05 00 00) ──────────────────►│
+│◄─── UP_TASK_LOG(seq=0, payload) ────────│
+│                                           │
+│  解析日志 -> HTTP /finish-step-batch      │
+│  HTTP success                             │
+│──── DEL(taskId) ────────────────────────►│
+│◄─── ACK(DEL) ───────────────────────────│
+│──── Q_TASK(all) ────────────────────────►│
+│◄─── Q_TASK resp(count=0) ───────────────│
+```
+
+### §5.2 回传多帧时序（代码 + replay 已验证）
+
+```text
+主机                                        设备
+│                                           │
+│──── I_TASK_LOG(taskId) ─────────────────►│
+│◄─── I_TASK_LOG resp(totalFrames=2) ─────│
+│──── ACK(5A 05 00 00) ──────────────────►│
+│◄─── UP_TASK_LOG(seq=0, payload-part1) ──│
+│──── ACK(5A 15 00 00) ──────────────────►│
+│◄─── UP_TASK_LOG(seq=1, payload-part2) ──│
+│──── ACK(5A 15 01 00) ──────────────────►│
+│                                           │
+│  累积 payload -> 统一解析 -> HTTP 上传     │
+```
+
+说明：
+
+1. 这条时序当前由 replay 场景验证。  
+2. 真实钥匙多帧样本尚待确认。  
 
 ---
 
@@ -400,13 +615,15 @@ while buf.len() >= MIN_FRAME_LEN(11):
 | ReqKeyId                     | 0xFF | 广播 KeyId              |
 | CmdSetCom                    | 0x0F | 握手命令                |
 | CmdQTask                     | 0x04 | 查询任务                |
+| CmdITaskLog                  | 0x05 | 请求任务日志            |
 | CmdDel                       | 0x06 | 删除任务                |
 | CmdQKeyEq                    | 0x14 | 查询/上报钥匙电量       |
+| CmdUpTaskLog                 | 0x15 | 回传任务日志            |
 | CmdAck                       | 0x5A | 确认响应                |
 | CmdNak                       | 0x00 | 拒绝响应                |
 | CmdKeyEvent                  | 0x11 | 钥匙事件                |
 | Addr2 (SET_COM/Q_TASK/Q_KEYEQ/SET_TIME) | 0x0000 | Lo=00 Hi=00，固定；与站号无关 |
-| Addr2 (DEL)                  | stationId | Lo=站号&0xFF Hi=0x00；站号1→01 00，站号2→02 00 |
+| Addr2 (DEL / I_TASK_LOG)     | stationId | Lo=站号&0xFF Hi=0x00；站号1→01 00，站号2→02 00 |
 | RETRY_TIMEOUT_MS             | 1000 | 单次重试超时(ms)        |
 | MAX_RETRIES                  | 3    | 最大重试次数            |
 | KEY_STABLE_WINDOW_MS         | 600  | 稳定性观察窗口(ms)      |
@@ -434,3 +651,5 @@ while buf.len() >= MIN_FRAME_LEN(11):
 | 用整帧字节相等判断命令匹配           | 应只比较 Cmd 字节，FrameNo 是可变的      |
 | KEY_PLACED Data[0]=0x02               | KEY_PLACED Data[0]=**0x01**，拿走=0x00  |
 | 以为 execute(SetCom) 会发 SET_COM 帧 | 当前该 case 只做 disconnectPort（已知 gap）|
+| 以为工作台步骤 RFID 必须等于回传日志 RFID | 当前原产品与主程序样本都证明：两者不是同一语义 |
+| 以为多帧回传已被真机确认 | 当前仅“代码 + replay 已验证”，真实钥匙样本仍待补 |

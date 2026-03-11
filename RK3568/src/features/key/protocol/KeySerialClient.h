@@ -185,7 +185,9 @@ public:
     void requestTaskLog(const QByteArray &taskId16);
     void deleteTask(const QByteArray &taskId16);
     void deleteFirstTask();
-    void transferTicketJson(const QByteArray &jsonBytes, quint8 stationId = 0x01);
+    void transferTicketJson(const QByteArray &jsonBytes,
+                            quint8 stationId = 0x01,
+                            int debugFrameChunkSize = 0);
 
     const QList<KeyTaskInfo> &tasks() const { return m_tasks; }
     bool hasVerifiedPort() const { return m_hasVerifiedPort; }
@@ -243,7 +245,7 @@ signals:
     void ackReceived(quint8 ackedCmd);
     /// 收到 NAK 帧，origCmd 为被拒绝的命令码，errCode 为错误码
     void nakReceived(quint8 origCmd, quint8 errCode);
-    /// 收到并解析完整的任务回传日志（当前仅支持单帧日志）
+    /// 收到并解析完整的任务回传日志（支持按 seq 累积多帧日志）
     void taskLogReady(const QVariantMap &payload);
     /// 传票发送进度（frameIndex 从 1 开始）
     void ticketTransferProgress(int frameIndex, int totalFrames, quint8 cmd);
@@ -292,6 +294,12 @@ private:
     void clearTicketTransferState();                         ///< 清理传票发送状态
     void clearTaskLogState();                                ///< 清理回传日志状态
     bool sendNextTicketFrame();                              ///< 发送下一帧传票
+    void sendTaskLogAck(quint16 frameSeq);                   ///< 确认一帧回传日志
+    bool parseAndEmitTaskLogPayload(const QByteArray &payload,
+                                    quint16 totalFrames,
+                                    quint16 lastFrameSeq,
+                                    quint16 lenField,
+                                    const QByteArray &rawFrame); ///< 解析累计后的回传日志
 
     // --- 缓冲区管理与诊断 ---
     qint64 drainSerialInput(const QString &reason, bool clearRecvBuffer); ///< 排空串口接收缓冲区
@@ -378,6 +386,8 @@ private:
     // 回传日志状态
     QByteArray         m_pendingTaskLogTaskId; ///< 当前请求回传日志的任务ID（16B 原始值）
     quint16            m_pendingTaskLogFrames; ///< I_TASK_LOG 返回的总帧数
+    quint16            m_taskLogExpectedSeq;   ///< 下一帧期望的日志序号（从 0 开始）
+    QByteArray         m_taskLogPayloadBuffer; ///< 已累计的回传日志 payload（去掉每帧 seq）
 };
 
 #endif // KEYSERIALCLIENT_H

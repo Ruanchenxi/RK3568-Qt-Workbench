@@ -83,7 +83,12 @@ void KeyManageController::start()
     if (!m_ticketIngress->start()) {
         emit statusMessage(m_ticketIngress->lastError());
     }
-    emit sessionSnapshotChanged(currentSnapshot());
+    const KeySessionSnapshot snapshot = currentSnapshot();
+    m_lastReadyState = snapshot.connected
+            && snapshot.keyPresent
+            && snapshot.keyStable
+            && snapshot.sessionReady;
+    emit sessionSnapshotChanged(snapshot);
     emit systemTicketsUpdated(systemTickets());
 }
 
@@ -356,10 +361,13 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
         emit statusMessage(QStringLiteral("传票发送失败：%1").arg(what));
         break;
     }
-    case KeySessionEvent::KeyStateChanged:
-        emit sessionSnapshotChanged(m_session->snapshot());
+    case KeySessionEvent::KeyStateChanged: {
+        const KeySessionSnapshot snapshot = m_session->snapshot();
+        emit sessionSnapshotChanged(snapshot);
+        tryAutoRefreshKeyTasksOnReady(snapshot);
         tryAutoTransferPendingTicket();
         break;
+    }
     case KeySessionEvent::RawProtocol:
         break;
     }
@@ -474,6 +482,27 @@ void KeyManageController::handleReturnUploadFailed(const QString &taskId, const 
 bool KeyManageController::autoTransferEnabled() const
 {
     return ConfigManager::instance()->value("ticket/autoTransferEnabled", false).toBool();
+}
+
+void KeyManageController::tryAutoRefreshKeyTasksOnReady(const KeySessionSnapshot &snapshot)
+{
+    const bool ready = snapshot.connected
+            && snapshot.keyPresent
+            && snapshot.keyStable
+            && snapshot.sessionReady;
+    const bool becameReady = (!m_lastReadyState && ready);
+    m_lastReadyState = ready;
+
+    if (!becameReady) {
+        return;
+    }
+
+    if (!m_activeTransferTaskId.isEmpty()) {
+        return;
+    }
+
+    emit statusMessage(QStringLiteral("钥匙已就绪，自动读取钥匙票列表以检查待回传任务"));
+    onQueryTasksClicked();
 }
 
 void KeyManageController::tryStartTicketReturn(const QString &taskId, bool automatic)
@@ -661,6 +690,8 @@ void KeyManageController::tryStartTicketTransfer(const QString &taskId, bool aut
     TicketTransferRequest request;
     request.jsonBytes = jsonBytes;
     request.opId = nextOpId();
+    request.debugFrameChunkSize = ConfigManager::instance()
+            ->value("ticket/debugFrameChunkSize", 0).toInt();
     m_activeTransferTaskId = taskId;
     m_ticketStore->updateTransferState(taskId, QStringLiteral("sending"));
     m_session->transferTicket(request);

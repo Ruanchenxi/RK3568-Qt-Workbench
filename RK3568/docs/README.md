@@ -2,7 +2,7 @@
 
 Status: Active  
 Owner: 项目维护者（单人开发）  
-Last Updated: 2026-03-09
+Last Updated: 2026-03-10
 
 本文件是 `docs/` 的总入口，目标是让“零历史新 Agent / 新同事”在 5 分钟内回答：
 
@@ -73,7 +73,7 @@ Last Updated: 2026-03-09
 
 1. 迁移状态：Feature-First Lite 目录迁移已完成，传票主链已并入主程序。  
 2. 传票状态：`工作台 JSON -> 本地 HTTP 接收 -> 系统票入池 -> 手动/自动传票` 主链已落地。  
-3. 当前重点：从“传票主链”转向“回传链路”，后续再继续收 `初始化 / 下载 RFID / 回传`。  
+3. 当前重点：单帧回传主链已落地，后续继续收 `初始化 / 下载 RFID / 多帧回传`。  
 4. 构建体系：继续使用 `qmake + .pri`，暂不迁移 CMake。  
 5. 架构门禁：使用 `tools/arch_guard.ps1 -Phase 3`。  
 6. 串口体系：真机 `QtSerialTransport` 与回放 `ReplaySerialTransport` 可切换。  

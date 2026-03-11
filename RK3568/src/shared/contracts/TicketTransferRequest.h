@@ -19,6 +19,7 @@ struct TicketTransferRequest
     QByteArray jsonBytes;             ///< 已加载的 JSON 原文（可选，优先于 jsonPath）
     quint8     stationId = 0x01;      ///< 传票外层帧站号
     int        opId = -1;             ///< 日志归属操作ID
+    int        debugFrameChunkSize = 0; ///< 调试用强制分帧大小；0=按正式默认值
 };
 
 #endif // TICKETTRANSFERREQUEST_H

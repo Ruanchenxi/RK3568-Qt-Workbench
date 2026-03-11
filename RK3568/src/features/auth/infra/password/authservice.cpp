@@ -157,12 +157,17 @@ QString AuthService::encryptPassword(const QString &password) const
 void AuthService::sendLoginRequest(const QString &userName, const QString &encryptedPassword, const QString &tenantId)
 {
     // 从配置读取接口基础地址（使用 system/apiUrl 配置项）
-    QString apiBaseUrl = ConfigManager::instance()->apiUrl();
+    QString apiBaseUrl = ConfigManager::instance()->apiUrl().trimmed();
 
     // 如果配置为空，使用默认值
     if (apiBaseUrl.isEmpty())
     {
         apiBaseUrl = "http://localhost/api/kids-outage/third-api";
+    }
+
+    while (apiBaseUrl.endsWith('/'))
+    {
+        apiBaseUrl.chop(1);
     }
 
     // 拼接完整的登录接口地址

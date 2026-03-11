@@ -169,6 +169,8 @@ KeySerialClient::KeySerialClient(ISerialTransport *transport, QObject *parent)
     , m_ticketFrameIndex(-1)
     , m_pendingTaskLogTaskId()
     , m_pendingTaskLogFrames(0)
+    , m_taskLogExpectedSeq(0)
+    , m_taskLogPayloadBuffer()
 {
     Q_ASSERT(m_serial != nullptr);
     connect(m_serial, &ISerialTransport::readyRead, this, &KeySerialClient::onReadyRead);
@@ -527,6 +529,103 @@ void KeySerialClient::clearTaskLogState()
 {
     m_pendingTaskLogTaskId.clear();
     m_pendingTaskLogFrames = 0;
+    m_taskLogExpectedSeq = 0;
+    m_taskLogPayloadBuffer.clear();
+}
+
+void KeySerialClient::sendTaskLogAck(quint16 frameSeq)
+{
+    QByteArray ackData;
+    ackData.append(static_cast<char>(CMD_UP_TASK_LOG));
+    ackData.append(static_cast<char>(frameSeq & 0xFF));
+    ackData.append(static_cast<char>((frameSeq >> 8) & 0xFF));
+
+    QByteArray addr2;
+    addr2.append(static_cast<char>(KeyProtocol::Addr2DefaultLo));
+    addr2.append(static_cast<char>(KeyProtocol::Addr2DefaultHi));
+
+    const QByteArray ackFrame = buildFrame(CMD_ACK, ackData, addr2);
+    sendFrameNoWait(ackFrame,
+                    CMD_ACK,
+                    static_cast<quint16>(1 + ackData.size()),
+                    QString("ACK for UP_TASK_LOG frame %1").arg(frameSeq));
+}
+
+bool KeySerialClient::parseAndEmitTaskLogPayload(const QByteArray &payload,
+                                                 quint16 totalFrames,
+                                                 quint16 lastFrameSeq,
+                                                 quint16 lenField,
+                                                 const QByteArray &rawFrame)
+{
+    if (payload.size() < 28) {
+        emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
+                "UP_TASK_LOG file payload too short", rawFrame);
+        return false;
+    }
+
+    const quint32 fileSize = readLe32(payload, 0);
+    if (fileSize < 28 || static_cast<int>(fileSize) > payload.size()) {
+        emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
+                QString("UP_TASK_LOG invalid fileSize=%1 payload=%2")
+                    .arg(fileSize).arg(payload.size()),
+                rawFrame);
+        return false;
+    }
+
+    int offset = 4;
+    const QByteArray versionBytes = payload.mid(offset, 2);
+    offset += 2;
+    offset += 2; // reserved
+    const QByteArray taskIdRaw = payload.mid(offset, TASK_ID_LEN);
+    offset += TASK_ID_LEN;
+    if (!m_pendingTaskLogTaskId.isEmpty() && taskIdRaw != m_pendingTaskLogTaskId) {
+        emitLog(LogDir::WARN, CMD_UP_TASK_LOG, lenField,
+                "UP_TASK_LOG taskId mismatch with pending request",
+                {}, true, true);
+    }
+    const int stationNo = static_cast<int>(static_cast<quint8>(payload[offset++]));
+    const int taskAttr = static_cast<int>(static_cast<quint8>(payload[offset++]));
+    const int steps = static_cast<int>(readLe16(payload, offset));
+    offset += 2;
+
+    const int itemsBytes = static_cast<int>(fileSize) - offset;
+    if (itemsBytes < 0 || (itemsBytes % 16) != 0) {
+        emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
+                QString("UP_TASK_LOG invalid item bytes=%1").arg(itemsBytes),
+                rawFrame);
+        return false;
+    }
+
+    QVariantList items;
+    for (int itemOffset = offset; itemOffset < static_cast<int>(fileSize); itemOffset += 16) {
+        QVariantMap item;
+        item.insert("serialNumber", static_cast<int>(readLe16(payload, itemOffset)));
+        item.insert("opStatus", static_cast<int>(static_cast<quint8>(payload[itemOffset + 2])));
+        item.insert("rfid", compactHex(payload.mid(itemOffset + 3, 5)));
+        item.insert("opTime", bcd6ToDateTimeString(payload.mid(itemOffset + 8, 6)));
+        item.insert("opType", static_cast<int>(static_cast<quint8>(payload[itemOffset + 14])));
+        items.append(item);
+    }
+
+    QVariantMap eventPayload;
+    eventPayload.insert("taskId", rawTaskIdToDecimalString(taskIdRaw));
+    eventPayload.insert("taskIdRaw", taskIdRaw);
+    eventPayload.insert("stationNo", stationNo);
+    eventPayload.insert("taskAttr", taskAttr);
+    eventPayload.insert("steps", steps);
+    eventPayload.insert("frameSeq", static_cast<int>(lastFrameSeq));
+    eventPayload.insert("totalFrames", static_cast<int>(totalFrames));
+    eventPayload.insert("version", QString(versionBytes.toHex().toUpper()));
+    eventPayload.insert("items", items);
+
+    emitLog(LogDir::EVENT, CMD_UP_TASK_LOG, lenField,
+            QString("UP_TASK_LOG parsed: taskId=%1 items=%2 frames=%3")
+                .arg(eventPayload.value("taskId").toString())
+                .arg(items.size())
+                .arg(totalFrames),
+            {}, true, true);
+    emit taskLogReady(eventPayload);
+    return true;
 }
 
 bool KeySerialClient::sendNextTicketFrame()
@@ -560,7 +659,9 @@ bool KeySerialClient::sendNextTicketFrame()
     return true;
 }
 
-void KeySerialClient::transferTicketJson(const QByteArray &jsonBytes, quint8 stationId)
+void KeySerialClient::transferTicketJson(const QByteArray &jsonBytes,
+                                         quint8 stationId,
+                                         int debugFrameChunkSize)
 {
     if (!m_serial->isOpen()) {
         emitNotice("传票发送失败：串口未连接");
@@ -603,6 +704,13 @@ void KeySerialClient::transferTicketJson(const QByteArray &jsonBytes, quint8 sta
     }
 
     TicketFrameBuilder builder(stationId, 0x00, 0x00);
+    if (debugFrameChunkSize > 0) {
+        builder.setMaxChunkSize(debugFrameChunkSize);
+        emitLog(LogDir::EVENT, 0, 0,
+                QString("Debug frame chunk size enabled: %1B")
+                    .arg(debugFrameChunkSize),
+                {}, true, true);
+    }
     const QList<QByteArray> frames = builder.buildFrames(enc.payload);
     if (frames.isEmpty()) {
         emitLog(LogDir::ERROR, 0, 0, "Ticket frame build failed: no frames");
@@ -1045,6 +1153,8 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
         }
 
         m_pendingTaskLogFrames = totalFrames;
+        m_taskLogExpectedSeq = 0;
+        m_taskLogPayloadBuffer.clear();
         if (m_pendingTaskLogTaskId.isEmpty()) {
             emitLog(LogDir::WARN, CMD_I_TASK_LOG, lenField,
                     "I_TASK_LOG resp without active task context",
@@ -1065,7 +1175,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
                         QString("ACK for I_TASK_LOG, start upload from frame 0"));
 
         if (totalFrames > 1) {
-            emitNotice(QString("检测到 %1 帧回传日志，当前主程序仅验证过单帧场景").arg(totalFrames));
+            emitNotice(QString("检测到 %1 帧回传日志，进入多帧接收模式").arg(totalFrames));
         }
         return;
     }
@@ -1197,16 +1307,6 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
             return;
         }
 
-        if (m_pendingTaskLogFrames > 1) {
-            emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
-                    QString("UP_TASK_LOG multi-frame unsupported: totalFrames=%1")
-                        .arg(m_pendingTaskLogFrames),
-                    frame);
-            emitNotice("检测到多帧回传日志，当前主程序暂不支持该场景");
-            clearTaskLogState();
-            return;
-        }
-
         if (dataLen < 2) {
             emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
                     "UP_TASK_LOG payload too short", frame);
@@ -1215,78 +1315,44 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
         }
 
         const quint16 frameSeq = readLe16(data, 0);
-        const QByteArray filePayload = data.mid(2);
-        if (filePayload.size() < 28) {
+        if (frameSeq != m_taskLogExpectedSeq) {
             emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
-                    "UP_TASK_LOG file payload too short", frame);
-            clearTaskLogState();
-            return;
-        }
-
-        const quint32 fileSize = readLe32(filePayload, 0);
-        if (fileSize < 28 || static_cast<int>(fileSize) > filePayload.size()) {
-            emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
-                    QString("UP_TASK_LOG invalid fileSize=%1 payload=%2")
-                        .arg(fileSize).arg(filePayload.size()),
+                    QString("UP_TASK_LOG unexpected seq=%1 expected=%2")
+                        .arg(frameSeq)
+                        .arg(m_taskLogExpectedSeq),
                     frame);
+            emitNotice(QString("回传日志帧序号异常：seq=%1 expected=%2")
+                           .arg(frameSeq)
+                           .arg(m_taskLogExpectedSeq));
             clearTaskLogState();
             return;
         }
 
-        int offset = 4;
-        const QByteArray versionBytes = filePayload.mid(offset, 2);
-        offset += 2;
-        offset += 2; // reserved
-        const QByteArray taskIdRaw = filePayload.mid(offset, TASK_ID_LEN);
-        offset += TASK_ID_LEN;
-        if (!m_pendingTaskLogTaskId.isEmpty() && taskIdRaw != m_pendingTaskLogTaskId) {
-            emitLog(LogDir::WARN, CMD_UP_TASK_LOG, lenField,
-                    "UP_TASK_LOG taskId mismatch with pending request",
-                    {}, true, true);
-        }
-        const int stationNo = static_cast<int>(static_cast<quint8>(filePayload[offset++]));
-        const int taskAttr = static_cast<int>(static_cast<quint8>(filePayload[offset++]));
-        const int steps = static_cast<int>(readLe16(filePayload, offset));
-        offset += 2;
-
-        const int itemsBytes = static_cast<int>(fileSize) - offset;
-        if (itemsBytes < 0 || (itemsBytes % 16) != 0) {
-            emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
-                    QString("UP_TASK_LOG invalid item bytes=%1").arg(itemsBytes),
-                    frame);
-            clearTaskLogState();
-            return;
-        }
-
-        QVariantList items;
-        for (int itemOffset = offset; itemOffset < static_cast<int>(fileSize); itemOffset += 16) {
-            QVariantMap item;
-            item.insert("serialNumber", static_cast<int>(readLe16(filePayload, itemOffset)));
-            item.insert("opStatus", static_cast<int>(static_cast<quint8>(filePayload[itemOffset + 2])));
-            item.insert("rfid", compactHex(filePayload.mid(itemOffset + 3, 5)));
-            item.insert("opTime", bcd6ToDateTimeString(filePayload.mid(itemOffset + 8, 6)));
-            item.insert("opType", static_cast<int>(static_cast<quint8>(filePayload[itemOffset + 14])));
-            items.append(item);
-        }
-
-        QVariantMap payload;
-        payload.insert("taskId", rawTaskIdToDecimalString(taskIdRaw));
-        payload.insert("taskIdRaw", taskIdRaw);
-        payload.insert("stationNo", stationNo);
-        payload.insert("taskAttr", taskAttr);
-        payload.insert("steps", steps);
-        payload.insert("frameSeq", static_cast<int>(frameSeq));
-        payload.insert("totalFrames", static_cast<int>(m_pendingTaskLogFrames));
-        payload.insert("version", QString(versionBytes.toHex().toUpper()));
-        payload.insert("items", items);
-
+        m_taskLogPayloadBuffer.append(data.mid(2));
         emitLog(LogDir::EVENT, CMD_UP_TASK_LOG, lenField,
-                QString("UP_TASK_LOG parsed: taskId=%1 items=%2")
-                    .arg(payload.value("taskId").toString())
-                    .arg(items.size()),
+                QString("UP_TASK_LOG frame %1/%2 buffered, bytes=%3")
+                    .arg(frameSeq + 1)
+                    .arg(m_pendingTaskLogFrames)
+                    .arg(m_taskLogPayloadBuffer.size()),
                 {}, true, true);
-        emit taskLogReady(payload);
+        sendTaskLogAck(frameSeq);
+        ++m_taskLogExpectedSeq;
+
+        if (m_taskLogExpectedSeq < m_pendingTaskLogFrames) {
+            return;
+        }
+
+        const QByteArray fullPayload = m_taskLogPayloadBuffer;
+        const quint16 totalFrames = m_pendingTaskLogFrames;
+        const bool ok = parseAndEmitTaskLogPayload(fullPayload,
+                                                   totalFrames,
+                                                   frameSeq,
+                                                   lenField,
+                                                   frame);
         clearTaskLogState();
+        if (!ok) {
+            emitNotice("回传日志解析失败，请查看串口报文");
+        }
         return;
     }
 

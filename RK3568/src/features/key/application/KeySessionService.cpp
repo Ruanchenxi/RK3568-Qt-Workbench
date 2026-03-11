@@ -249,7 +249,9 @@ void KeySessionService::transferTicket(const TicketTransferRequest &request)
 
     if (request.opId >= 0)
         m_client->setCurrentOpId(request.opId);
-    m_client->transferTicketJson(jsonBytes, request.stationId);
+    m_client->transferTicketJson(jsonBytes,
+                                 request.stationId,
+                                 request.debugFrameChunkSize);
 }
 
 QVariantList KeySessionService::toTaskVariantList(const QList<KeyTaskInfo> &tasks) const
