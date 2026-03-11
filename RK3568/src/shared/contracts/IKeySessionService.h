@@ -21,9 +21,11 @@
 enum class CommandId
 {
     SetCom,
+    InitKey,
     QueryTasks,
     QueryTaskLog,
     DeleteTask,
+    DownloadRfid,
     Custom
 };
 

@@ -2,7 +2,7 @@
 
 Status: Active  
 Owner: 项目维护者  
-Last Updated: 2026-03-10  
+Last Updated: 2026-03-11  
 适用范围：说明当前钥匙链路、工作台 JSON 输入链、系统票链、传票发送链、回传链。  
 不适用范围：不替代逐字节协议文档。  
 
@@ -108,7 +108,28 @@ TicketIngressService 收到新 JSON
 3. 若任务状态是 `0x00/0x01`，当前不进入回传，只提示“任务未完成”。  
 4. 多帧 `UP_TASK_LOG` 当前代码已支持按 `seq` 累积，并已通过 replay 场景验证。  
 
-## 6. 传票发送状态
+## 6. 手工初始化 / 下载 RFID 链
+
+```text
+KeyManagePage(点击“初始化”/“下载 RFID”)
+  -> KeyManageController
+    -> KeyProvisioningService
+      -> HTTP /package-data 或 /rfid-data
+        -> InitPayloadEncoder / RfidPayloadEncoder
+          -> IKeySessionService::execute(...)
+            -> KeySessionService
+              -> KeySerialClient
+                -> INIT(0x02) / DN_RFID(0x1A)
+```
+
+要点：
+
+1. 这两条链当前为**手工链**，不是 ready 后默认自动前置链。  
+2. `INIT(0x02)` 当前按原产品样本走多帧发送与 ACK 闭环。  
+3. `DN_RFID(0x1A)` 当前已完成单帧真机验证。  
+4. 接入后自动回传零回归已通过。  
+
+## 7. 传票发送状态
 
 当前系统票 `transferState`：
 
@@ -125,7 +146,7 @@ TicketIngressService 收到新 JSON
 2. 此状态下系统票允许再次传票  
 3. 当前下一阶段重点是回传链路，不在这一阶段继续扩展撤销规则  
 
-## 7. 回传状态
+## 8. 回传状态
 
 当前系统票 `returnState`：
 

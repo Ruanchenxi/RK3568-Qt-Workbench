@@ -203,6 +203,9 @@ void KeySessionService::execute(const CommandRequest &request)
             m_client->disconnectPort();
         }
         break;
+    case CommandId::InitKey:
+        m_client->sendInitPayload(request.payload);
+        break;
     case CommandId::QueryTasks:
         m_client->queryTasksAll();
         break;
@@ -215,6 +218,9 @@ void KeySessionService::execute(const CommandRequest &request)
         } else {
             m_client->deleteTask(request.payload);
         }
+        break;
+    case CommandId::DownloadRfid:
+        m_client->sendRfidPayload(request.payload);
         break;
     case CommandId::Custom:
         break;

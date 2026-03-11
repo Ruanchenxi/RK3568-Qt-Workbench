@@ -16,9 +16,13 @@ SOURCES += \
     $$PWD/key/application/KeySessionService.cpp \
     $$PWD/key/application/KeyManageController.cpp \
     $$PWD/key/application/SerialLogManager.cpp \
+    $$PWD/key/application/KeyProvisioningService.cpp \
     $$PWD/key/application/TicketReturnHttpClient.cpp \
     $$PWD/key/application/TicketStore.cpp \
     $$PWD/key/application/TicketIngressService.cpp \
+    $$PWD/key/protocol/InitPayloadEncoder.cpp \
+    $$PWD/key/protocol/RfidPayloadEncoder.cpp \
+    $$PWD/key/protocol/KeyDataFrameBuilder.cpp \
     $$PWD/key/protocol/TicketPayloadEncoder.cpp \
     $$PWD/key/protocol/TicketFrameBuilder.cpp \
     $$PWD/key/protocol/KeySerialClient.cpp \
@@ -46,9 +50,13 @@ HEADERS += \
     $$PWD/key/application/KeySessionService.h \
     $$PWD/key/application/KeyManageController.h \
     $$PWD/key/application/SerialLogManager.h \
+    $$PWD/key/application/KeyProvisioningService.h \
     $$PWD/key/application/TicketReturnHttpClient.h \
     $$PWD/key/application/TicketStore.h \
     $$PWD/key/application/TicketIngressService.h \
+    $$PWD/key/protocol/InitPayloadEncoder.h \
+    $$PWD/key/protocol/RfidPayloadEncoder.h \
+    $$PWD/key/protocol/KeyDataFrameBuilder.h \
     $$PWD/key/protocol/TicketPayloadEncoder.h \
     $$PWD/key/protocol/TicketFrameBuilder.h \
     $$PWD/key/protocol/KeySerialClient.h \

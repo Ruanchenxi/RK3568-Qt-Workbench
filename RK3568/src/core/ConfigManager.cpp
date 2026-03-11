@@ -259,6 +259,11 @@ void ConfigManager::loadDefaults()
         // 调试开关：0 表示使用协议正式默认分帧大小，不强制拆帧。
         setValue("ticket/debugFrameChunkSize", 0);
     }
+    if (!m_settings->contains("key/backendStationNo"))
+    {
+        // 初始化/RFID 后端取数使用的业务站号。0 表示按后端约定取全站聚合数据。
+        setValue("key/backendStationNo", 0);
+    }
 }
 
 // ========== 系统配置 ==========

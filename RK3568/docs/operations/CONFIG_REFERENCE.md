@@ -36,6 +36,7 @@ Last Updated: 2026-03-10
 | `ticket/autoTransferEnabled` | `true` | 是否自动传票；当前默认开启，但仍受串口/钥匙/握手状态约束 |
 | `ticket/httpReturnUrl` | 空字符串 | 钥匙回传 HTTP 接口完整地址；为空时回退到 `system/apiUrl + /finish-step-batch` |
 | `ticket/debugFrameChunkSize` | `0` | 调试用强制分帧大小；设为 `64/80/...` 可在本地强制触发多帧传票，`0` 表示关闭 |
+| `key/backendStationNo` | `0` | 初始化 / 下载 RFID 后端取数使用的业务站号；`0` 表示按后端约定请求全站聚合数据 |
 
 说明：
 

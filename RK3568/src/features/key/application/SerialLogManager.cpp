@@ -120,10 +120,15 @@ QString SerialLogManager::dirText(LogDir dir)
 QString SerialLogManager::cmdText(quint8 cmd)
 {
     switch (cmd) {
+    case LogCmdNone:                return QStringLiteral("--");
+    case KeyProtocol::CmdInit:     return QStringLiteral("INIT");
+    case static_cast<quint8>(KeyProtocol::CmdInit | 0x80): return QStringLiteral("INIT_MORE");
     case KeyProtocol::CmdSetCom:   return QStringLiteral("SET_COM");
     case KeyProtocol::CmdQTask:    return QStringLiteral("Q_TASK");
     case KeyProtocol::CmdITaskLog: return QStringLiteral("I_TASK_LOG");
     case KeyProtocol::CmdDel:      return QStringLiteral("DEL");
+    case KeyProtocol::CmdDownloadRfid:return QStringLiteral("DN_RFID");
+    case static_cast<quint8>(KeyProtocol::CmdDownloadRfid | 0x80): return QStringLiteral("DN_RFID_MORE");
     case KeyProtocol::CmdTicket:   return QStringLiteral("TICKET");
     case KeyProtocol::CmdTicketMore:return QStringLiteral("TICKET_MORE");
     case KeyProtocol::CmdUpTaskLog:return QStringLiteral("UP_TASK_LOG");

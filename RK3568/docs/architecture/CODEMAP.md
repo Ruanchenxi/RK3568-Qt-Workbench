@@ -64,6 +64,7 @@ Last Updated: 2026-03-04
 | `src/features/key/application/KeyManageController.h/.cpp` | 页面操作编排、会话驱动 | 通过会话服务抽象访问协议能力 |
 | `src/features/key/application/KeySessionService.h/.cpp` | 串口会话服务、重试/回放接入点；从 ConfigManager 注入站号并监听变更 | 调用 protocol + transport 抽象；允许依赖 ConfigManager（核心层）；禁止 UI 页面类 |
 | `src/features/key/application/SerialLogManager.h/.cpp` | 串口日志缓冲/过滤/导出组织 | 不承载协议帧解析 |
+| `src/features/key/application/KeyProvisioningService.h/.cpp` | 初始化 / 下载 RFID 的后端取数与 payload 组装 | 放在 application；可依赖认证抽象和 protocol 纯编码器；禁止下沉到 UI |
 | `src/features/key/application/TicketIngressService.h/.cpp` | 主程序内本地 HTTP 接收入口（工作台 JSON 输入源） | 放在 application，禁止下沉到 UI |
 | `src/features/key/application/TicketStore.h/.cpp` | 系统票池与传票状态管理 | 为 UI 提供列表/选中摘要，避免页面持有原始 JSON |
 | `src/features/key/application/TicketReturnHttpClient.h/.cpp` | 回传日志 HTTP 上传客户端 | 只负责上传与日志；不解析串口协议，不直接触发 UI |
@@ -71,6 +72,9 @@ Last Updated: 2026-03-04
 | `src/features/key/protocol/KeyProtocolDefs.h` | 协议命令与常量定义 | 语义锁定，谨慎改动 |
 | `src/features/key/protocol/KeyCrc16.h` | CRC 计算工具 | 协议关键算法，不随意改 |
 | `src/features/key/protocol/LogItem.h` | 串口日志数据结构 | 供 UI/Controller 渲染使用 |
+| `src/features/key/protocol/InitPayloadEncoder.h/.cpp` | 初始化后端 JSON -> INIT payload 规则 | 纯编码逻辑，不做 HTTP / 串口发送 |
+| `src/features/key/protocol/RfidPayloadEncoder.h/.cpp` | RFID 后端 JSON -> DN_RFID payload 规则 | 纯编码逻辑，不做 HTTP / 串口发送 |
+| `src/features/key/protocol/KeyDataFrameBuilder.h/.cpp` | INIT / DN_RFID 的多帧封装 | 只负责分帧与 CRC，不做业务时机判断 |
 | `src/features/key/protocol/TicketPayloadEncoder.h/.cpp` | 传票 `JSON -> payload` 规则 | 不做 UI/文件 I/O |
 | `src/features/key/protocol/TicketFrameBuilder.h/.cpp` | 传票 `payload -> frame(s)` | 单帧/多帧/CRC |
 
@@ -134,6 +138,7 @@ Last Updated: 2026-03-04
 | 新增一个登录方式（先不接硬件） | `features/auth/domain/*`, `features/auth/application/*`, `features/auth/infra/http/*` | 先走 `IAuthGateway + AuthFlowCoordinator`，不要把协议字段放到 UI |
 | 接入刷卡串口采集 | `features/auth/infra/device/CardSerialSource.*`, `platform/serial/*` | 严格使用 `/dev/ttyS3`，不要并入钥匙会话 |
 | 新增钥匙协议报文 | `features/key/protocol/*`, `features/key/application/KeySessionService.*` | 协议语义锁定区，改动需最小且可回放验证 |
+| 接入初始化 / 下载 RFID | `features/key/application/KeyProvisioningService.*`, `features/key/application/KeyManageController.*`, `features/key/application/KeySessionService.*`, `features/key/protocol/*` | HTTP 取数留在 application；字节级协议留在 protocol；UI 只触发按钮 |
 | 接工作台传票 JSON 输入 | `features/key/application/TicketIngressService.*`, `features/key/application/TicketStore.*`, `features/key/application/KeyManageController.*` | 先入系统票池，再由 UI 展示 |
 | 调整手动/自动传票 | `features/key/application/KeyManageController.*`, `features/key/application/KeySessionService.*`, `features/key/protocol/*` | UI 不直接碰协议类 |
 | 接入钥匙回传日志主链 | `features/key/protocol/*`, `features/key/application/TicketReturnHttpClient.*`, `features/key/application/KeyManageController.*`, `features/key/application/TicketStore.*` | 协议解析留在 protocol；HTTP 上传留在 application |

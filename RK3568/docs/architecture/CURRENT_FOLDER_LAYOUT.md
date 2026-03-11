@@ -2,7 +2,7 @@
 
 Status: Active  
 Owner: 架构维护  
-Last Updated: 2026-03-02  
+Last Updated: 2026-03-11  
 适用范围：描述当前真实代码目录、每个文件夹用途、每个核心 `.h/.cpp` 文件职责。  
 不适用范围：不描述未来目标结构（见 `TARGET_FOLDER_LAYOUT.md`）。  
 
@@ -226,6 +226,12 @@ src/
 1. 串口日志行模型管理与导出。  
 2. 处理日志过滤、摘要、HEX 展示数据。  
 
+#### `application/KeyProvisioningService.h/.cpp`
+
+1. 初始化 / 下载 RFID 的后端取数与 payload 组装入口。  
+2. 负责调用后端接口、附带认证头、输出 HTTP 客户端日志。  
+3. 只做 application 编排，不直接写串口帧。  
+
 #### `application/TicketIngressService.h/.cpp`
 
 1. 主程序内本地 HTTP 接收入口。  
@@ -263,6 +269,21 @@ src/
 
 1. 串口日志结构定义（时间、方向、命令、HEX 等）。  
 2. 供 UI 层渲染表格。  
+
+#### `protocol/InitPayloadEncoder.h/.cpp`
+
+1. 初始化接口 JSON -> `INIT(0x02)` payload 的纯编码逻辑。  
+2. 只负责编码与字段映射，不做 HTTP / UI / 串口发送。  
+
+#### `protocol/RfidPayloadEncoder.h/.cpp`
+
+1. RFID 接口 JSON -> `DN_RFID(0x1A)` payload 的纯编码逻辑。  
+2. 只负责编码与字段映射，不做 HTTP / UI / 串口发送。  
+
+#### `protocol/KeyDataFrameBuilder.h/.cpp`
+
+1. `INIT / DN_RFID` 数据文件外层分帧封装。  
+2. 负责多帧命令字、帧序号与 CRC，不负责业务时机判断。  
 
 #### `protocol/TicketPayloadEncoder.h/.cpp`
 

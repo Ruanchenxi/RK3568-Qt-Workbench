@@ -77,9 +77,11 @@ static const int MIN_FRAME_LEN = 11; ///< 最小帧长（Data 为空时）
 
 // --- 命令码别名 ---
 static constexpr quint8 CMD_SET_COM   = KeyProtocol::CmdSetCom;   ///< 握手命令 0x0F
+static constexpr quint8 CMD_INIT      = KeyProtocol::CmdInit;     ///< 初始化电脑钥匙 0x02
 static constexpr quint8 CMD_Q_TASK    = KeyProtocol::CmdQTask;    ///< 查询任务 0x04
 static constexpr quint8 CMD_I_TASK_LOG = KeyProtocol::CmdITaskLog; ///< 请求回传任务日志 0x05
 static constexpr quint8 CMD_DEL       = KeyProtocol::CmdDel;      ///< 删除任务 0x06
+static constexpr quint8 CMD_DN_RFID   = KeyProtocol::CmdDownloadRfid; ///< 下传 RFID 数据 0x1A
 static constexpr quint8 CMD_TICKET    = KeyProtocol::CmdTicket;   ///< 传票单帧/最后帧 0x03
 static constexpr quint8 CMD_TICKET_MORE = KeyProtocol::CmdTicketMore; ///< 传票还有后续帧 0x83
 static constexpr quint8 CMD_ACK       = KeyProtocol::CmdAck;      ///< 设备确认 0x5A
@@ -119,6 +121,8 @@ static const quint8 INFLIGHT_QTASK  = 2;  ///< 正在等待 Q_TASK 的响应帧
 static const quint8 INFLIGHT_DEL    = 3;  ///< 正在等待 DEL 的 ACK
 static const quint8 INFLIGHT_TICKET = 4;  ///< 正在等待传票分帧 ACK
 static const quint8 INFLIGHT_TASKLOG = 5; ///< 正在等待 I_TASK_LOG 的响应帧
+static const quint8 INFLIGHT_INIT_TRANSFER = 6; ///< 正在等待 INIT 分帧 ACK
+static const quint8 INFLIGHT_RFID_TRANSFER = 7; ///< 正在等待 DN_RFID 分帧 ACK
 
 } // namespace KeyProto
 
@@ -185,6 +189,8 @@ public:
     void requestTaskLog(const QByteArray &taskId16);
     void deleteTask(const QByteArray &taskId16);
     void deleteFirstTask();
+    void sendInitPayload(const QByteArray &payload);
+    void sendRfidPayload(const QByteArray &payload);
     void transferTicketJson(const QByteArray &jsonBytes,
                             quint8 stationId = 0x01,
                             int debugFrameChunkSize = 0);
@@ -293,7 +299,12 @@ private:
     void sendSetComHandshake(const QString &reason);          ///< 发送 SET_COM 握手帧
     void clearTicketTransferState();                         ///< 清理传票发送状态
     void clearTaskLogState();                                ///< 清理回传日志状态
+    void clearDataTransferState();                           ///< 清理 INIT/RFID 发送状态
     bool sendNextTicketFrame();                              ///< 发送下一帧传票
+    bool sendNextDataFrame();                                ///< 发送下一帧 INIT/RFID 数据
+    bool startDataTransfer(quint8 baseCmd,
+                           const QByteArray &payload,
+                           const QString &label);            ///< 启动 INIT/RFID 数据发送
     void sendTaskLogAck(quint16 frameSeq);                   ///< 确认一帧回传日志
     bool parseAndEmitTaskLogPayload(const QByteArray &payload,
                                     quint16 totalFrames,
@@ -382,6 +393,12 @@ private:
     // 传票发送状态
     QList<QByteArray> m_ticketFrames;      ///< 当前待发送的传票帧列表
     int               m_ticketFrameIndex;  ///< 当前发送中的帧索引
+
+    // INIT/RFID 数据发送状态
+    QList<QByteArray> m_dataFrames;        ///< 当前待发送的初始化/RFID 帧列表
+    int               m_dataFrameIndex;    ///< 当前发送中的数据帧索引
+    quint8            m_dataBaseCmd;       ///< 当前数据发送命令字（0x02 或 0x1A）
+    QString           m_dataTransferLabel; ///< 当前数据发送名称
 
     // 回传日志状态
     QByteArray         m_pendingTaskLogTaskId; ///< 当前请求回传日志的任务ID（16B 原始值）

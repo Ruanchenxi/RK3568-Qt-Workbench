@@ -22,6 +22,7 @@
 class TicketStore;
 class TicketIngressService;
 class TicketReturnHttpClient;
+class KeyProvisioningService;
 
 class KeyManageController : public QObject
 {
@@ -35,6 +36,7 @@ public:
     void start();
 
     void onInitClicked();
+    void onDownloadRfidClicked();
     void onQueryTasksClicked();
     void onDeleteClicked();
     void onTransferSelectedTicket();
@@ -45,6 +47,8 @@ public:
     void onExpertModeChanged(bool enabled);
     void onShowHexChanged(bool enabled);
     void onClearLogsClicked();
+    void onClearHttpClientLogsClicked();
+    void onClearHttpServerLogsClicked();
     bool exportLogs(const QString &path, QString *error) const;
 
     QList<LogItem> visibleLogs() const;
@@ -76,6 +80,9 @@ private slots:
     void handleJsonReceived(const QByteArray &jsonBytes, const QString &savedPath);
     void handleHttpServerLog(const QString &text);
     void handleHttpClientLog(const QString &text);
+    void handleInitPayloadReady(const QByteArray &payload);
+    void handleRfidPayloadReady(const QByteArray &payload);
+    void handleProvisionRequestFailed(const QString &reason);
     void handleReturnUploadSucceeded(const QString &taskId);
     void handleReturnUploadFailed(const QString &taskId, const QString &reason);
 
@@ -97,6 +104,7 @@ private:
     TicketStore *m_ticketStore;
     TicketIngressService *m_ticketIngress;
     TicketReturnHttpClient *m_ticketReturnClient;
+    KeyProvisioningService *m_keyProvisioning;
     int m_nextOpId;
     QString m_selectedSystemTicketId;
     QString m_activeTransferTaskId;

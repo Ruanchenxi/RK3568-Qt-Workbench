@@ -12,6 +12,7 @@
 
 #include "core/ConfigManager.h"
 #include "features/key/application/KeySessionService.h"
+#include "features/key/application/KeyProvisioningService.h"
 #include "features/key/application/TicketStore.h"
 #include "features/key/application/TicketIngressService.h"
 #include "features/key/application/TicketReturnHttpClient.h"
@@ -43,6 +44,7 @@ KeyManageController::KeyManageController(IKeySessionService *session,
     , m_ticketStore(new TicketStore(this))
     , m_ticketIngress(new TicketIngressService(this))
     , m_ticketReturnClient(new TicketReturnHttpClient(this))
+    , m_keyProvisioning(new KeyProvisioningService(nullptr, this))
     , m_nextOpId(1)
     , m_selectedSystemTicketId()
     , m_activeTransferTaskId()
@@ -72,6 +74,14 @@ KeyManageController::KeyManageController(IKeySessionService *session,
             this, &KeyManageController::handleReturnUploadSucceeded);
     connect(m_ticketReturnClient, &TicketReturnHttpClient::uploadFailed,
             this, &KeyManageController::handleReturnUploadFailed);
+    connect(m_keyProvisioning, &KeyProvisioningService::logAppended,
+            this, &KeyManageController::handleHttpClientLog);
+    connect(m_keyProvisioning, &KeyProvisioningService::initPayloadReady,
+            this, &KeyManageController::handleInitPayloadReady);
+    connect(m_keyProvisioning, &KeyProvisioningService::rfidPayloadReady,
+            this, &KeyManageController::handleRfidPayloadReady);
+    connect(m_keyProvisioning, &KeyProvisioningService::requestFailed,
+            this, &KeyManageController::handleProvisionRequestFailed);
     connect(m_logManager, &SerialLogManager::overflowDropped, this, [this]() {
         emit statusMessage(QStringLiteral("日志达到上限，已自动丢弃旧日志"));
     });
@@ -94,9 +104,44 @@ void KeyManageController::start()
 
 void KeyManageController::onInitClicked()
 {
-    emit statusMessage(QStringLiteral("重新初始化通讯..."));
-    m_session->disconnectPort();
-    tryAutoConnectKeyPort();
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    if (!snapshot.connected) {
+        emit statusMessage(QStringLiteral("串口未连接，无法执行初始化"));
+        return;
+    }
+    if (!snapshot.keyPresent || !snapshot.keyStable || !snapshot.sessionReady) {
+        emit statusMessage(QStringLiteral("钥匙未就绪，无法执行初始化"));
+        return;
+    }
+    if (m_keyProvisioning->isBusy()) {
+        emit statusMessage(QStringLiteral("正在获取钥匙初始化数据，请稍后再试"));
+        return;
+    }
+
+    const int stationNo = ConfigManager::instance()->value("key/backendStationNo", 0).toInt();
+    emit statusMessage(QStringLiteral("初始化钥匙，正在获取初始化数据..."));
+    m_keyProvisioning->requestInitPayload(stationNo);
+}
+
+void KeyManageController::onDownloadRfidClicked()
+{
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    if (!snapshot.connected) {
+        emit statusMessage(QStringLiteral("串口未连接，无法下载 RFID"));
+        return;
+    }
+    if (!snapshot.keyPresent || !snapshot.keyStable || !snapshot.sessionReady) {
+        emit statusMessage(QStringLiteral("钥匙未就绪，无法下载 RFID"));
+        return;
+    }
+    if (m_keyProvisioning->isBusy()) {
+        emit statusMessage(QStringLiteral("正在获取 RFID 数据，请稍后再试"));
+        return;
+    }
+
+    const int stationNo = ConfigManager::instance()->value("key/backendStationNo", 0).toInt();
+    emit statusMessage(QStringLiteral("下载 RFID，正在获取后端数据..."));
+    m_keyProvisioning->requestRfidPayload(stationNo);
 }
 
 void KeyManageController::onQueryTasksClicked()
@@ -195,6 +240,18 @@ void KeyManageController::onClearLogsClicked()
     m_logManager->clear();
     emit logsCleared();
     emit statusMessage(QStringLiteral("串口日志已清空"));
+}
+
+void KeyManageController::onClearHttpClientLogsClicked()
+{
+    m_httpClientLogLines.clear();
+    emit statusMessage(QStringLiteral("HTTP客户端报文已清空"));
+}
+
+void KeyManageController::onClearHttpServerLogsClicked()
+{
+    m_httpServerLogLines.clear();
+    emit statusMessage(QStringLiteral("HTTP服务端报文已清空"));
 }
 
 bool KeyManageController::exportLogs(const QString &path, QString *error) const
@@ -452,6 +509,31 @@ void KeyManageController::handleHttpClientLog(const QString &text)
 {
     m_httpClientLogLines << text;
     emit httpClientLogAppended(text);
+}
+
+void KeyManageController::handleInitPayloadReady(const QByteArray &payload)
+{
+    CommandRequest req;
+    req.id = CommandId::InitKey;
+    req.opId = nextOpId();
+    req.payload = payload;
+    m_session->execute(req);
+    emit statusMessage(QStringLiteral("初始化数据已准备完成，开始下发到钥匙"));
+}
+
+void KeyManageController::handleRfidPayloadReady(const QByteArray &payload)
+{
+    CommandRequest req;
+    req.id = CommandId::DownloadRfid;
+    req.opId = nextOpId();
+    req.payload = payload;
+    m_session->execute(req);
+    emit statusMessage(QStringLiteral("RFID 数据已准备完成，开始下发到钥匙"));
+}
+
+void KeyManageController::handleProvisionRequestFailed(const QString &reason)
+{
+    emit statusMessage(reason);
 }
 
 void KeyManageController::handleReturnUploadSucceeded(const QString &taskId)

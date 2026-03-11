@@ -4,7 +4,7 @@
 
 Status: Active  
 Owner: 钥匙链路维护者  
-Last Updated: 2026-03-10  
+Last Updated: 2026-03-11  
 适用范围：`features/key` 串口协议链路（UI -> Controller -> Session -> Protocol -> Transport）。  
 
 ---
@@ -58,6 +58,15 @@ Last Updated: 2026-03-10
 6. `src/features/key/protocol/TicketFrameBuilder.*`  
 作用：传票 `payload -> frame(s)`、分帧与 CRC。  
 
+7. `src/features/key/protocol/InitPayloadEncoder.*`
+作用：初始化接口 JSON -> `INIT(0x02)` payload 纯编码逻辑。  
+
+8. `src/features/key/protocol/RfidPayloadEncoder.*`
+作用：RFID 接口 JSON -> `DN_RFID(0x1A)` payload 纯编码逻辑。  
+
+9. `src/features/key/protocol/KeyDataFrameBuilder.*`
+作用：`INIT / DN_RFID` 的外层分帧与 CRC。  
+
 ### 2.2 编排层（常改）
 
 1. `src/features/key/application/KeySessionService.*`  
@@ -74,6 +83,9 @@ Last Updated: 2026-03-10
 
 5. `src/features/key/application/TicketStore.*`  
 作用：系统票入池、状态管理、原始 JSON 索引。  
+
+6. `src/features/key/application/KeyProvisioningService.*`
+作用：初始化 / 下载 RFID 的后端取数、认证头附带与日志输出。  
 
 ### 2.3 UI 层（展示与交互）
 
@@ -143,6 +155,8 @@ Last Updated: 2026-03-10
 6. `NAK = 0x00`：设备拒绝。  
 7. `KEY_EVENT = 0x11`：钥匙在位/离位事件。  
 8. `UP_TASK_LOG = 0x15`：回传任务日志。  
+9. `INIT = 0x02`：初始化电脑钥匙。  
+10. `DN_RFID = 0x1A`：下载 RFID/采码数据文件。  
 
 ### 3.4 Addr2 规则
 
@@ -237,6 +251,7 @@ Last Updated: 2026-03-10
 
 1. 上述组成规则来自“当前代码 + 你提供的历史文档交叉验证”。  
 2. 对于你历史文档里涉及的长报文命令（如 `0x03` 传票、`0x05/0x15` 回传、`0x1A` 下载 RFID、`0x02` 初始化），应优先以当前代码和最新样本为准。  
+3. 当前主程序里 `INIT / 下载 RFID` 已接入，但仍是**手工链**，不要擅自视为 ready 自动前置链。  
 
 ---
 

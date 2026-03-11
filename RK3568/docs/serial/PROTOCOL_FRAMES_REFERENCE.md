@@ -2,8 +2,8 @@
 
 Status: Active  
 Owner: 钥匙链路维护者  
-Last Updated: 2026-03-10  
-真值来源：`KeyProtocolDefs.h` / `KeySerialClient.h` / `KeyCrc16.h` + 2026-03-03 ~ 2026-03-10 真机抓包验证 + 多帧 replay 验证
+Last Updated: 2026-03-11  
+真值来源：`KeyProtocolDefs.h` / `KeySerialClient.h` / `KeyCrc16.h` + 2026-03-03 ~ 2026-03-11 真机抓包验证 + 多帧 replay 验证
 
 ---
 
@@ -39,12 +39,14 @@ Last Updated: 2026-03-10
 
 | 命令码 | 名称       | 方向           | 说明                     |
 |--------|------------|----------------|--------------------------|
+| 0x02   | INIT       | TX（主发）     | 初始化电脑钥匙           |
 | 0x0F   | SET_COM    | TX（主发）     | 握手命令                 |
 | 0x04   | Q_TASK     | TX / RX        | 查询任务列表             |
 | 0x05   | I_TASK_LOG | TX / RX        | 请求任务操作日志         |
 | 0x06   | DEL        | TX（主发）     | 删除指定任务             |
 | 0x14   | Q_KEYEQ    | TX / RX        | 查询/上报钥匙电量        |
 | 0x15   | UP_TASK_LOG| RX（设备回）   | 回传任务操作日志         |
+| 0x1A   | DN_RFID    | TX（主发）     | 下载 RFID/采码数据文件   |
 | 0x5A   | ACK        | RX（设备回）   | 确认响应                 |
 | 0x00   | NAK        | RX（设备回）   | 拒绝/错误响应            |
 | 0x11   | KEY_EVENT  | RX（设备推送） | 钥匙在位/离位事件        |
@@ -86,6 +88,9 @@ Last Updated: 2026-03-10
 | `11 00 00 00 00`          | 44A0   | KEY_REMOVED   |
 | `5A 0F`                   | A720   | ACK(SET_COM)  |
 | `5A 06`                   | 3609   | ACK(DEL)      |
+| `5A 82 00 00`             | 68D6   | ACK(INIT_MORE, frame 0) |
+| `5A 02 01 00`             | 5E85   | ACK(INIT, frame 1) |
+| `5A 1A 00 00`             | 0676   | ACK(DN_RFID, frame 0) |
 | `04 00`                   | D14C   | Q_TASK resp count=0 |
 | `14`                      | 52B5   | Q_KEYEQ 查询（Data 空）|
 
@@ -112,6 +117,27 @@ Last Updated: 2026-03-10
 ```
 
 实测完整帧：`7E 6C FF 00 00 00 02 00 0F 01 1C 11`
+
+---
+
+### §4.1.1 INIT / INIT_MORE 发送帧（TX，主机→设备）
+
+> 说明：
+>
+> 1. `INIT(0x02)` 当前在主程序中已作为**手工链**接入。  
+> 2. 当 payload 超过单帧容量时，前续帧使用 `0x82`，最后一帧使用 `0x02`。  
+> 3. ACK 会携带被确认命令码与 2 字节数据帧序号。  
+
+当前真机样本（2026-03-11）：
+
+1. 首帧：`Cmd=0x82`，`seq=00 00`，收到 `ACK 5A 82 00 00`
+2. 末帧：`Cmd=0x02`，`seq=01 00`，收到 `ACK 5A 02 01 00`
+
+当前主程序事实：
+
+1. `package-data` 返回 6 台设备时，`INIT payload = 633B`
+2. 加入 415 后，`INIT payload = 709B`
+3. 上述两种情况都已完成真机 ACK 闭环
 
 ---
 
@@ -301,6 +327,26 @@ Data[0] 解析规则：
 - `0xFF`：无效（钥匙未在位或设备不支持），显示 `--`
 
 实测示例（电量 93%）：`7E 6C 01 01 FF 00 09 00 14 5D FF FF FF FF FF FF FF 3E 11`
+
+---
+
+### §4.11.1 DN_RFID 发送帧（TX，主机→设备）
+
+> 说明：
+>
+> 1. `DN_RFID(0x1A)` 当前在主程序中已作为**手工链**接入。  
+> 2. 当前已拿到单帧真机样本，ACK 为 `5A 1A 00 00`。  
+
+当前真机样本（2026-03-11）：
+
+1. 6 条记录时：`RFID payload = 64B`，发送单帧 `0x1A`
+2. 设备回复：`ACK(5A 1A 00 00)`
+
+当前主程序事实：
+
+1. `rfid-data` 返回 5 条记录时，`RFID payload = 56B`
+2. 加入 415 后，`RFID payload = 64B`
+3. 当前两种情况都已完成真机 ACK 闭环
 
 ---
 

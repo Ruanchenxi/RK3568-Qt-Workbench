@@ -32,6 +32,8 @@ enum class LogDir {
     ERROR   ///< 错误 / NAK
 };
 
+static constexpr quint8 LogCmdNone = 0xFF;  ///< 非协议帧占位命令码，仅用于日志显示
+
 /**
  * @brief 结构化串口日志条目
  */
@@ -47,7 +49,7 @@ struct LogItem {
     int        opId;        ///< 操作 ID，-1 表示无归属（关联请求-响应日志）
 
     LogItem()
-        : dir(LogDir::TX), cmd(0), length(0), crcOk(true), expertOnly(false), opId(-1)
+        : dir(LogDir::TX), cmd(LogCmdNone), length(0), crcOk(true), expertOnly(false), opId(-1)
     {}
 };
 

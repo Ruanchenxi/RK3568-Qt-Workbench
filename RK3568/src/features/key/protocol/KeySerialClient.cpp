@@ -30,6 +30,7 @@
  */
 #include "KeySerialClient.h"
 #include "KeyCrc16.h"
+#include "features/key/protocol/KeyDataFrameBuilder.h"
 #include <QDateTime>
 #include <QSerialPort>
 
@@ -167,6 +168,9 @@ KeySerialClient::KeySerialClient(ISerialTransport *transport, QObject *parent)
     , m_currentOpId(-1)
     , m_stationId(1)   // 默认站号 1，由 KeySessionService 构造后通过 setStationId() 注入
     , m_ticketFrameIndex(-1)
+    , m_dataFrameIndex(-1)
+    , m_dataBaseCmd(0)
+    , m_dataTransferLabel()
     , m_pendingTaskLogTaskId()
     , m_pendingTaskLogFrames(0)
     , m_taskLogExpectedSeq(0)
@@ -242,6 +246,7 @@ bool KeySerialClient::connectPort(const QString &portName, int baud)
     m_deferredInFlightType = INFLIGHT_NONE;
     m_deferredDeleteTaskId.clear();
     clearTicketTransferState();
+    clearDataTransferState();
     clearTaskLogState();
     m_qtaskRecoveryRound = 0;
     m_keyPlacedElapsed.invalidate();
@@ -299,6 +304,7 @@ void KeySerialClient::disconnectPort()
     m_deferredInFlightType = INFLIGHT_NONE;
     m_deferredDeleteTaskId.clear();
     clearTicketTransferState();
+    clearDataTransferState();
     clearTaskLogState();
     m_qtaskRecoveryRound = 0;
     m_keyPlacedElapsed.invalidate();
@@ -519,10 +525,56 @@ void KeySerialClient::deleteFirstTask()
     deleteTask(m_tasks.first().taskId);
 }
 
+void KeySerialClient::sendInitPayload(const QByteArray &payload)
+{
+    if (!m_serial->isOpen()) {
+        emitNotice("INIT 失败：串口未连接");
+        return;
+    }
+    if (m_inFlight) {
+        emitNotice("INIT 失败：当前有命令在途");
+        return;
+    }
+    if (!m_keyPlaced || !m_keyStable || !m_sessionReady) {
+        emitNotice("INIT 失败：钥匙未就绪");
+        return;
+    }
+    if (!startDataTransfer(CMD_INIT, payload, QStringLiteral("INIT"))) {
+        emitNotice("INIT 失败：未生成有效数据帧");
+    }
+}
+
+void KeySerialClient::sendRfidPayload(const QByteArray &payload)
+{
+    if (!m_serial->isOpen()) {
+        emitNotice("下载 RFID 失败：串口未连接");
+        return;
+    }
+    if (m_inFlight) {
+        emitNotice("下载 RFID 失败：当前有命令在途");
+        return;
+    }
+    if (!m_keyPlaced || !m_keyStable || !m_sessionReady) {
+        emitNotice("下载 RFID 失败：钥匙未就绪");
+        return;
+    }
+    if (!startDataTransfer(CMD_DN_RFID, payload, QStringLiteral("DN_RFID"))) {
+        emitNotice("下载 RFID 失败：未生成有效数据帧");
+    }
+}
+
 void KeySerialClient::clearTicketTransferState()
 {
     m_ticketFrames.clear();
     m_ticketFrameIndex = -1;
+}
+
+void KeySerialClient::clearDataTransferState()
+{
+    m_dataFrames.clear();
+    m_dataFrameIndex = -1;
+    m_dataBaseCmd = 0;
+    m_dataTransferLabel.clear();
 }
 
 void KeySerialClient::clearTaskLogState()
@@ -531,6 +583,78 @@ void KeySerialClient::clearTaskLogState()
     m_pendingTaskLogFrames = 0;
     m_taskLogExpectedSeq = 0;
     m_taskLogPayloadBuffer.clear();
+}
+
+bool KeySerialClient::startDataTransfer(quint8 baseCmd,
+                                        const QByteArray &payload,
+                                        const QString &label)
+{
+    if (payload.isEmpty()) {
+        emitLog(LogDir::ERROR, baseCmd, 0, QString("%1 payload 为空").arg(label));
+        return false;
+    }
+
+    KeyDataFrameBuilder builder;
+    const QList<QByteArray> frames = builder.buildFrames(baseCmd, payload);
+    if (frames.isEmpty()) {
+        emitLog(LogDir::ERROR, baseCmd, 0, QString("%1 frame build failed").arg(label));
+        return false;
+    }
+
+    clearDataTransferState();
+    m_dataFrames = frames;
+    m_dataBaseCmd = baseCmd;
+    m_dataTransferLabel = label;
+    emitNotice(QString("%1 已编码：payload=%2B frameCount=%3")
+                   .arg(label)
+                   .arg(payload.size())
+                   .arg(frames.size()));
+    const bool ok = sendNextDataFrame();
+    if (!ok) {
+        clearDataTransferState();
+    }
+    return ok;
+}
+
+bool KeySerialClient::sendNextDataFrame()
+{
+    if (m_dataFrames.isEmpty()) {
+        return false;
+    }
+
+    const int nextIndex = m_dataFrameIndex + 1;
+    if (nextIndex < 0 || nextIndex >= m_dataFrames.size()) {
+        return false;
+    }
+
+    m_dataFrameIndex = nextIndex;
+    const QByteArray frame = m_dataFrames.at(m_dataFrameIndex);
+    const quint8 cmd = (frame.size() > OFF_CMD) ? static_cast<quint8>(frame[OFF_CMD]) : m_dataBaseCmd;
+    quint16 lenField = 0;
+    if (frame.size() > OFF_LEN + 1) {
+        lenField = static_cast<quint8>(frame[OFF_LEN])
+                 | (static_cast<quint8>(frame[OFF_LEN + 1]) << 8);
+    }
+
+    const int payloadChunkLen = qMax(0, static_cast<int>(lenField) - 3);
+    emitNotice(QString("%1 发送中：第 %2/%3 帧 Cmd=0x%4 Payload=%5B")
+                   .arg(m_dataTransferLabel)
+                   .arg(m_dataFrameIndex + 1)
+                   .arg(m_dataFrames.size())
+                   .arg(cmd, 2, 16, QChar('0'))
+                   .arg(payloadChunkLen));
+    emitLog(LogDir::EVENT, cmd, lenField,
+            QString("%1 frame %2/%3 send")
+                .arg(m_dataTransferLabel)
+                .arg(m_dataFrameIndex + 1)
+                .arg(m_dataFrames.size()),
+            frame, true, true);
+
+    const quint8 inFlightType = (m_dataBaseCmd == CMD_INIT)
+            ? INFLIGHT_INIT_TRANSFER
+            : INFLIGHT_RFID_TRANSFER;
+    sendFrame(frame, cmd, inFlightType);
+    return true;
 }
 
 void KeySerialClient::sendTaskLogAck(quint16 frameSeq)
@@ -1011,6 +1135,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
                 stopRetryTimer();
                 clearInFlight();
                 clearTicketTransferState();
+                clearDataTransferState();
                 clearTaskLogState();
                 m_pendingAfterDelQuery = false;
                 m_qtaskRecoveryTimer->stop();
@@ -1039,6 +1164,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
                 stopRetryTimer();
                 clearInFlight();
                 clearTicketTransferState();
+                clearDataTransferState();
                 clearTaskLogState();
                 m_pendingAfterDelQuery = false;
                 if (hadInFlight) {
@@ -1082,6 +1208,10 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
         switch (ackedCmd) {
         case CMD_SET_COM: ackSummary = "ACK for SET_COM"; break;
         case CMD_DEL:     ackSummary = "ACK for DEL"; break;
+        case CMD_INIT:    ackSummary = "ACK for INIT"; break;
+        case static_cast<quint8>(CMD_INIT | 0x80): ackSummary = "ACK for INIT_MORE"; break;
+        case CMD_DN_RFID: ackSummary = "ACK for DN_RFID"; break;
+        case static_cast<quint8>(CMD_DN_RFID | 0x80): ackSummary = "ACK for DN_RFID_MORE"; break;
         }
         emitLog(LogDir::RX, CMD_ACK, lenField, ackSummary, frame);
 
@@ -1091,6 +1221,9 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
         else if (m_inFlightType == INFLIGHT_DEL && ackedCmd == CMD_DEL)
             matched = true;
         else if (m_inFlightType == INFLIGHT_TICKET && ackedCmd == m_expectedAckCmd)
+            matched = true;
+        else if ((m_inFlightType == INFLIGHT_INIT_TRANSFER || m_inFlightType == INFLIGHT_RFID_TRANSFER)
+                 && ackedCmd == m_expectedAckCmd)
             matched = true;
 
         if (matched) {
@@ -1105,11 +1238,35 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
             scheduleStartupProbeQTask();
         }
 
-        if (matched && inFlightBeforeAck != INFLIGHT_TICKET) {
+        if (matched
+                && inFlightBeforeAck != INFLIGHT_TICKET
+                && inFlightBeforeAck != INFLIGHT_INIT_TRANSFER
+                && inFlightBeforeAck != INFLIGHT_RFID_TRANSFER) {
             tryDispatchDeferredCommand();
         }
 
         emit ackReceived(ackedCmd);
+
+        if (ackedCmd != CMD_SET_COM && !m_dataFrames.isEmpty() && m_dataFrameIndex >= 0) {
+            emitLog(LogDir::EVENT, ackedCmd, lenField,
+                    QString("%1 frame %2/%3 ACK")
+                        .arg(m_dataTransferLabel)
+                        .arg(m_dataFrameIndex + 1)
+                        .arg(m_dataFrames.size()),
+                    {}, true, true);
+            if (m_dataFrameIndex + 1 < m_dataFrames.size()) {
+                if (!sendNextDataFrame()) {
+                    emitNotice(QString("%1 发送失败：后续帧派发失败").arg(m_dataTransferLabel));
+                    clearDataTransferState();
+                }
+            } else {
+                emitNotice(QString("%1 发送完成，共 %2 帧")
+                               .arg(m_dataTransferLabel)
+                               .arg(m_dataFrames.size()));
+                clearDataTransferState();
+            }
+            return;
+        }
 
         if (ackedCmd != CMD_SET_COM && !m_ticketFrames.isEmpty() && m_ticketFrameIndex >= 0) {
             emitLog(LogDir::EVENT, ackedCmd, lenField,
@@ -1207,6 +1364,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
         stopRetryTimer();
         clearInFlight();
         clearTicketTransferState();
+        clearDataTransferState();
         clearTaskLogState();
         m_pendingAfterDelQuery = false;
         if (origCmd == CMD_TICKET || origCmd == CMD_TICKET_MORE) {
@@ -1214,6 +1372,10 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
             emit ticketTransferFailed(QString("收到 NAK：%1").arg(errDesc));
         } else if (origCmd == CMD_I_TASK_LOG || origCmd == CMD_UP_TASK_LOG) {
             emitNotice(QString("回传日志收到 NAK：%1").arg(errDesc));
+        } else if (origCmd == CMD_INIT || origCmd == static_cast<quint8>(CMD_INIT | 0x80)) {
+            emitNotice(QString("INIT 收到 NAK：%1").arg(errDesc));
+        } else if (origCmd == CMD_DN_RFID || origCmd == static_cast<quint8>(CMD_DN_RFID | 0x80)) {
+            emitNotice(QString("下载 RFID 收到 NAK：%1").arg(errDesc));
         }
         tryDispatchDeferredCommand();
         emit nakReceived(origCmd, errCode);
@@ -1459,9 +1621,13 @@ void KeySerialClient::sendFrame(const QByteArray &frame, quint8 expectedAckCmd,
     // 生成 TX 摘要
     QString txSummary;
     switch (txCmd) {
+    case CMD_INIT: txSummary = "INIT send"; break;
+    case static_cast<quint8>(CMD_INIT | 0x80): txSummary = "INIT_MORE send"; break;
     case CMD_SET_COM: txSummary = "SET_COM send"; break;
     case CMD_Q_TASK:  txSummary = "Q_TASK(all) send"; break;
     case CMD_I_TASK_LOG: txSummary = "I_TASK_LOG send"; break;
+    case CMD_DN_RFID: txSummary = "DN_RFID send"; break;
+    case static_cast<quint8>(CMD_DN_RFID | 0x80): txSummary = "DN_RFID_MORE send"; break;
     case CMD_TICKET:  txSummary = "TICKET send"; break;
     case CMD_TICKET_MORE: txSummary = "TICKET_MORE send"; break;
     case CMD_DEL: {
@@ -2027,6 +2193,8 @@ void KeySerialClient::onSerialError(int errorCode, const QString &errorMessage)
     m_sessionReady = false;
     m_deferredInFlightType = INFLIGHT_NONE;
     m_deferredDeleteTaskId.clear();
+    clearTicketTransferState();
+    clearDataTransferState();
     clearTaskLogState();
     m_qtaskRecoveryRound = 0;
     m_keyPlacedElapsed.invalidate();
@@ -2078,6 +2246,14 @@ void KeySerialClient::onRetryTimeout()
             cmdName = "DEL";
         } else if (timeoutInFlight == INFLIGHT_SETCOM) {
             cmdName = "SET_COM";
+        } else if (timeoutInFlight == INFLIGHT_INIT_TRANSFER) {
+            cmdName = QString("INIT frame %1/%2")
+                    .arg(m_dataFrameIndex + 1)
+                    .arg(m_dataFrames.size());
+        } else if (timeoutInFlight == INFLIGHT_RFID_TRANSFER) {
+            cmdName = QString("DN_RFID frame %1/%2")
+                    .arg(m_dataFrameIndex + 1)
+                    .arg(m_dataFrames.size());
         } else if (timeoutInFlight == INFLIGHT_TICKET) {
             cmdName = QString("TICKET frame %1/%2")
                     .arg(m_ticketFrameIndex + 1)
@@ -2123,10 +2299,15 @@ void KeySerialClient::onRetryTimeout()
                 QString("%1 timeout after %2 retries, keep port open").arg(cmdName).arg(MAX_RETRIES));
         if (timeoutInFlight == INFLIGHT_TICKET) {
             emit ticketTransferFailed(QString("%1 超时").arg(cmdName));
+        } else if (timeoutInFlight == INFLIGHT_INIT_TRANSFER) {
+            emitNotice(QString("INIT 超时：%1").arg(cmdName));
+        } else if (timeoutInFlight == INFLIGHT_RFID_TRANSFER) {
+            emitNotice(QString("下载 RFID 超时：%1").arg(cmdName));
         }
         stopRetryTimer();
         clearInFlight();
         clearTicketTransferState();
+        clearDataTransferState();
         clearTaskLogState();
         m_pendingAfterDelQuery = false;
         m_sessionReady = false;
@@ -2166,6 +2347,16 @@ void KeySerialClient::onRetryTimeout()
     case INFLIGHT_DEL:    retrySummary += " for DEL"; break;
     case INFLIGHT_QTASK:  retrySummary += " for Q_TASK"; break;
     case INFLIGHT_TASKLOG: retrySummary += " for I_TASK_LOG"; break;
+    case INFLIGHT_INIT_TRANSFER:
+        retrySummary += QString(" for INIT frame %1/%2")
+                .arg(m_dataFrameIndex + 1)
+                .arg(m_dataFrames.size());
+        break;
+    case INFLIGHT_RFID_TRANSFER:
+        retrySummary += QString(" for DN_RFID frame %1/%2")
+                .arg(m_dataFrameIndex + 1)
+                .arg(m_dataFrames.size());
+        break;
     case INFLIGHT_TICKET: retrySummary += QString(" for TICKET frame %1/%2")
                                            .arg(m_ticketFrameIndex + 1)
                                            .arg(m_ticketFrames.size()); break;
@@ -2318,7 +2509,9 @@ void KeySerialClient::emitLog(LogDir dir, quint8 cmd, quint16 lenField,
     item.timestamp = QDateTime::currentDateTime();
     item.dir      = dir;
     item.opId     = (dir == LogDir::EVENT) ? -1 : m_currentOpId;
-    item.cmd      = cmd;
+    item.cmd      = (cmd == 0 && dir != LogDir::TX && dir != LogDir::RX)
+            ? LogCmdNone
+            : cmd;
     item.length   = lenField;
     item.summary  = summary;
     item.hex      = hex;
