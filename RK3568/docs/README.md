@@ -2,7 +2,7 @@
 
 Status: Active  
 Owner: 项目维护者（单人开发）  
-Last Updated: 2026-03-11
+Last Updated: 2026-03-12
 
 本文件是 `docs/` 的总入口，目标是让“零历史新 Agent / 新同事”在 5 分钟内回答：
 
@@ -114,6 +114,7 @@ Last Updated: 2026-03-11
    - `VALIDATION_PLAYBOOK.md`：主路径 / 传票 / 真机 / replay 验证清单。  
    - `MIGRATION_EXECUTION_LOG.md`：当前移植进度、业务规则与下一步执行顺序。  
    - `NEXT_AGENT_BRIEF.md`：给无历史新 agent 的直接接手说明。  
+   - `PRO_REVIEW_BRIEF_2026-03-12.md`：给 `pro` 做代码审查 / 业务逻辑 bug 排查 / RK3588 板端联调收口的集中简报。  
 5. `docs/` 根目录：项目背景、注释规范、dead code 治理、总入口。  
 
 ## 6. 历史与治理文档说明

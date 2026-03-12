@@ -61,6 +61,7 @@ KeyManagePage(systemTicketTable 选中)
 1. 页面层只传“选中哪条系统票”  
 2. 原始 JSON 由 `TicketStore` 提供  
 3. 协议状态机只在 `KeySerialClient` 内维护  
+4. `DEL` 当前按“钥匙票表选中项”执行，不再默认删除第一条钥匙任务  
 
 ## 4. 自动传票链
 
@@ -89,24 +90,31 @@ TicketIngressService 收到新 JSON
   -> KEY_EVENT(placed)
     -> SET_COM ready
       -> KeyManageController 在 ready 边沿自动触发一次 Q_TASK
+        -> 若发现钥匙里已存在对应任务，则先对账修正本地 transferState
+        -> 若确认钥匙里没有任务，但本地系统票仍卡在 sending/failed，则回退为 auto-pending 并自动补传
         -> Q_TASK(status=0x02)
-          -> IKeySessionService::execute(QueryTaskLog)
-            -> KeySerialClient::requestTaskLog(...)
-              -> I_TASK_LOG(0x05)
-              -> ACK(5A 05 00 00)
-              -> UP_TASK_LOG(0x15)
-                -> KeyManageController::handleSessionEvent(TaskLogReady)
-                  -> TicketReturnHttpClient
-                    -> HTTP /finish-step-batch
-                      -> DEL
+          -> IKeySessionService::execute(SetCom)
+            -> SET_COM ACK
+              -> IKeySessionService::execute(QueryTaskLog)
+                -> KeySerialClient::requestTaskLog(...)
+                  -> I_TASK_LOG(0x05)
+                  -> ACK(5A 05 00 00)
+                  -> UP_TASK_LOG(0x15)
+                    -> KeyManageController::handleSessionEvent(TaskLogReady)
+                      -> TicketReturnHttpClient
+                        -> HTTP /finish-step-batch
+                          -> DEL
 ```
 
 要点：
 
 1. 自动回传当前以 `Q_TASK.status=0x02` 作为门禁。  
 2. 钥匙放回并完成握手后，不再要求用户手工点“读取钥匙列表”才开始回传。  
-3. 若任务状态是 `0x00/0x01`，当前不进入回传，只提示“任务未完成”。  
-4. 多帧 `UP_TASK_LOG` 当前代码已支持按 `seq` 累积，并已通过 replay 场景验证。  
+3. 若任务状态是 `0x00/0x01`，当前不进入回传，并提示“任务未全部完成，暂不回传，请完成全部步骤后再放回钥匙”。  
+4. 若本地系统票仍停在 `sending/auto-pending/failed`，但 `Q_TASK` 已确认钥匙中存在该任务，则先自动对账修正为 `success`。  
+5. 若 `Q_TASK` 明确返回钥匙中无任务，而本地系统票仍卡在 `sending/failed`，则自动回退为 `auto-pending` 并再试一次自动传票。  
+6. 当前自动回传在读取日志前会先补一次 `SET_COM`，以贴近原产品在差底座场景下的恢复方式。  
+7. 多帧 `UP_TASK_LOG` 当前代码已支持按 `seq` 累积，并已通过 replay 场景验证。  
 
 ## 6. 手工初始化 / 下载 RFID 链
 
