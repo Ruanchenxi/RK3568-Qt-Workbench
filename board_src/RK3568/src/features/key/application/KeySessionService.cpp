@@ -102,6 +102,9 @@ KeySessionService::KeySessionService(QObject *parent)
     connect(m_client, &KeySerialClient::keyStableChanged, this, [this](bool) {
         emitStateChanged();
     });
+    connect(m_client, &KeySerialClient::stateFlagsChanged, this, [this]() {
+        emitStateChanged();
+    });
     connect(m_client, &KeySerialClient::tasksUpdated, this, [this](const QList<KeyTaskInfo> &tasks) {
         KeySessionEvent event;
         event.kind = KeySessionEvent::TasksUpdated;
@@ -187,6 +190,9 @@ KeySessionSnapshot KeySessionService::snapshot() const
     s.sessionReady = m_client->isSessionReady();
     s.protocolHealthy = m_client->isProtocolHealthy();
     s.protocolConfirmedOnce = m_client->hasProtocolConfirmedOnce();
+    s.lastBusinessSuccessMs = m_client->lastBusinessSuccessMs();
+    s.lastProtocolFailureMs = m_client->lastProtocolFailureMs();
+    s.recoveryWindowActive = m_client->recoveryWindowActive();
     s.portName = m_client->currentPortName();
     s.verifiedPortName = m_client->hasVerifiedPort() ? m_client->verifiedPortName() : QString();
     return s;
@@ -289,6 +295,9 @@ void KeySessionService::emitStateChanged()
     event.data.insert("sessionReady", s.sessionReady);
     event.data.insert("protocolHealthy", s.protocolHealthy);
     event.data.insert("protocolConfirmedOnce", s.protocolConfirmedOnce);
+    event.data.insert("lastBusinessSuccessMs", s.lastBusinessSuccessMs);
+    event.data.insert("lastProtocolFailureMs", s.lastProtocolFailureMs);
+    event.data.insert("recoveryWindowActive", s.recoveryWindowActive);
     event.data.insert("portName", s.portName);
     emit eventOccurred(event);
 }

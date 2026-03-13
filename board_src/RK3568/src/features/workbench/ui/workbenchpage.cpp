@@ -13,6 +13,11 @@
 
 namespace
 {
+bool workbenchWebDebugEnabled()
+{
+    return qEnvironmentVariableIntValue("RK3568_WEB_DEBUG") == 1;
+}
+
 class DebugWorkbenchPage : public QWebEnginePage
 {
 public:
@@ -24,10 +29,12 @@ public:
 protected:
     bool acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame) override
     {
-        qDebug() << "[WorkbenchPage] 导航请求:"
-                 << "url=" << url
-                 << "type=" << type
-                 << "mainFrame=" << isMainFrame;
+        if (workbenchWebDebugEnabled()) {
+            qDebug() << "[WorkbenchPage] 导航请求:"
+                     << "url=" << url
+                     << "type=" << type
+                     << "mainFrame=" << isMainFrame;
+        }
         return QWebEnginePage::acceptNavigationRequest(url, type, isMainFrame);
     }
 
@@ -36,11 +43,13 @@ protected:
                                   int lineNumber,
                                   const QString &sourceId) override
     {
-        qDebug() << "[WorkbenchPage][Console]"
-                 << "level=" << level
-                 << "line=" << lineNumber
-                 << "source=" << sourceId
-                 << "message=" << message;
+        if (workbenchWebDebugEnabled()) {
+            qDebug() << "[WorkbenchPage][Console]"
+                     << "level=" << level
+                     << "line=" << lineNumber
+                     << "source=" << sourceId
+                     << "message=" << message;
+        }
         QWebEnginePage::javaScriptConsoleMessage(level, message, lineNumber, sourceId);
     }
 };
@@ -75,10 +84,10 @@ WorkbenchPage::WorkbenchPage(QWidget *parent)
     : QWidget(parent),
       ui(new Ui::WorkbenchPage),
       m_webView(nullptr),
-      m_controller(new WorkbenchController(nullptr, this))
+      m_controller(new WorkbenchController(nullptr, this)),
+      m_webViewInitialized(false)
 {
     ui->setupUi(this);
-    initWebView();
 }
 
 /**
@@ -92,6 +101,16 @@ WorkbenchPage::~WorkbenchPage()
 /**
  * @brief 初始化 WebEngine 视图
  */
+void WorkbenchPage::ensureWebViewInitialized()
+{
+    if (m_webViewInitialized) {
+        return;
+    }
+
+    initWebView();
+    m_webViewInitialized = true;
+}
+
 void WorkbenchPage::initWebView()
 {
     // 创建 QWebEngineView
@@ -106,14 +125,22 @@ void WorkbenchPage::initWebView()
 
     connect(m_webView, &QWebEngineView::loadStarted, this, [this]()
             {
-        qDebug() << "[WorkbenchPage] loadStarted, currentUrl=" << maskedUrl(m_webView->url()); });
+        if (workbenchWebDebugEnabled()) {
+            qDebug() << "[WorkbenchPage] loadStarted, currentUrl=" << maskedUrl(m_webView->url());
+        } });
 
     connect(m_webView, &QWebEngineView::loadProgress, this, [](int progress)
             {
-        qDebug() << "[WorkbenchPage] loadProgress:" << progress; });
+        if (workbenchWebDebugEnabled()) {
+            qDebug() << "[WorkbenchPage] loadProgress:" << progress;
+        } });
 
     connect(m_webView, &QWebEngineView::urlChanged, this, [](const QUrl &url)
             {
+        if (!workbenchWebDebugEnabled()) {
+            return;
+        }
+
         const QString safeUrl = maskedUrl(url);
         qDebug() << "[WorkbenchPage] urlChanged:" << safeUrl;
 
@@ -124,14 +151,18 @@ void WorkbenchPage::initWebView()
 
     connect(m_webView, &QWebEngineView::titleChanged, this, [](const QString &title)
             {
-        qDebug() << "[WorkbenchPage] titleChanged:" << title; });
+        if (workbenchWebDebugEnabled()) {
+            qDebug() << "[WorkbenchPage] titleChanged:" << title;
+        } });
 
     connect(m_webView, &QWebEngineView::loadFinished, this, [=](bool ok)
             {
-        if (ok) {
-            qDebug() << "[WorkbenchPage] 网页加载成功, finalUrl=" << maskedUrl(m_webView->url());
-        } else {
-            qWarning() << "[WorkbenchPage] 网页加载失败, finalUrl=" << maskedUrl(m_webView->url());
+        if (workbenchWebDebugEnabled()) {
+            if (ok) {
+                qDebug() << "[WorkbenchPage] 网页加载成功, finalUrl=" << maskedUrl(m_webView->url());
+            } else {
+                qWarning() << "[WorkbenchPage] 网页加载失败, finalUrl=" << maskedUrl(m_webView->url());
+            }
         } });
 }
 
@@ -140,7 +171,14 @@ void WorkbenchPage::initWebView()
  */
 void WorkbenchPage::loadWorkbench()
 {
-    qDebug() << "[WorkbenchPage] ========== 开始加载工作台 ==========";
+    ensureWebViewInitialized();
+    if (!m_webView) {
+        return;
+    }
+
+    if (workbenchWebDebugEnabled()) {
+        qDebug() << "[WorkbenchPage] ========== 开始加载工作台 ==========";
+    }
     QUrl targetUrl;
     QString safeSummary;
     QString error;
@@ -149,13 +187,19 @@ void WorkbenchPage::loadWorkbench()
         qWarning() << "[WorkbenchPage]" << error;
         return;
     }
-    qDebug() << "[WorkbenchPage] 使用中转页面 URL（已脱敏）:" << safeSummary;
-    qDebug() << "[WorkbenchPage] 实际加载 URL（敏感参数已脱敏）:" << maskedUrl(targetUrl);
+    if (workbenchWebDebugEnabled()) {
+        qDebug() << "[WorkbenchPage] 使用中转页面 URL（已脱敏）:" << safeSummary;
+        qDebug() << "[WorkbenchPage] 实际加载 URL（敏感参数已脱敏）:" << maskedUrl(targetUrl);
+    }
 
     // 加载网页
-    qDebug() << "[WorkbenchPage] 开始加载网页...";
+    if (workbenchWebDebugEnabled()) {
+        qDebug() << "[WorkbenchPage] 开始加载网页...";
+    }
     m_webView->load(targetUrl);
-    qDebug() << "[WorkbenchPage] ========== 加载工作台结束 ==========";
+    if (workbenchWebDebugEnabled()) {
+        qDebug() << "[WorkbenchPage] ========== 加载工作台结束 ==========";
+    }
 }
 
 /**
@@ -164,6 +208,7 @@ void WorkbenchPage::loadWorkbench()
 void WorkbenchPage::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
+    ensureWebViewInitialized();
     if (m_controller->shouldLoadNow()) {
         loadWorkbench();
     }

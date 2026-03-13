@@ -2,7 +2,7 @@
 
 Status: Active  
 Owner: 项目维护者  
-Last Updated: 2026-03-11  
+Last Updated: 2026-03-13  
 适用范围：快速说明“项目当前做到哪里、哪些链路可用、哪些仍待真机验证”。  
 不适用范围：不替代协议逐字节参考，不替代完整架构文档。  
 
@@ -80,6 +80,27 @@ RK3568 主程序已完成“工作台 JSON 进入主程序 -> 系统票入池 ->
    - 而是先补一次 `SET_COM`
    - 待 `SET_COM ACK` 到达后再发 `I_TASK_LOG`
    - 用于提升差底座/差接触条件下的回传稳定性
+29. Linux 板端启动路径已补图形诊断并收缩为保守模式：
+   - 默认 `RK3568_LINUX_GL_MODE=auto`，不再强制 `QT_XCB_GL_INTEGRATION=xcb_egl`
+   - 仅在显式设置 `RK3568_LINUX_GL_MODE=egl/gles/xcb_egl_gles` 时，才强制 `xcb_egl + AA_UseOpenGLES`
+   - 可用 `RK3568_LINUX_GL_MODE=software` 显式切到软件 OpenGL
+   - 启动日志会输出 `RK3568_LINUX_GL_MODE / QT_QPA_PLATFORM / QT_XCB_GL_INTEGRATION / QT_OPENGL / QTWEBENGINE_CHROMIUM_FLAGS / AA_UseOpenGLES`
+30. 板端事件循环已开始减负：
+   - 工作台页改为首次显示时再创建 `QWebEngineView`
+   - 隐藏日志页默认不立即落日志控件
+   - 钥匙管理页的串口日志表 / HTTP 文本 / 重型表格改为合批刷新
+31. 回传状态已拆细为：
+   - `return-upload-success`
+   - `return-delete-pending`
+   - `return-delete-success`
+   当前不再把“HTTP 上传成功”直接等同于“钥匙任务已清理成功”
+32. 板端 HTTP 回传已加保守收口：
+   - 使用 `QTimer + reply->abort()` 做超时控制
+   - 2xx 但非 JSON object 不再默认视为成功
+33. 2026-03-13 RK3588 板端补充验证已确认：
+   - 默认保守图形模式下，主程序可正常启动
+   - 真机已再次完成 `传票 -> 钥匙取走/放回 -> 自动回传 -> DEL -> Q_TASK(count=0)` 收口
+   - 当前仍可见个别 `SET_COM` 重试后才收到 ACK，说明底座/板端时序压力仍在，但主链已不再卡死
 
 ## 3. 当前页面能力
 

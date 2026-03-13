@@ -15,6 +15,9 @@
 
 #include <QWidget>
 #include <QString>
+#include <QStringList>
+
+class QShowEvent;
 
 class QPlainTextEdit;
 class LogController;
@@ -36,16 +39,24 @@ public:
     explicit LogPage(QWidget *parent = nullptr);
     ~LogPage();
 
+protected:
+    void showEvent(QShowEvent *event) override;
+
 private slots:
     void onServiceLogGenerated(const QString &text);
 
 private:
+    void ensureStarted();
+    void flushPendingLogs();
     void initServiceLog();
     void appendLog(const QString &text);
 
     Ui::LogPage *ui;
     QPlainTextEdit *m_logDisplay;
     LogController *m_controller;
+    bool m_started;
+    bool m_visibleOnce;
+    QStringList m_pendingLogs;
 };
 
 #endif // LOGPAGE_H

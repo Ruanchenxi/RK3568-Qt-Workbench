@@ -19,6 +19,10 @@
 #include <QList>
 #include <QWidget>
 
+class QHideEvent;
+class QShowEvent;
+class QTimer;
+
 #include "shared/contracts/KeyTaskDto.h"
 #include "shared/contracts/SystemTicketDto.h"
 #include "shared/contracts/IKeySessionService.h"
@@ -37,6 +41,10 @@ class KeyManagePage : public QWidget
 public:
     explicit KeyManagePage(QWidget *parent = nullptr);
     ~KeyManagePage();
+
+protected:
+    void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
 
 private slots:
     // ---- 顶部 Tab 切换 ----
@@ -91,6 +99,12 @@ private:
     void initConnections();
     void initController();
     void refreshSystemTicketViews();
+    void scheduleUiFlush();
+    void flushPendingUiRefreshes();
+    void flushPendingSerialLogs();
+    bool isSerialTabVisible() const;
+    bool isHttpClientTabVisible() const;
+    bool isHttpServerTabVisible() const;
     void updateCommIndicators(const KeySessionSnapshot &snapshot);
     void refreshCommSeatLabel();
     static bool shouldSuppressStatusBarMessage(const QString &message);
@@ -116,6 +130,14 @@ private:
     KeyManageController *m_controller;
     bool m_expertMode;
     bool m_showHex;
+    QTimer *m_uiFlushTimer;
+    QList<LogItem> m_pendingSerialLogs;
+    QList<KeyTaskDto> m_latestKeyTasks;
+    bool m_pendingSystemTicketRefresh;
+    bool m_pendingKeyTaskRefresh;
+    bool m_pendingHttpClientRefresh;
+    bool m_pendingHttpServerRefresh;
+    bool m_pageVisible;
 };
 
 #endif // KEYMANAGEPAGE_H

@@ -98,6 +98,10 @@ private:
     void tryAutoTransferPendingTicket();
     void tryStartTicketReturn(const QString &taskId, bool automatic);
     void tryAutoReturnCompletedTicket(const QList<KeyTaskDto> &tasks);
+    void failActiveReturnHandshake(const QString &reason);
+    void clearActiveReturnContext(bool clearHandshakeOnly = false);
+    void markReturnDeletePending(const QString &taskId, const QByteArray &taskIdRaw);
+    void finalizePendingReturnDelete(const QList<KeyTaskDto> &tasks);
     QByteArray findKeyTaskIdRaw(const QString &taskId, quint8 *status = nullptr) const;
     static QString taskIdFromRaw(const QByteArray &taskIdRaw);
     int nextOpId();

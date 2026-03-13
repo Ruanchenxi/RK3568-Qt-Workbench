@@ -147,6 +147,9 @@ KeySerialClient::KeySerialClient(ISerialTransport *transport, QObject *parent)
     , m_taskLogWaitTimer(new QTimer(this))
     , m_expectedAckCmd(0)
     , m_retryCount(0)
+    , m_inFlightGeneration(0)
+    , m_retryTimerGeneration(0)
+    , m_taskLogWaitGeneration(0)
     , m_inFlight(false)
     , m_inFlightType(INFLIGHT_NONE)
     , m_pendingAfterDelQuery(false)
@@ -155,6 +158,9 @@ KeySerialClient::KeySerialClient(ISerialTransport *transport, QObject *parent)
     , m_sessionReady(false)
     , m_protocolHealthy(false)
     , m_protocolConfirmedOnce(false)
+    , m_lastBusinessSuccessMs(0)
+    , m_lastProtocolFailureMs(0)
+    , m_recoveryWindowActive(false)
     , m_qtaskSawFrameHeader(false)
     , m_qtaskProbeInFlight(false)
     , m_resyncDropBytes(0)
@@ -178,6 +184,7 @@ KeySerialClient::KeySerialClient(ISerialTransport *transport, QObject *parent)
     , m_pendingTaskLogFrames(0)
     , m_taskLogExpectedSeq(0)
     , m_taskLogPayloadBuffer()
+    , m_expectedTaskIdForResponse()
 {
     Q_ASSERT(m_serial != nullptr);
     connect(m_serial, &ISerialTransport::readyRead, this, &KeySerialClient::onReadyRead);
@@ -186,11 +193,18 @@ KeySerialClient::KeySerialClient(ISerialTransport *transport, QObject *parent)
     connect(m_keyStableTimer, &QTimer::timeout, this, &KeySerialClient::onKeyStableTimerTimeout);
     connect(m_qtaskRecoveryTimer, &QTimer::timeout, this, &KeySerialClient::onQTaskRecoveryTimeout);
     connect(m_taskLogWaitTimer, &QTimer::timeout, this, [this]() {
+        if (m_taskLogWaitGeneration != m_inFlightGeneration && m_pendingTaskLogFrames == 0) {
+            emitLog(LogDir::EVENT, CMD_UP_TASK_LOG, 0,
+                    "Ignore stale UP_TASK_LOG wait timeout",
+                    {}, true, true);
+            return;
+        }
         if (m_pendingTaskLogFrames == 0) {
             return;
         }
         emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, 0,
                 "UP_TASK_LOG timeout after ACK, keep port open");
+        noteProtocolFailure(QStringLiteral("UP_TASK_LOG wait timeout"));
         setProtocolHealthy(false, QStringLiteral("UP_TASK_LOG wait timeout"));
         clearTaskLogState();
         emit timeoutOccurred(QStringLiteral("UP_TASK_LOG 超时，连接保持，请重新放稳钥匙"));
@@ -259,6 +273,9 @@ bool KeySerialClient::connectPort(const QString &portName, int baud)
     m_sessionReady = false;
     m_protocolHealthy = false;
     m_protocolConfirmedOnce = false;
+    m_lastBusinessSuccessMs = 0;
+    m_lastProtocolFailureMs = 0;
+    m_recoveryWindowActive = false;
     m_deferredInFlightType = INFLIGHT_NONE;
     m_deferredDeleteTaskId.clear();
     clearTicketTransferState();
@@ -319,6 +336,9 @@ void KeySerialClient::disconnectPort()
     m_sessionReady = false;
     m_protocolHealthy = false;
     m_protocolConfirmedOnce = false;
+    m_lastBusinessSuccessMs = 0;
+    m_lastProtocolFailureMs = 0;
+    m_recoveryWindowActive = false;
     m_deferredInFlightType = INFLIGHT_NONE;
     m_deferredDeleteTaskId.clear();
     clearTicketTransferState();
@@ -395,6 +415,7 @@ void KeySerialClient::requestTaskLog(const QByteArray &taskId16)
 
     clearTaskLogState();
     m_pendingTaskLogTaskId = taskId16;
+    m_expectedTaskIdForResponse = taskId16;
 
     log(QString("发送 I_TASK_LOG(0x05) taskId: %1")
             .arg(QString(taskId16.toHex(' ').toUpper())));
@@ -614,7 +635,17 @@ void KeySerialClient::clearTaskLogState()
     m_pendingTaskLogFrames = 0;
     m_taskLogExpectedSeq = 0;
     m_taskLogPayloadBuffer.clear();
+    m_expectedTaskIdForResponse.clear();
+    m_taskLogWaitGeneration = 0;
     m_taskLogWaitTimer->stop();
+}
+
+void KeySerialClient::beginInFlightContext(quint8 inFlightType, quint8 expectedAckCmd)
+{
+    m_inFlight = true;
+    m_inFlightType = inFlightType;
+    m_expectedAckCmd = expectedAckCmd;
+    ++m_inFlightGeneration;
 }
 
 void KeySerialClient::setProtocolHealthy(bool healthy, const QString &reason)
@@ -626,16 +657,41 @@ void KeySerialClient::setProtocolHealthy(bool healthy, const QString &reason)
     m_protocolHealthy = healthy;
     if (healthy) {
         m_protocolConfirmedOnce = true;
+        m_recoveryWindowActive = false;
         emitLog(LogDir::EVENT, 0, 0,
                 reason.isEmpty()
                     ? QStringLiteral("协议通讯已确认")
                     : QStringLiteral("协议通讯已确认：%1").arg(reason),
                 {}, true, true);
     } else if (!reason.isEmpty()) {
+        m_recoveryWindowActive = true;
         emitLog(LogDir::WARN, 0, 0,
                 QStringLiteral("协议通讯降级：%1").arg(reason),
                 {}, true, true);
     }
+    emit stateFlagsChanged();
+}
+
+void KeySerialClient::noteBusinessSuccess(const QString &reason)
+{
+    Q_UNUSED(reason);
+    m_lastBusinessSuccessMs = QDateTime::currentMSecsSinceEpoch();
+    m_recoveryWindowActive = false;
+    emit stateFlagsChanged();
+}
+
+void KeySerialClient::noteProtocolFailure(const QString &reason)
+{
+    Q_UNUSED(reason);
+    m_lastProtocolFailureMs = QDateTime::currentMSecsSinceEpoch();
+    m_recoveryWindowActive = true;
+    emit stateFlagsChanged();
+}
+
+void KeySerialClient::armTaskLogWaitTimeout(quint32 generation)
+{
+    m_taskLogWaitGeneration = generation;
+    m_taskLogWaitTimer->start(RETRY_TIMEOUT_MS * MAX_RETRIES);
 }
 
 bool KeySerialClient::startDataTransfer(quint8 baseCmd,
@@ -759,6 +815,7 @@ bool KeySerialClient::parseAndEmitTaskLogPayload(const QByteArray &payload,
         emitLog(LogDir::WARN, CMD_UP_TASK_LOG, lenField,
                 "UP_TASK_LOG taskId mismatch with pending request",
                 {}, true, true);
+        return false;
     }
     const int stationNo = static_cast<int>(static_cast<quint8>(payload[offset++]));
     const int taskAttr = static_cast<int>(static_cast<quint8>(payload[offset++]));
@@ -1287,10 +1344,17 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
             clearInFlight();
             m_qtaskProbeInFlight = false;
             if (ackedCmd != CMD_SET_COM) {
+                noteBusinessSuccess(QStringLiteral("ACK 0x%1")
+                                        .arg(ackedCmd, 2, 16, QLatin1Char('0')).toUpper());
                 setProtocolHealthy(true,
                                    QStringLiteral("ACK 0x%1")
                                        .arg(ackedCmd, 2, 16, QLatin1Char('0')).toUpper());
             }
+        } else {
+            emitLog(LogDir::WARN, CMD_ACK, lenField,
+                    QString("stale/unmatched ACK ignored for 0x%1")
+                        .arg(ackedCmd, 2, 16, QLatin1Char('0')).toUpper(),
+                    frame, true, true);
         }
 
         if (ackedCmd == CMD_SET_COM) {
@@ -1306,7 +1370,9 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
             tryDispatchDeferredCommand();
         }
 
-        emit ackReceived(ackedCmd);
+        if (matched) {
+            emit ackReceived(ackedCmd);
+        }
 
         if (ackedCmd != CMD_SET_COM && !m_dataFrames.isEmpty() && m_dataFrameIndex >= 0) {
             emitLog(LogDir::EVENT, ackedCmd, lenField,
@@ -1350,7 +1416,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
         }
 
         // DEL ACK → 自动再查一次验证
-        if (ackedCmd == CMD_DEL && m_pendingAfterDelQuery) {
+        if (matched && ackedCmd == CMD_DEL && m_pendingAfterDelQuery) {
             m_pendingAfterDelQuery = false;
             log("  >> DEL 成功，自动发起 Q_TASK 验证...");
             queryTasksAll();
@@ -1366,11 +1432,18 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
                     frame, true, true);
             return;
         }
+        if (m_inFlightType != INFLIGHT_TASKLOG && m_pendingTaskLogFrames == 0) {
+            emitLog(LogDir::WARN, CMD_I_TASK_LOG, lenField,
+                    "I_TASK_LOG resp ignored: no active task log request",
+                    frame, true, true);
+            return;
+        }
 
         const quint16 totalFrames = (dataLen >= 2) ? readLe16(data, 0) : 0;
         emitLog(LogDir::RX, CMD_I_TASK_LOG, lenField,
                 QString("I_TASK_LOG resp: totalFrames=%1").arg(totalFrames),
                 frame);
+        noteBusinessSuccess(QStringLiteral("I_TASK_LOG response"));
         setProtocolHealthy(true, QStringLiteral("I_TASK_LOG response"));
 
         if (m_inFlightType == INFLIGHT_TASKLOG) {
@@ -1378,9 +1451,9 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
             clearInFlight();
         }
 
-        m_pendingTaskLogFrames = totalFrames;
-        m_taskLogExpectedSeq = 0;
-        m_taskLogPayloadBuffer.clear();
+    m_pendingTaskLogFrames = totalFrames;
+    m_taskLogExpectedSeq = 0;
+    m_taskLogPayloadBuffer.clear();
         if (m_pendingTaskLogTaskId.isEmpty()) {
             emitLog(LogDir::WARN, CMD_I_TASK_LOG, lenField,
                     "I_TASK_LOG resp without active task context",
@@ -1399,7 +1472,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
                         CMD_ACK,
                         static_cast<quint16>(1 + ackData.size()),
                         QString("ACK for I_TASK_LOG, start upload from frame 0"));
-        m_taskLogWaitTimer->start(RETRY_TIMEOUT_MS * MAX_RETRIES);
+        armTaskLogWaitTimeout(m_inFlightGeneration);
 
         if (totalFrames > 1) {
             emitNotice(QString("检测到 %1 帧回传日志，进入多帧接收模式").arg(totalFrames));
@@ -1533,6 +1606,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
             qtaskSummary += QString(", first=%1").arg(firstTaskHex.left(23));
         }
         emitLog(LogDir::RX, CMD_Q_TASK, lenField, qtaskSummary, frame);
+        noteBusinessSuccess(QStringLiteral("Q_TASK response"));
         setProtocolHealthy(true, QStringLiteral("Q_TASK response"));
 
         emit tasksUpdated(m_tasks);
@@ -1545,6 +1619,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
         emitLog(LogDir::RX, CMD_UP_TASK_LOG, lenField,
                 QString("UP_TASK_LOG recv: payload=%1B").arg(dataLen),
                 frame);
+        noteBusinessSuccess(QStringLiteral("UP_TASK_LOG response"));
         setProtocolHealthy(true, QStringLiteral("UP_TASK_LOG response"));
         m_taskLogWaitTimer->start(RETRY_TIMEOUT_MS * MAX_RETRIES);
 
@@ -1738,17 +1813,16 @@ void KeySerialClient::sendFrame(const QByteArray &frame, quint8 expectedAckCmd,
     }
     emitLog(LogDir::TX, txCmd, txLen, txSummary, frame);
 
-    // 先进入 in-flight 状态，再执行阻塞写等待。
-    // 否则如果设备在 waitForBytesWritten 期间已经回包，handleFrame 可能先处理响应，
-    // 但此处随后才启动 retry timer，导致“已收到响应却又被旧超时打回待确认”的竞态。
-    m_inFlight = true;
-    m_inFlightType = inFlightType;
+    // 先进入 in-flight 状态，再执行实际发送，避免快速回包与旧超时发生竞态。
+    beginInFlightContext(inFlightType, expectedAckCmd);
     m_lastSentFrame = frame;
     startRetryTimer(expectedAckCmd);
 
     qint64 written = serial->write(frame);
     const bool flushOk = serial->flush();
+#ifdef Q_OS_WIN
     const bool waitOk = serial->waitForBytesWritten(200);
+#endif
 
     if (!flushOk) {
         // flush() 在不同平台表现不一致，不作为断口依据，仅记录告警（工程师模式）。
@@ -1756,19 +1830,31 @@ void KeySerialClient::sendFrame(const QByteArray &frame, quint8 expectedAckCmd,
         emitLog(LogDir::WARN, txCmd, txLen, "flush returned false (non-fatal)", {}, true, true);
     }
 
-    if (written != frame.size() || !waitOk) {
-        log(QString("[WARN] write: %1/%2 bytes, wait=%3")
+    if (written != frame.size()
+#ifdef Q_OS_WIN
+            || !waitOk
+#endif
+            ) {
+        log(QString("[WARN] write: %1/%2 bytes%3")
                 .arg(written).arg(frame.size())
-                .arg(waitOk ? "OK" : "FAIL"));
+#ifdef Q_OS_WIN
+                .arg(QString(", wait=%1").arg(waitOk ? "OK" : "FAIL"))
+#else
+                .arg(QString())
+#endif
+                );
         emitLog(LogDir::WARN, txCmd, txLen,
-                QString("write: %1/%2 bytes, wait=%3")
+                QString("write: %1/%2 bytes%3")
                     .arg(written).arg(frame.size())
-                    .arg(waitOk ? "OK" : "FAIL"));
+#ifdef Q_OS_WIN
+                    .arg(QString(", wait=%1").arg(waitOk ? "OK" : "FAIL"))
+#else
+                    .arg(QString())
+#endif
+                    );
     } else {
         log(QString("  write OK: %1 bytes").arg(written));
     }
-
-    // in-flight 和 retry timer 已在 write 前设置，避免快速响应导致的时序竞态。
 }
 
 /**
@@ -1782,6 +1868,7 @@ void KeySerialClient::startRetryTimer(quint8 expectedAckCmd)
 {
     m_expectedAckCmd = expectedAckCmd;
     m_retryCount = 0;
+    m_retryTimerGeneration = m_inFlightGeneration;
     m_retryTimer->start(RETRY_TIMEOUT_MS);
 }
 
@@ -1796,6 +1883,7 @@ void KeySerialClient::stopRetryTimer()
     m_retryTimer->stop();
     m_retryCount = 0;
     m_expectedAckCmd = 0;
+    m_retryTimerGeneration = 0;
     m_lastSentFrame.clear();
 }
 
@@ -1812,6 +1900,7 @@ void KeySerialClient::clearInFlight()
     }
     m_inFlight = false;
     m_inFlightType = INFLIGHT_NONE;
+    m_expectedAckCmd = 0;
 }
 
 void KeySerialClient::sendFrameNoWait(const QByteArray &frame,
@@ -1829,13 +1918,24 @@ void KeySerialClient::sendFrameNoWait(const QByteArray &frame,
     logHex("SEN", frame);
     const qint64 written = m_serial->write(frame);
     const bool flushOk = m_serial->flush();
+ #ifdef Q_OS_WIN
     const bool waitOk = m_serial->waitForBytesWritten(200);
+#endif
     emitLog(LogDir::TX, cmd, lenField, summary, frame);
-    if (written != frame.size() || !waitOk) {
+    if (written != frame.size()
+#ifdef Q_OS_WIN
+            || !waitOk
+#endif
+            ) {
         emitLog(LogDir::WARN, cmd, lenField,
-                QString("immediate write: %1/%2 bytes, wait=%3")
+                QString("immediate write: %1/%2 bytes%3")
                     .arg(written).arg(frame.size())
-                    .arg(waitOk ? "OK" : "FAIL"),
+#ifdef Q_OS_WIN
+                    .arg(QString(", wait=%1").arg(waitOk ? "OK" : "FAIL"))
+#else
+                    .arg(QString())
+#endif
+                    ,
                 {}, true, true);
     }
     if (!flushOk) {
@@ -2280,6 +2380,13 @@ void KeySerialClient::onSerialError(int errorCode, const QString &errorMessage)
     }
 
     const QString err = errorMessage.isEmpty() ? m_serial->errorString() : errorMessage;
+    if (errorCode == static_cast<int>(QSerialPort::TimeoutError)) {
+        emitLog(LogDir::WARN, 0, 0,
+                QString("SerialError(%1): %2").arg(errorCode).arg(err),
+                {}, true, true);
+        return;
+    }
+
     emitLog(LogDir::ERROR, 0, 0,
             QString("SerialError(%1): %2").arg(errorCode).arg(err));
 
@@ -2337,7 +2444,7 @@ void KeySerialClient::onSerialError(int errorCode, const QString &errorMessage)
  */
 void KeySerialClient::onRetryTimeout()
 {
-    if (!m_inFlight) {
+    if (!m_inFlight || m_retryTimerGeneration != m_inFlightGeneration) {
         emitLog(LogDir::EVENT, 0, 0,
                 "Ignore stale retry timeout: no command in-flight",
                 {}, true, true);
@@ -2425,6 +2532,7 @@ void KeySerialClient::onRetryTimeout()
         }
         m_pendingAfterDelQuery = false;
         m_sessionReady = false;
+        noteProtocolFailure(QStringLiteral("%1 timeout").arg(cmdName));
         setProtocolHealthy(false, QStringLiteral("%1 timeout").arg(cmdName));
         m_qtaskRecoveryRound = 0;
         m_qtaskRecoveryTimer->stop();
@@ -2484,12 +2592,23 @@ void KeySerialClient::onRetryTimeout()
         logHex("SEN(retry)", m_lastSentFrame);
         qint64 written = m_serial->write(m_lastSentFrame);
         const bool flushOk = m_serial->flush();
+ #ifdef Q_OS_WIN
         const bool waitOk = m_serial->waitForBytesWritten(200);
-        if (written != m_lastSentFrame.size() || !waitOk) {
+#endif
+        if (written != m_lastSentFrame.size()
+#ifdef Q_OS_WIN
+                || !waitOk
+#endif
+                ) {
             emitLog(LogDir::WARN, m_expectedAckCmd, 0,
-                    QString("retry write: %1/%2 bytes, wait=%3")
+                    QString("retry write: %1/%2 bytes%3")
                         .arg(written).arg(m_lastSentFrame.size())
-                        .arg(waitOk ? "OK" : "FAIL"));
+#ifdef Q_OS_WIN
+                        .arg(QString(", wait=%1").arg(waitOk ? "OK" : "FAIL"))
+#else
+                        .arg(QString())
+#endif
+                        );
         }
         if (!flushOk) {
             emitLog(LogDir::WARN, m_expectedAckCmd, 0,

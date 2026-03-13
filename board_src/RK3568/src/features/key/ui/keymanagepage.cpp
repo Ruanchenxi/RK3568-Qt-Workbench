@@ -16,10 +16,13 @@
 #include <QClipboard>
 #include <QDateTime>
 #include <QFileDialog>
+#include <QHideEvent>
 #include <QHeaderView>
 #include <QPalette>
+#include <QShowEvent>
 #include <QStringList>
 #include <QTableWidgetItem>
+#include <QTimer>
 
 #include "core/ConfigManager.h"
 #include "platform/logging/LogService.h"
@@ -57,8 +60,16 @@ KeyManagePage::KeyManagePage(QWidget *parent)
     , m_controller(new KeyManageController(nullptr, nullptr, this))
     , m_expertMode(false)
     , m_showHex(true)
+    , m_uiFlushTimer(new QTimer(this))
+    , m_pendingSystemTicketRefresh(false)
+    , m_pendingKeyTaskRefresh(false)
+    , m_pendingHttpClientRefresh(false)
+    , m_pendingHttpServerRefresh(false)
+    , m_pageVisible(false)
 {
     ui->setupUi(this);
+    m_uiFlushTimer->setSingleShot(true);
+    m_uiFlushTimer->setInterval(120);
     initUi();
     initConnections();
     initController();
@@ -70,6 +81,19 @@ KeyManagePage::KeyManagePage(QWidget *parent)
 KeyManagePage::~KeyManagePage()
 {
     delete ui;
+}
+
+void KeyManagePage::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    m_pageVisible = true;
+    scheduleUiFlush();
+}
+
+void KeyManagePage::hideEvent(QHideEvent *event)
+{
+    QWidget::hideEvent(event);
+    m_pageVisible = false;
 }
 
 // ====================================================================
@@ -208,6 +232,8 @@ void KeyManagePage::initUi()
     ui->lblCommParams->setText(QStringLiteral("串口: -- OFF"));
     ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#EF6C00'>未连接</font>"));
     ui->lblKeyPosition->setText(QStringLiteral("在位: <font color='#EF6C00'>未插</font>"));
+    ui->httpClientLogText->document()->setMaximumBlockCount(1500);
+    ui->httpServerLogText->document()->setMaximumBlockCount(1500);
 }
 
 void KeyManagePage::initConnections()
@@ -243,6 +269,7 @@ void KeyManagePage::initConnections()
 
     connect(ui->btnClearHttpClient, &QPushButton::clicked, this, &KeyManagePage::onClearHttpClient);
     connect(ui->btnClearHttpServer, &QPushButton::clicked, this, &KeyManagePage::onClearHttpServer);
+    connect(m_uiFlushTimer, &QTimer::timeout, this, &KeyManagePage::flushPendingUiRefreshes);
 }
 
 void KeyManagePage::initController()
@@ -294,8 +321,9 @@ void KeyManagePage::onTabChanged(int index)
     ui->tabSerial->setChecked(index == 1);
     ui->tabHttpClient->setChecked(index == 2);
     ui->tabHttpServer->setChecked(index == 3);
-    if (index == 0 || index == 2 || index == 3)
-        refreshSystemTicketViews();
+    if (index == 0 || index == 1 || index == 2 || index == 3) {
+        scheduleUiFlush();
+    }
 }
 
 // ====================================================================
@@ -458,7 +486,9 @@ void KeyManagePage::onSessionSnapshotChanged(const KeySessionSnapshot &snapshot)
 void KeyManagePage::onTasksUpdated(const QList<KeyTaskDto> &tasks)
 {
     ui->lblTaskInfo->setText(QStringLiteral("任务数: %1").arg(tasks.size()));
-    populateKeyTicketTable(tasks);
+    m_latestKeyTasks = tasks;
+    m_pendingKeyTaskRefresh = true;
+    scheduleUiFlush();
 }
 
 void KeyManagePage::onAckReceived(quint8 ackedCmd)
@@ -491,22 +521,29 @@ void KeyManagePage::onControllerStatusMessage(const QString &what)
 
 void KeyManagePage::onLogRowAppended(const LogItem &item)
 {
-    appendSerialLogRow(item);
+    m_pendingSerialLogs.append(item);
+    scheduleUiFlush();
 }
 
 void KeyManagePage::onLogTableRefreshRequested()
 {
-    refreshSerialLogTable();
+    m_pendingSerialLogs.clear();
+    if (m_pageVisible && isSerialTabVisible()) {
+        refreshSerialLogTable();
+    }
 }
 
 void KeyManagePage::onLogsCleared()
 {
+    m_pendingSerialLogs.clear();
     ui->serialLogTable->setRowCount(0);
 }
 
 void KeyManagePage::onSystemTicketsUpdated(const QList<SystemTicketDto> &tickets)
 {
-    populateSystemTicketTable(tickets);
+    Q_UNUSED(tickets);
+    m_pendingSystemTicketRefresh = true;
+    scheduleUiFlush();
 }
 
 void KeyManagePage::onSelectedSystemTicketChanged(const SystemTicketDto &ticket)
@@ -516,12 +553,16 @@ void KeyManagePage::onSelectedSystemTicketChanged(const SystemTicketDto &ticket)
 
 void KeyManagePage::onHttpServerLogAppended(const QString &text)
 {
-    ui->httpServerLogText->append(text);
+    Q_UNUSED(text);
+    m_pendingHttpServerRefresh = true;
+    scheduleUiFlush();
 }
 
 void KeyManagePage::onHttpClientLogAppended(const QString &text)
 {
-    ui->httpClientLogText->append(text);
+    Q_UNUSED(text);
+    m_pendingHttpClientRefresh = true;
+    scheduleUiFlush();
 }
 
 // ====================================================================
@@ -531,12 +572,14 @@ void KeyManagePage::onHttpClientLogAppended(const QString &text)
 void KeyManagePage::onClearHttpClient()
 {
     m_controller->onClearHttpClientLogsClicked();
+    m_pendingHttpClientRefresh = false;
     ui->httpClientLogText->clear();
 }
 
 void KeyManagePage::onClearHttpServer()
 {
     m_controller->onClearHttpServerLogsClicked();
+    m_pendingHttpServerRefresh = false;
     ui->httpServerLogText->clear();
 }
 
@@ -602,12 +645,12 @@ void KeyManagePage::appendSerialLogRow(const LogItem &item)
     } else {
         t->setRowHeight(row, t->verticalHeader()->defaultSectionSize());
     }
-    t->scrollToBottom();
 }
 
 void KeyManagePage::refreshSerialLogTable()
 {
     QTableWidget *t = ui->serialLogTable;
+    t->setUpdatesEnabled(false);
     t->setRowCount(0);
 
     const QList<LogItem> visible = m_controller->visibleLogs();
@@ -617,6 +660,8 @@ void KeyManagePage::refreshSerialLogTable()
     if (m_showHex && !t->isColumnHidden(6)) {
         t->resizeRowsToContents();
     }
+    t->setUpdatesEnabled(true);
+    t->scrollToBottom();
 }
 
 QColor KeyManagePage::dirColor(LogDir dir) const
@@ -723,6 +768,11 @@ void KeyManagePage::updateSelectedSystemTicketCard(const SystemTicketDto &ticket
     if (ticket.returnState == QLatin1String("return-requesting-log")
             || ticket.returnState == QLatin1String("return-uploading")) {
         stateColor = "#1565C0";
+    } else if (ticket.returnState == QLatin1String("return-upload-success")
+               || ticket.returnState == QLatin1String("return-delete-pending")) {
+        stateColor = "#EF6C00";
+    } else if (ticket.returnState == QLatin1String("return-delete-success")) {
+        stateColor = "#2E7D32";
     } else if (ticket.returnState == QLatin1String("return-success")) {
         stateColor = "#2E7D32";
     } else if (ticket.returnState == QLatin1String("return-failed")) {
@@ -754,7 +804,10 @@ void KeyManagePage::updateSelectedSystemTicketCard(const SystemTicketDto &ticket
     const bool canManualReturn = ticket.transferState == QLatin1String("success")
             && ticket.returnState != QLatin1String("return-success")
             && ticket.returnState != QLatin1String("return-requesting-log")
-            && ticket.returnState != QLatin1String("return-uploading");
+            && ticket.returnState != QLatin1String("return-uploading")
+            && ticket.returnState != QLatin1String("return-upload-success")
+            && ticket.returnState != QLatin1String("return-delete-pending")
+            && ticket.returnState != QLatin1String("return-delete-success");
     ui->btnReturnTicket->setEnabled(canManualReturn);
 
     if (ticket.returnState == QLatin1String("return-failed")) {
@@ -762,6 +815,10 @@ void KeyManagePage::updateSelectedSystemTicketCard(const SystemTicketDto &ticket
     } else if (ticket.returnState == QLatin1String("return-requesting-log")
                || ticket.returnState == QLatin1String("return-uploading")) {
         ui->lblReturnHint->setText(QStringLiteral("回传进行中，请等待当前回传链完成"));
+    } else if (ticket.returnState == QLatin1String("return-upload-success")
+               || ticket.returnState == QLatin1String("return-delete-pending")
+               || ticket.returnState == QLatin1String("return-delete-success")) {
+        ui->lblReturnHint->setText(QStringLiteral("该任务已进入回传成功后的清理阶段，不再允许重复手动回传"));
     } else if (canManualReturn) {
         ui->lblReturnHint->setText(QStringLiteral("该任务允许手动回传；若自动链未触发，可先读取钥匙票列表再执行"));
     } else {
@@ -801,9 +858,92 @@ void KeyManagePage::refreshSystemTicketViews()
     ui->httpServerLogText->setPlainText(m_controller->httpServerLogText());
 }
 
+void KeyManagePage::scheduleUiFlush()
+{
+    if (!m_pageVisible) {
+        return;
+    }
+
+    if (!m_uiFlushTimer->isActive()) {
+        m_uiFlushTimer->start();
+    }
+}
+
+void KeyManagePage::flushPendingUiRefreshes()
+{
+    if (!m_pageVisible) {
+        return;
+    }
+
+    if (m_pendingSystemTicketRefresh && ui->contentStack->currentIndex() != 1) {
+        populateSystemTicketTable(m_controller->systemTickets());
+        if (ui->systemTicketTable->currentRow() >= 0) {
+            m_controller->onSystemTicketSelected(ui->systemTicketTable->currentRow());
+        }
+        m_pendingSystemTicketRefresh = false;
+    }
+
+    if (m_pendingKeyTaskRefresh && ui->contentStack->currentIndex() == 0) {
+        populateKeyTicketTable(m_latestKeyTasks);
+        m_pendingKeyTaskRefresh = false;
+    }
+
+    if (m_pendingHttpClientRefresh && isHttpClientTabVisible()) {
+        ui->httpClientLogText->setPlainText(m_controller->httpClientLogText());
+        m_pendingHttpClientRefresh = false;
+    }
+
+    if (m_pendingHttpServerRefresh && isHttpServerTabVisible()) {
+        ui->httpServerLogText->setPlainText(m_controller->httpServerLogText());
+        m_pendingHttpServerRefresh = false;
+    }
+
+    flushPendingSerialLogs();
+}
+
+void KeyManagePage::flushPendingSerialLogs()
+{
+    if (!m_pageVisible || !isSerialTabVisible() || m_pendingSerialLogs.isEmpty()) {
+        return;
+    }
+
+    QTableWidget *table = ui->serialLogTable;
+    table->setUpdatesEnabled(false);
+    const QList<LogItem> pending = m_pendingSerialLogs;
+    m_pendingSerialLogs.clear();
+    for (const LogItem &item : pending) {
+        appendSerialLogRow(item);
+    }
+    if (m_showHex && !table->isColumnHidden(6)) {
+        table->resizeRowsToContents();
+    }
+    table->setUpdatesEnabled(true);
+    table->scrollToBottom();
+}
+
+bool KeyManagePage::isSerialTabVisible() const
+{
+    return ui->contentStack->currentIndex() == 1;
+}
+
+bool KeyManagePage::isHttpClientTabVisible() const
+{
+    return ui->contentStack->currentIndex() == 2;
+}
+
+bool KeyManagePage::isHttpServerTabVisible() const
+{
+    return ui->contentStack->currentIndex() == 3;
+}
+
 void KeyManagePage::updateCommIndicators(const KeySessionSnapshot &snapshot)
 {
     refreshCommSeatLabel();
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const bool recentBusinessSuccess = snapshot.lastBusinessSuccessMs > 0
+            && (nowMs - snapshot.lastBusinessSuccessMs) <= 5000;
+    const bool recentFailureNewer = snapshot.lastProtocolFailureMs > 0
+            && (snapshot.lastProtocolFailureMs >= snapshot.lastBusinessSuccessMs);
 
     if (!snapshot.connected) {
         ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#C62828'>断开</font>"));
@@ -836,7 +976,7 @@ void KeyManagePage::updateCommIndicators(const KeySessionSnapshot &snapshot)
     }
 
     if (!snapshot.sessionReady) {
-        if (snapshot.protocolConfirmedOnce) {
+        if (snapshot.protocolConfirmedOnce || snapshot.recoveryWindowActive) {
             ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#EF6C00'>恢复中</font>"));
             ui->lblCommStatus->setToolTip(QStringLiteral("此前已确认过业务通讯，当前正在重新握手恢复"));
         } else {
@@ -847,8 +987,15 @@ void KeyManagePage::updateCommIndicators(const KeySessionSnapshot &snapshot)
         return;
     }
 
-    if (!snapshot.protocolHealthy) {
-        if (snapshot.protocolConfirmedOnce) {
+    if (recentBusinessSuccess) {
+        ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#2E7D32'>钥匙已就绪</font>"));
+        ui->lblKeyPosition->setText(QStringLiteral("在位: <font color='#2E7D32'>已插（可通讯）</font>"));
+        ui->lblCommStatus->setToolTip(QStringLiteral("最近已收到一次真实业务成功响应，可执行传票/回传等操作"));
+        return;
+    }
+
+    if (!snapshot.protocolHealthy || snapshot.recoveryWindowActive || recentFailureNewer) {
+        if (snapshot.protocolConfirmedOnce || recentFailureNewer) {
             ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#EF6C00'>恢复中</font>"));
             ui->lblCommStatus->setToolTip(QStringLiteral("此前已确认过业务通讯，但近期出现超时/接触波动，系统正在自动恢复"));
         } else {
@@ -917,6 +1064,12 @@ QString KeyManagePage::ticketStateText(const QString &state)
         return QStringLiteral("钥匙已完成，正在读取回传日志");
     if (state == QLatin1String("return-uploading"))
         return QStringLiteral("日志已读取，正在回传到服务端");
+    if (state == QLatin1String("return-upload-success"))
+        return QStringLiteral("已上传回服务端");
+    if (state == QLatin1String("return-delete-pending"))
+        return QStringLiteral("服务端已收，正在清理钥匙任务");
+    if (state == QLatin1String("return-delete-success"))
+        return QStringLiteral("已完成回传并清理钥匙任务");
     if (state == QLatin1String("return-success"))
         return QStringLiteral("已回传到系统，并准备清理钥匙任务");
     if (state == QLatin1String("return-failed"))
@@ -943,6 +1096,15 @@ QString KeyManagePage::ticketStateDescription(const SystemTicketDto &ticket)
     }
     if (ticket.returnState == QLatin1String("return-uploading")) {
         return QStringLiteral("主程序已读取钥匙日志，正在回传到服务端");
+    }
+    if (ticket.returnState == QLatin1String("return-upload-success")) {
+        return QStringLiteral("主程序已完成服务端上传，准备继续清理钥匙任务");
+    }
+    if (ticket.returnState == QLatin1String("return-delete-pending")) {
+        return QStringLiteral("服务端已确认回传，主程序正在继续清理钥匙中的已完成任务");
+    }
+    if (ticket.returnState == QLatin1String("return-delete-success")) {
+        return QStringLiteral("主程序已完成回传上传，并已清理钥匙中的已完成任务");
     }
     if (ticket.returnState == QLatin1String("return-success")) {
         return QStringLiteral("主程序已完成回传上传，钥匙任务将进入清理流程");

@@ -44,6 +44,8 @@ signals:
     void uploadFailed(const QString &taskId, const QString &reason);
 
 private:
+    int uploadTimeoutMs() const;
+    bool isSuccessfulResponse(const QByteArray &responseBody, QString *reason) const;
     QString nowText() const;
     QString prettyJson(const QByteArray &body) const;
 

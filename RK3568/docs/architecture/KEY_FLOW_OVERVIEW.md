@@ -2,7 +2,7 @@
 
 Status: Active  
 Owner: 项目维护者  
-Last Updated: 2026-03-11  
+Last Updated: 2026-03-13  
 适用范围：说明当前钥匙链路、工作台 JSON 输入链、系统票链、传票发送链、回传链。  
 不适用范围：不替代逐字节协议文档。  
 
@@ -161,5 +161,8 @@ KeyManagePage(点击“初始化”/“下载 RFID”)
 1. `idle`
 2. `return-requesting-log`
 3. `return-uploading`
-4. `return-success`
-5. `return-failed`
+4. `return-upload-success`
+5. `return-delete-pending`
+6. `return-delete-success`
+7. `return-success`（兼容旧状态，逐步退出）
+8. `return-failed`

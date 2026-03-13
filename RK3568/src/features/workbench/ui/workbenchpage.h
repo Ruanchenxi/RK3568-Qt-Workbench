@@ -42,7 +42,9 @@ private:
     Ui::WorkbenchPage *ui;
     QWebEngineView *m_webView; // WebEngine 视图
     WorkbenchController *m_controller;
+    bool m_webViewInitialized;
 
+    void ensureWebViewInitialized();
     void initWebView();   // 初始化 WebView
     void loadWorkbench(); // 加载工作台网页（带 token，通过中转页面）
 };

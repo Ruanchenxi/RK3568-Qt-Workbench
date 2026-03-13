@@ -205,6 +205,9 @@ public:
     bool isSessionReady() const { return m_sessionReady; }
     bool isProtocolHealthy() const { return m_protocolHealthy; }
     bool hasProtocolConfirmedOnce() const { return m_protocolConfirmedOnce; }
+    qint64 lastBusinessSuccessMs() const { return m_lastBusinessSuccessMs; }
+    qint64 lastProtocolFailureMs() const { return m_lastProtocolFailureMs; }
+    bool recoveryWindowActive() const { return m_recoveryWindowActive; }
 
     /**
      * @brief 设置当前操作ID（由 UI 层在用户点击按钮时调用）
@@ -248,6 +251,8 @@ signals:
     void keyPlacedChanged(bool placed);
     /// 钥匙稳定状态变化（true=稳定可操作，false=不稳定/未在位）
     void keyStableChanged(bool stable);
+    /// 会话健康相关标志发生变化（用于顶部通讯状态刷新）
+    void stateFlagsChanged();
     /// Q_TASK 响应解析完成，携带最新任务列表
     void tasksUpdated(const QList<KeyTaskInfo> &tasks);
     /// 收到 ACK 帧，ackedCmd 为被确认的命令码
@@ -285,6 +290,7 @@ private:
     // --- 发送与重试机制 ---
     void sendFrame(const QByteArray &frame, quint8 expectedAckCmd,
                    quint8 inFlightType);                      ///< 发送帧并启动重试定时器
+    void beginInFlightContext(quint8 inFlightType, quint8 expectedAckCmd);
     void startRetryTimer(quint8 expectedAckCmd);              ///< 启动重试定时器
     void stopRetryTimer();                                    ///< 停止重试定时器并清理
     void clearInFlight();                                     ///< 清除 inFlight 状态
@@ -309,6 +315,9 @@ private:
                            const QByteArray &payload,
                            const QString &label);            ///< 启动 INIT/RFID 数据发送
     void setProtocolHealthy(bool healthy, const QString &reason = QString()); ///< 设置通讯健康状态
+    void noteBusinessSuccess(const QString &reason);
+    void noteProtocolFailure(const QString &reason);
+    void armTaskLogWaitTimeout(quint32 generation);
     void sendTaskLogAck(quint16 frameSeq);                   ///< 确认一帧回传日志
     bool parseAndEmitTaskLogPayload(const QByteArray &payload,
                                     quint16 totalFrames,
@@ -353,6 +362,9 @@ private:
     QByteArray     m_lastSentFrame;    ///< 最后发送的帧（用于重试时重发）
     quint8         m_expectedAckCmd;   ///< 当前期望的 ACK 命令码
     int            m_retryCount;       ///< 当前已重试次数（0~MAX_RETRIES）
+    quint32        m_inFlightGeneration; ///< 当前在途命令的代次
+    quint32        m_retryTimerGeneration; ///< 当前重试定时器绑定的代次
+    quint32        m_taskLogWaitGeneration; ///< 当前任务日志等待绑定的代次
 
     // 状态机
     bool           m_inFlight;             ///< true=有命令正在等待响应，禁止发送新命令
@@ -363,6 +375,9 @@ private:
     bool           m_sessionReady;         ///< 会话就绪标志（收到 SET_COM ACK 后置 true）
     bool           m_protocolHealthy;      ///< 最近是否收到一次可证明业务通讯通畅的有效响应
     bool           m_protocolConfirmedOnce;///< 当前这次插钥匙会话中，是否至少确认过一次真实业务通讯
+    qint64         m_lastBusinessSuccessMs; ///< 最近一次业务成功响应时间戳（ms since epoch）
+    qint64         m_lastProtocolFailureMs; ///< 最近一次协议失败时间戳（ms since epoch）
+    bool           m_recoveryWindowActive;  ///< 最近是否处于恢复窗口内
 
     // 钥匙稳定性检测
     QElapsedTimer  m_keyPlacedElapsed;     ///< 钥匙放上时刻计时器（用于稳定性窗口判定）
@@ -412,6 +427,7 @@ private:
     quint16            m_pendingTaskLogFrames; ///< I_TASK_LOG 返回的总帧数
     quint16            m_taskLogExpectedSeq;   ///< 下一帧期望的日志序号（从 0 开始）
     QByteArray         m_taskLogPayloadBuffer; ///< 已累计的回传日志 payload（去掉每帧 seq）
+    QByteArray         m_expectedTaskIdForResponse; ///< 当前业务链期望的任务ID（用于回传上下文）
 };
 
 #endif // KEYSERIALCLIENT_H

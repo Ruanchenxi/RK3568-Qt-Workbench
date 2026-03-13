@@ -2,7 +2,7 @@
 
 Status: Active  
 Owner: 项目维护者  
-Last Updated: 2026-03-11  
+Last Updated: 2026-03-13  
 适用范围：主程序各链路验证步骤。  
 不适用范围：不替代协议字段文档。  
 
@@ -19,6 +19,11 @@ Last Updated: 2026-03-11
    - 钥匙管理
    - 系统设置
    - 服务日志
+4. Linux 板端启动时检查一次图形诊断日志：
+   - `QT_QPA_PLATFORM`
+   - `QT_XCB_GL_INTEGRATION`
+   - `QTWEBENGINE_CHROMIUM_FLAGS`
+   - `AA_UseOpenGLES`
 
 ## 2. 钥匙旧链路零回归
 
@@ -130,7 +135,8 @@ Last Updated: 2026-03-11
    - 若 `status=0x02`，自动进入回传链
    - 若 `status=0x00/0x01`，提示 `任务未全部完成，暂不回传，请完成全部步骤后再放回钥匙`
    - 未完成场景下不回传、不 DEL
-   - 若 HTTP 回传成功，但后续 `Q_TASK` 仍发现该已完成任务存在，则应自动继续 `DEL` 清理
+   - 若 HTTP 回传成功，但后续 `Q_TASK` 仍发现该已完成任务存在，则应进入 `return-delete-pending`，并自动继续 `DEL` 清理
+   - 只有 `Q_TASK` 明确确认任务已不存在时，才进入 `return-delete-success`
 
 ## 9. 初始化 / 下载 RFID 手工链验证
 
@@ -145,3 +151,69 @@ Last Updated: 2026-03-11
    - 再出现 `DN_RFID(0x1A)` 串口发送
    - 收到 `ACK(5A 1A 00 00)`
 5. 接入 `INIT / 下载 RFID` 后，再做一次“什么都不点”的自动回传零回归，确认不会自动插入这两条手工链。  
+
+## 10. 板端减负验证
+
+1. 启动后不进入工作台页时，不应立即创建 `QWebEngineView`。  
+2. 串口日志高速追加时，`串口报文` 页应以合批方式刷新，不再逐条滚动到底部。  
+3. 隐藏 `HTTP客户端/HTTP服务端` 或 `服务日志` 页时，不应继续高频重绘文本控件。  
+4. 板端回传日志验证时，重点检查：
+   - `Ignore stale retry timeout`
+   - `I_TASK_LOG resp ignored: no active task log request`
+   - `UP_TASK_LOG taskId mismatch with pending request`
+   - `return-delete-pending`
+   - `return-delete-success`
+
+## 11. RK3588 板端联调判读补充（2026-03-13）
+
+### 11.1 当前可接受现象（不应单独判故障）
+
+1. 应用启动日志出现：
+   - `RK3568_LINUX_GL_MODE= auto`
+   - `AA_UseOpenGLES= false`
+   这表示当前采用保守图形策略，不再默认强制 `xcb_egl + GLES`。
+2. 启动后在**钥匙尚未放上**前出现：
+   - `SET_COM ACK without KEY_EVT, schedule Q_TASK probe`
+   - `Startup Q_TASK probe timeout, key remains not-present`
+   这是当前 startup probe 的正常分支，不属于故障。
+3. 在差底座场景下，回传前的补 `SET_COM` 偶发出现：
+   - `Retry 1/3 for SET_COM`
+   随后若仍能继续进入：
+   - `I_TASK_LOG`
+   - `UP_TASK_LOG`
+   - `DEL`
+   则当前应先视为“链路偏慢但可恢复”，不要单凭这一条就判失败。
+4. 拔钥匙后出现：
+   - `协议通讯降级: key removed`
+   当前应视为设备态退回，不等于业务链异常。
+
+### 11.2 当前应判为故障/待修的现象
+
+1. 板端再次出现图形启动失败：
+   - `Cannot find EGLConfig`
+   - `Unable to find an X11 visual which matches EGL config`
+2. 已收到 `I_TASK_LOG resp` 并已发送 `ACK(5A 05 00 00)` 后，又出现：
+   - `UP_TASK_LOG timeout after ACK`
+3. HTTP 已成功，但系统票长期停在：
+   - `return-delete-pending`
+   且后续没有进入：
+   - `return-delete-success`
+4. `DEL ACK` 已到，但后续 `Q_TASK` 仍长期读到相同 `status=0x02` 任务，且系统没有继续自动清理。
+5. 已出现合法业务响应（如 `Q_TASK/I_TASK_LOG/UP_TASK_LOG/DEL`），却仍被旧 timeout 或旧回包重新打回不可用状态。
+
+### 11.3 当前推荐的板端连续验证顺序
+
+1. 连续做 3~5 轮：
+   - 单步任务传票
+   - 拔钥匙
+   - 放回
+   - 自动回传
+   - `DEL`
+   - `Q_TASK(count=0)`
+2. 再做 1~2 轮多步任务，确认不只是单步样本稳定。
+3. 再做送电任务，确认不是只在停电任务上收口。
+4. 每轮重点记录：
+   - 是否出现 `UP_TASK_LOG timeout after ACK`
+   - 是否出现 `return-delete-pending` 卡住
+   - `SET_COM` 是否经常需要 retry 后才 ACK
+   - 顶部通讯状态是否与真实业务状态一致

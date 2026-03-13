@@ -14,6 +14,7 @@
 #include <QByteArray>
 #include <QVariantMap>
 #include <QString>
+#include <QtGlobal>
 
 #include "features/key/protocol/LogItem.h"
 #include "shared/contracts/TicketTransferRequest.h"
@@ -45,6 +46,9 @@ struct KeySessionSnapshot
     bool sessionReady = false;
     bool protocolHealthy = false;
     bool protocolConfirmedOnce = false;
+    qint64 lastBusinessSuccessMs = 0;
+    qint64 lastProtocolFailureMs = 0;
+    bool recoveryWindowActive = false;
     QString portName;
     QString verifiedPortName;  ///< 已验证的端口名（收到合法协议帧后锁定），空=未验证
 };
