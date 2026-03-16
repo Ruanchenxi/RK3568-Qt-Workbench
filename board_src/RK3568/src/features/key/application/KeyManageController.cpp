@@ -837,6 +837,16 @@ void KeyManageController::tryStartTicketReturn(const QString &taskId, bool autom
         return;
     }
 
+    QString blockingTaskId;
+    if (hasBlockingIncompleteKeyTask(m_lastKeyTasks, &blockingTaskId, taskIdRaw)) {
+        const QString message = blockingTaskId.isEmpty()
+                ? QStringLiteral("钥匙中仍有未完成任务，必须全部任务完成后才允许回传")
+                : QStringLiteral("钥匙中任务 %1 尚未完成，必须全部任务完成后才允许回传")
+                      .arg(blockingTaskId);
+        emit statusMessage(message);
+        return;
+    }
+
     m_activeReturnTaskId = taskId;
     m_activeReturnTaskIdRaw = taskIdRaw;
     m_pendingReturnHandshakeTaskId = taskId;
@@ -858,6 +868,16 @@ void KeyManageController::tryAutoReturnCompletedTicket(const QList<KeyTaskDto> &
         return;
     }
     if (!m_ticketReturnClient->isConfigured()) {
+        return;
+    }
+
+    QString blockingTaskId;
+    if (hasBlockingIncompleteKeyTask(tasks, &blockingTaskId)) {
+        const QString message = blockingTaskId.isEmpty()
+                ? QStringLiteral("钥匙中仍有未完成任务，暂不回传，请全部任务完成后再放回钥匙")
+                : QStringLiteral("钥匙中任务 %1 尚未完成，暂不回传，请全部任务完成后再放回钥匙")
+                      .arg(blockingTaskId);
+        emit statusMessage(message);
         return;
     }
 
@@ -887,32 +907,29 @@ void KeyManageController::tryAutoReturnCompletedTicket(const QList<KeyTaskDto> &
         tryStartTicketReturn(taskId, true);
         return;
     }
+}
 
+bool KeyManageController::hasBlockingIncompleteKeyTask(const QList<KeyTaskDto> &tasks,
+                                                       QString *blockingTaskId,
+                                                       const QByteArray &excludeTaskIdRaw) const
+{
     for (const KeyTaskDto &task : tasks) {
-        if (task.status != 0x00 && task.status != 0x01) {
+        if (!excludeTaskIdRaw.isEmpty() && task.taskId == excludeTaskIdRaw) {
             continue;
         }
-
-        const QString taskId = taskIdFromRaw(task.taskId);
-        const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
-        if (!ticket.valid) {
+        if (task.status == 0x02) {
             continue;
         }
-        if (ticket.transferState != QLatin1String("success")) {
-            continue;
+        if (blockingTaskId) {
+            *blockingTaskId = taskIdFromRaw(task.taskId);
         }
-        if (ticket.returnState == QLatin1String("return-success")
-                || ticket.returnState == QLatin1String("return-upload-success")
-                || ticket.returnState == QLatin1String("return-delete-pending")
-                || ticket.returnState == QLatin1String("return-delete-success")
-                || ticket.returnState == QLatin1String("return-uploading")
-                || ticket.returnState == QLatin1String("return-requesting-log")) {
-            continue;
-        }
-
-        emit statusMessage(QStringLiteral("任务未全部完成，暂不回传，请完成全部步骤后再放回钥匙"));
-        return;
+        return true;
     }
+
+    if (blockingTaskId) {
+        blockingTaskId->clear();
+    }
+    return false;
 }
 
 QByteArray KeyManageController::findKeyTaskIdRaw(const QString &taskId, quint8 *status) const

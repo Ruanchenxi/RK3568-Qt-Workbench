@@ -12,6 +12,7 @@
 #define LOGINPAGE_H
 
 #include <QWidget>
+#include <QStringList>
 #include "features/auth/application/LoginController.h"
 
 // 前向声明UI类
@@ -43,17 +44,23 @@ private slots:
     void onShowAccountLogin();
     void onShowDeviceLogin();
     void onLoginButtonClicked();
+    void onSelectAccountClicked();
 
     // 登录响应回调
     void onLoginSucceeded(const QString &username, const QString &roleName);
     void onLoginFailed(const QString &errorMessage);
     void onLoginStateChanged(bool inProgress);
+    void onAccountListReady(const QStringList &accounts);
+    void onAccountListFailed(const QString &errorMessage);
+    void onAccountListStateChanged(bool inProgress);
 
 private:
     void setLoginInProgress(bool inProgress);
+    void setAccountListLoading(bool inProgress);
 
     Ui::LoginPage *ui;
     bool m_loginInProgress;
+    bool m_accountListLoading;
     LoginController *m_controller;
 };
 

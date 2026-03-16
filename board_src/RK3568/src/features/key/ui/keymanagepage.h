@@ -105,6 +105,7 @@ private:
     bool isSerialTabVisible() const;
     bool isHttpClientTabVisible() const;
     bool isHttpServerTabVisible() const;
+    bool allKeyTasksCompleted() const;
     void updateCommIndicators(const KeySessionSnapshot &snapshot);
     void refreshCommSeatLabel();
     static bool shouldSuppressStatusBarMessage(const QString &message);

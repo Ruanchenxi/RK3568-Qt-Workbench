@@ -102,6 +102,9 @@ private:
     void clearActiveReturnContext(bool clearHandshakeOnly = false);
     void markReturnDeletePending(const QString &taskId, const QByteArray &taskIdRaw);
     void finalizePendingReturnDelete(const QList<KeyTaskDto> &tasks);
+    bool hasBlockingIncompleteKeyTask(const QList<KeyTaskDto> &tasks,
+                                      QString *blockingTaskId = nullptr,
+                                      const QByteArray &excludeTaskIdRaw = QByteArray()) const;
     QByteArray findKeyTaskIdRaw(const QString &taskId, quint8 *status = nullptr) const;
     static QString taskIdFromRaw(const QByteArray &taskIdRaw);
     int nextOpId();

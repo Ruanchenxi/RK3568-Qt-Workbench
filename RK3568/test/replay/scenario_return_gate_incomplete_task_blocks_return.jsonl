@@ -1,0 +1,11 @@
+# 多任务回传门禁场景
+# 目标：
+# 1. 验证 Q_TASK 返回两条任务时，若其中一条 status=0x02、另一条 status=0x01
+# 2. 主程序不会进入 I_TASK_LOG / HTTP / DEL 回传链
+# 3. 页面应提示“必须全部任务完成后才允许回传”同等语义
+{"op":"open","delayMs":0}
+{"op":"chunk","hex":"7E 6C FF 20 00 00 02 00 5A 0F A7 20","delayMs":100}
+{"op":"chunk","hex":"7E 6C FF 21 00 00 05 00 11 01 00 00 00 D1 62","delayMs":700}
+{"op":"chunk","hex":"7E 6C FF 22 00 00 02 00 5A 0F A7 20","delayMs":200}
+{"op":"chunk","hex":"7E 6C 01 23 FF 00 2A 00 04 02 01 A0 AE 45 93 F6 37 1C 00 00 00 00 00 00 00 00 02 00 FF FF 01 A0 EE 23 88 F6 37 1C 00 00 00 00 00 00 00 00 01 00 FF FF 87 FB","delayMs":1500}
+{"op":"timeout","delayMs":2000}

@@ -121,7 +121,7 @@ void KeyManagePage::initUi()
     ui->lblCommSeatNo->setText(QStringLiteral("当前配置座号: --"));
     ui->btnQueryTaskCount->setToolTip(QStringLiteral("发送一次 Q_TASK 诊断查询；与“读取钥匙票列表”使用同一协议命令"));
     ui->btnDeleteTicket->setToolTip(QStringLiteral("删除钥匙中已存在的票，请先读取钥匙票列表并选中。"));
-    ui->lblReturnHint->setText(QStringLiteral("回传在钥匙任务完成后自动触发；接口未配置时不会上传"));
+    ui->lblReturnHint->setText(QStringLiteral("回传在钥匙相关任务全部完成后自动触发；接口未配置时不会上传"));
 
     ui->serialLogTable->setSelectionMode(QAbstractItemView::SingleSelection);
     ui->serialLogTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -760,7 +760,7 @@ void KeyManagePage::updateSelectedSystemTicketCard(const SystemTicketDto &ticket
         ui->lblTicketReturnStatus->setText(QStringLiteral("传票状态: <font color='#C62828'>未选择系统票</font>"));
         ui->lblTicketPosition->setToolTip(QString());
         ui->btnReturnTicket->setEnabled(false);
-        ui->lblReturnHint->setText(QStringLiteral("回传在钥匙任务完成后自动触发；接口未配置时不会上传"));
+        ui->lblReturnHint->setText(QStringLiteral("回传在钥匙相关任务全部完成后自动触发；接口未配置时不会上传"));
         return;
     }
 
@@ -802,6 +802,7 @@ void KeyManagePage::updateSelectedSystemTicketCard(const SystemTicketDto &ticket
         QStringLiteral("传票状态: <font color='%1'>%2</font>").arg(stateColor, statusText));
 
     const bool canManualReturn = ticket.transferState == QLatin1String("success")
+            && allKeyTasksCompleted()
             && ticket.returnState != QLatin1String("return-success")
             && ticket.returnState != QLatin1String("return-requesting-log")
             && ticket.returnState != QLatin1String("return-uploading")
@@ -819,10 +820,12 @@ void KeyManagePage::updateSelectedSystemTicketCard(const SystemTicketDto &ticket
                || ticket.returnState == QLatin1String("return-delete-pending")
                || ticket.returnState == QLatin1String("return-delete-success")) {
         ui->lblReturnHint->setText(QStringLiteral("该任务已进入回传成功后的清理阶段，不再允许重复手动回传"));
+    } else if (ticket.transferState == QLatin1String("success") && !allKeyTasksCompleted()) {
+        ui->lblReturnHint->setText(QStringLiteral("当前钥匙中仍有未完成任务，必须全部任务完成后才允许手动或自动回传"));
     } else if (canManualReturn) {
         ui->lblReturnHint->setText(QStringLiteral("该任务允许手动回传；若自动链未触发，可先读取钥匙票列表再执行"));
     } else {
-        ui->lblReturnHint->setText(QStringLiteral("回传在钥匙任务完成后自动触发；接口未配置时不会上传"));
+        ui->lblReturnHint->setText(QStringLiteral("回传在钥匙相关任务全部完成后自动触发；接口未配置时不会上传"));
     }
 }
 
@@ -934,6 +937,20 @@ bool KeyManagePage::isHttpClientTabVisible() const
 bool KeyManagePage::isHttpServerTabVisible() const
 {
     return ui->contentStack->currentIndex() == 3;
+}
+
+bool KeyManagePage::allKeyTasksCompleted() const
+{
+    if (m_latestKeyTasks.isEmpty()) {
+        return false;
+    }
+
+    for (const KeyTaskDto &task : m_latestKeyTasks) {
+        if (task.status != 0x02) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void KeyManagePage::updateCommIndicators(const KeySessionSnapshot &snapshot)

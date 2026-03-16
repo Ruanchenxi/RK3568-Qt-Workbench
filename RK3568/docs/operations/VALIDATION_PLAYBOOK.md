@@ -2,7 +2,7 @@
 
 Status: Active  
 Owner: 项目维护者  
-Last Updated: 2026-03-13  
+Last Updated: 2026-03-16  
 适用范围：主程序各链路验证步骤。  
 不适用范围：不替代协议字段文档。  
 
@@ -24,6 +24,7 @@ Last Updated: 2026-03-13
    - `QT_XCB_GL_INTEGRATION`
    - `QTWEBENGINE_CHROMIUM_FLAGS`
    - `AA_UseOpenGLES`
+5. 若本轮改动已在 Qt Creator 中完成一次 `jom` 编译并成功链接，可将“Windows 本地编译通过”记为已完成；但 replay 仍需单独执行，不可用编译通过替代。
 
 ## 2. 钥匙旧链路零回归
 
@@ -124,6 +125,9 @@ Last Updated: 2026-03-13
    - `UP_TASK_LOG frame 2/2 buffered`
    - `ACK for UP_TASK_LOG frame 1`
    - `UP_TASK_LOG parsed: ... frames=2`
+4. 多任务回传门禁 replay：
+   - `test/replay/scenario_return_gate_incomplete_task_blocks_return.jsonl`
+   - 重点确认在“一条完成、一条未完成”时不会进入回传链
 
 ## 8. 回传自动触发验证
 
@@ -137,6 +141,16 @@ Last Updated: 2026-03-13
    - 未完成场景下不回传、不 DEL
    - 若 HTTP 回传成功，但后续 `Q_TASK` 仍发现该已完成任务存在，则应进入 `return-delete-pending`，并自动继续 `DEL` 清理
    - 只有 `Q_TASK` 明确确认任务已不存在时，才进入 `return-delete-success`
+4. 多任务场景新增门禁（2026-03-13 晚）：
+   - 自动回传和手工回传都必须等钥匙中的相关任务**全部完成**后才允许开始
+   - 若钥匙里仍有任意未完成任务，则当前应统一表现为：
+     - 不进入 `I_TASK_LOG`
+     - 不发起 HTTP 回传
+     - 不执行 `DEL`
+     - 手工 `回传` 按钮应禁用或提示不可回传
+     - 页面提示“暂不回传，请全部任务完成后再放回钥匙”
+   - 真机专项清单参考：
+     - `docs/operations/RETURN_GATE_COMPANY_CHECKLIST_2026-03-16.md`
 
 ## 9. 初始化 / 下载 RFID 手工链验证
 

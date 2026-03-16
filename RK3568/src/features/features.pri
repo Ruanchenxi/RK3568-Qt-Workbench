@@ -1,6 +1,7 @@
 # features module
 
 SOURCES += \
+    $$PWD/auth/ui/AccountSelectDialog.cpp \
     $$PWD/auth/ui/loginpage.cpp \
     $$PWD/auth/application/LoginController.cpp \
     $$PWD/auth/application/AuthFlowCoordinator.cpp \
@@ -32,6 +33,7 @@ SOURCES += \
     $$PWD/log/application/LogController.cpp
 
 HEADERS += \
+    $$PWD/auth/ui/AccountSelectDialog.h \
     $$PWD/auth/ui/loginpage.h \
     $$PWD/auth/application/LoginController.h \
     $$PWD/auth/application/AuthFlowCoordinator.h \

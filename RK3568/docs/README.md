@@ -2,7 +2,7 @@
 
 Status: Active  
 Owner: 项目维护者（单人开发）  
-Last Updated: 2026-03-12
+Last Updated: 2026-03-16
 
 本文件是 `docs/` 的总入口，目标是让“零历史新 Agent / 新同事”在 5 分钟内回答：
 
@@ -112,6 +112,7 @@ Last Updated: 2026-03-12
    - `STATUS_SNAPSHOT.md`：当前项目做到哪里。  
    - `CONFIG_REFERENCE.md`：关键配置项与默认值。  
    - `VALIDATION_PLAYBOOK.md`：主路径 / 传票 / 真机 / replay 验证清单。  
+   - `RETURN_GATE_COMPANY_CHECKLIST_2026-03-16.md`：回公司后验证“多任务全部完成门禁”和多任务自动回传收口的专项清单。  
    - `MIGRATION_EXECUTION_LOG.md`：当前移植进度、业务规则与下一步执行顺序。  
    - `NEXT_AGENT_BRIEF.md`：给无历史新 agent 的直接接手说明。  
    - `PRO_REVIEW_BRIEF_2026-03-12.md`：给 `pro` 做代码审查 / 业务逻辑 bug 排查 / RK3588 板端联调收口的集中简报。  

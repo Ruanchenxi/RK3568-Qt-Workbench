@@ -254,6 +254,10 @@ void ConfigManager::loadDefaults()
     {
         setValue("ticket/httpReturnUrl", "");
     }
+    if (!m_settings->contains("auth/accountListUrl"))
+    {
+        setValue("auth/accountListUrl", "");
+    }
     if (!m_settings->contains("ticket/debugFrameChunkSize"))
     {
         // 调试开关：0 表示使用协议正式默认分帧大小，不强制拆帧。
