@@ -6,6 +6,7 @@
  */
 
 #include "app/mainwindow.h"
+#include "app/InputMethodCoordinator.h"
 #include "ui_mainwindow.h"
 #include "features/auth/ui/loginpage.h"
 #include "features/workbench/ui/workbenchpage.h"
@@ -15,7 +16,11 @@
 #include "core/ConfigManager.h"
 #include "platform/logging/LogService.h"
 #include <QGuiApplication>
+#include <QComboBox>
 #include <QScreen>
+#include <QLineEdit>
+#include <QPlainTextEdit>
+#include <QTextEdit>
 
 /**
  * @brief 构造函数
@@ -30,6 +35,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
                                           m_keyManagePage(nullptr),
                                           m_systemPage(nullptr),
                                           m_logPage(nullptr),
+                                          m_inputMethodHost(nullptr),
                                           m_mainController(new MainWindowController(nullptr, this)),
                                           m_timeTimer(nullptr)
 {
@@ -61,6 +67,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
 
     // 创建登录页面并添加到QStackedWidget
     setupPages();
+    setupInputMethodHost();
     
     // 初始化各模块
     setupConnections(); // 连接信号槽
@@ -192,6 +199,8 @@ void MainWindow::setupConnections()
     connect(m_mainController, &MainWindowController::userStateChanged, this, [this](bool, const QString &, const QString &) {
         updateUserDisplay();
     });
+
+    ui->btnKeyboard->setAutoExclusive(false);
 }
 
 /**
@@ -206,6 +215,20 @@ void MainWindow::setupTimer()
 
     // 立即更新一次时间
     updateTime();
+}
+
+void MainWindow::setupInputMethodHost()
+{
+    m_inputMethodHost = InputMethodCoordinator::createEmbeddedHost(ui->contentStackedWidget);
+    if (!m_inputMethodHost)
+    {
+        return;
+    }
+}
+
+QWidget *MainWindow::currentPageWidget() const
+{
+    return ui->contentStackedWidget->currentWidget();
 }
 
 /**
@@ -234,6 +257,7 @@ void MainWindow::switchToPage(PageIndex page)
 
     ui->contentStackedWidget->setCurrentIndex(targetIndex);
     updateNavButtonState();
+    applyInputMethodPolicy(page);
 }
 
 /**
@@ -249,7 +273,6 @@ void MainWindow::updateNavButtonState()
     ui->btnKeys->setChecked(currentIndex == PAGE_KEYS);
     ui->btnSystem->setChecked(currentIndex == PAGE_SYSTEM);
     ui->btnService->setChecked(currentIndex == PAGE_LOG);
-    ui->btnKeyboard->setChecked(currentIndex == PAGE_KEYBOARD);
 }
 
 /**
@@ -286,6 +309,42 @@ void MainWindow::updateStatusBar()
     // 目前显示为正常状态
     ui->cardStatusLabel->setText("读卡器正常");
     ui->fingerStatusLabel->setText("指纹仪正常");
+}
+
+void MainWindow::applyInputMethodPolicy(PageIndex page)
+{
+    QString pageKey;
+    switch (page)
+    {
+    case PAGE_LOGIN:
+        pageKey = QStringLiteral("login");
+        break;
+    case PAGE_SYSTEM:
+        pageKey = QStringLiteral("system");
+        break;
+    case PAGE_WORKBENCH:
+        pageKey = QStringLiteral("workbench");
+        break;
+    case PAGE_KEYS:
+        pageKey = QStringLiteral("keys");
+        break;
+    case PAGE_LOG:
+        pageKey = QStringLiteral("log");
+        break;
+    case PAGE_KEYBOARD:
+        pageKey = QStringLiteral("keyboard");
+        break;
+    }
+
+    // 第一阶段采用显式按钮控制：
+    // 切页时统一收起键盘，避免页面切换造成残留和布局误判。
+    InputMethodCoordinator::hideInputMethod();
+    ui->btnKeyboard->setChecked(false);
+
+    if (!InputMethodCoordinator::pageAllowsVirtualKeyboard(pageKey))
+    {
+        return;
+    }
 }
 
 /**
@@ -356,7 +415,68 @@ void MainWindow::onBtnServiceClicked()
  */
 void MainWindow::onBtnKeyboardClicked()
 {
-    switchToPage(PAGE_KEYBOARD);
+    auto isSupportedEditor = [](QWidget *widget) -> bool
+    {
+        return qobject_cast<QLineEdit *>(widget)
+               || qobject_cast<QTextEdit *>(widget)
+               || qobject_cast<QPlainTextEdit *>(widget);
+    };
+
+    QString pageKey;
+    switch (ui->contentStackedWidget->currentIndex())
+    {
+    case PAGE_LOGIN:
+        pageKey = QStringLiteral("login");
+        break;
+    case PAGE_SYSTEM:
+        pageKey = QStringLiteral("system");
+        break;
+    case PAGE_WORKBENCH:
+        pageKey = QStringLiteral("workbench");
+        break;
+    case PAGE_KEYS:
+        pageKey = QStringLiteral("keys");
+        break;
+    case PAGE_LOG:
+        pageKey = QStringLiteral("log");
+        break;
+    default:
+        pageKey = QStringLiteral("unknown");
+        break;
+    }
+
+    qInfo() << "[MainWindow] virtual keyboard button clicked, pageKey=" << pageKey;
+
+    if (!InputMethodCoordinator::pageAllowsVirtualKeyboard(pageKey))
+    {
+        QMessageBox::information(this, "虚拟键盘",
+                                 "当前页面暂不支持软键盘，请在登录页或系统设置页中使用。");
+        ui->btnKeyboard->setChecked(false);
+        return;
+    }
+
+    QWidget *page = currentPageWidget();
+    QWidget *focused = page ? page->focusWidget() : nullptr;
+
+    const bool visible = InputMethodCoordinator::isInputMethodVisible();
+    qInfo() << "[MainWindow] virtual keyboard visible before toggle =" << visible;
+    if (visible)
+    {
+        InputMethodCoordinator::hideInputMethod();
+        ui->btnKeyboard->setChecked(false);
+        return;
+    }
+
+    if (!isSupportedEditor(focused))
+    {
+        QMessageBox::information(this, "虚拟键盘",
+                                 "请先点击一个可编辑输入框，再打开虚拟键盘。");
+        ui->btnKeyboard->setChecked(false);
+        return;
+    }
+
+    InputMethodCoordinator::showInputMethod();
+    ui->btnKeyboard->setChecked(true);
 }
 
 /**

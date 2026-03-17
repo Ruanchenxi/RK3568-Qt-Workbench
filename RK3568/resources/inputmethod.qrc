@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/qtvk">
+        <file alias="InputPanelHost.qml">../src/app/qml/InputPanelHost.qml</file>
+    </qresource>
+</RCC>

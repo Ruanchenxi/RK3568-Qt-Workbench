@@ -258,6 +258,28 @@ void ConfigManager::loadDefaults()
     {
         setValue("auth/accountListUrl", "");
     }
+    if (!m_settings->contains("input/softKeyboardProvider"))
+    {
+        setValue("input/softKeyboardProvider", "qtvirtualkeyboard");
+    }
+    if (!m_settings->contains("input/softKeyboardEnabledPages"))
+    {
+        setValue("input/softKeyboardEnabledPages", "login,system");
+    }
+    if (!m_settings->contains("input/qtVirtualKeyboardStyle"))
+    {
+        setValue("input/qtVirtualKeyboardStyle", "");
+    }
+    if (!m_settings->contains("input/softKeyboardProviderMigratedV1EnableQtVk"))
+    {
+        const QString currentProvider =
+            m_settings->value("input/softKeyboardProvider").toString().trimmed().toLower();
+        if (currentProvider.isEmpty() || currentProvider == "none")
+        {
+            setValue("input/softKeyboardProvider", "qtvirtualkeyboard");
+        }
+        setValue("input/softKeyboardProviderMigratedV1EnableQtVk", true);
+    }
     if (!m_settings->contains("ticket/debugFrameChunkSize"))
     {
         // 调试开关：0 表示使用协议正式默认分帧大小，不强制拆帧。

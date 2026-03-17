@@ -2,7 +2,7 @@
 
 Status: Active  
 Owner: 项目维护者  
-Last Updated: 2026-03-10  
+Last Updated: 2026-03-16  
 适用范围：说明当前项目关键配置项、默认值及其影响范围。  
 不适用范围：不描述完整协议细节。  
 
@@ -14,6 +14,7 @@ Last Updated: 2026-03-10
 | `system/apiUrl` | `http://localhost/api/kids-outage/third-api` | 认证/业务相关 API 基地址 |
 | `system/stationId` | `001` | 当前站号；影响 `DEL`，后续可作为传票站号默认值 |
 | `system/tenantCode` | `000000` | 租户编码 |
+| `auth/accountListUrl` | 空字符串 | 登录页“选择账号”接口完整地址；为空时回退到 `system/apiUrl + /list-account` |
 
 ## 2. 串口
 

@@ -2,7 +2,7 @@
 
 Status: Active  
 Owner: 项目维护者  
-Last Updated: 2026-03-13  
+Last Updated: 2026-03-16  
 适用范围：说明当前钥匙链路、工作台 JSON 输入链、系统票链、传票发送链、回传链。  
 不适用范围：不替代逐字节协议文档。  
 
@@ -169,3 +169,53 @@ KeyManagePage(点击“初始化”/“下载 RFID”)
 6. `return-delete-success`
 7. `return-success`（兼容旧状态，逐步退出）
 8. `return-failed`
+
+## 9. 登录与本地输入辅助链
+
+### 9.1 登录账号选择链
+
+```text
+LoginPage(点击“选择”)
+  -> LoginController::requestAccountList()
+    -> AuthService::fetchAccountList(...)
+      -> HTTP /list-account
+        -> AccountSelectDialog
+          -> 回填 usernameEdit
+```
+
+要点：
+
+1. 当前账号列表接口属于登录辅助链，不改变原有手输登录主链。  
+2. 账号仍可手工输入；`选择账号` 只是辅助输入入口。  
+3. `list-account` 默认回退到：
+   - `system/apiUrl + /list-account`
+4. 若现场接口单独部署，可通过配置项：
+   - `auth/accountListUrl`
+   指向完整地址。  
+
+### 9.2 虚拟键盘边界（已拍板，待实现）
+
+```text
+本地 Qt Widgets 输入页
+  -> 应用内虚拟键盘
+    -> 页面避让 / 当前输入框保持可见
+
+工作台 QWebEngine 黑盒页
+  -> 不接入应用内虚拟键盘
+  -> 不因键盘弹出而缩放或改布局
+```
+
+要点：
+
+1. 当前正式产品方向是：
+   - 应用内置虚拟键盘
+   - 主窗口底部停靠式非模态面板
+   - 页面自动让位，不做整页缩放
+2. 工作台页是浏览器黑盒区：
+   - 不接管键盘输入
+   - 不做外层缩放/避让联动
+3. 键盘采用字段分型，不只做一种传统全键盘：
+   - 账号：优先选择
+   - 数字字段：数字键盘
+   - URL/IP/接口地址：URL 专用键盘
+   - 密码/普通文本：全键盘
