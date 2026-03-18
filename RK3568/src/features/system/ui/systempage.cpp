@@ -23,6 +23,7 @@
 #include <QFrame>
 #include <QTableWidget>
 #include <QHeaderView>
+#include <QScrollBar>
 
 // 全局样式常量
 namespace SystemPageStyle
@@ -54,6 +55,11 @@ SystemPage::SystemPage(QWidget *parent) : QWidget(parent),
                                           ui(new Ui::SystemPage),
                                           m_controller(new SystemController(this)),
                                           m_userIdentityWidget(nullptr),
+                                          m_keyboardTarget(nullptr),
+                                          m_keyboardVisible(false),
+                                          m_keyboardHeight(0),
+                                          m_lastKeyboardScrollValue(0),
+                                          m_keyboardAdjustedScroll(false),
                                           m_userTable(nullptr),
                                           m_collectCardBtn(nullptr),
                                           m_collectFingerprintBtn(nullptr)
@@ -115,6 +121,40 @@ void SystemPage::applyGlobalStyles()
             combo->setStyleSheet(SystemPageStyle::COMBO_STYLE);
             combo->setMinimumWidth(140);
         }
+    }
+
+    // 串口参数收口为工业设备配置风格：
+    // 串口仅允许自动识别 + 下拉选择，不允许任意手输；
+    // 波特率/数据位作为固定协议参数展示，不再让用户编辑。
+    if (ui->keySerialCombo)
+    {
+        ui->keySerialCombo->setEditable(false);
+    }
+    if (ui->cardSerialCombo)
+    {
+        ui->cardSerialCombo->setEditable(false);
+    }
+    if (ui->field7Label)
+    {
+        ui->field7Label->setText(QStringLiteral("固定波特率"));
+    }
+    if (ui->field8Label)
+    {
+        ui->field8Label->setText(QStringLiteral("固定数据位"));
+    }
+    if (ui->baudRateCombo)
+    {
+        ui->baudRateCombo->clear();
+        ui->baudRateCombo->addItem(QStringLiteral("115200（固定）"));
+        ui->baudRateCombo->setCurrentIndex(0);
+        ui->baudRateCombo->setEnabled(false);
+    }
+    if (ui->dataBitsCombo)
+    {
+        ui->dataBitsCombo->clear();
+        ui->dataBitsCombo->addItem(QStringLiteral("8（固定）"));
+        ui->dataBitsCombo->setCurrentIndex(0);
+        ui->dataBitsCombo->setEnabled(false);
     }
 }
 
@@ -379,7 +419,8 @@ void SystemPage::loadSettings()
     ui->stationIdEdit->setText(dto.stationId);
     ui->tenantCodeEdit->setText(dto.tenantCode);
 
-    // 刷新可用串口列表，并允许手动输入（适配 COM10 未插 / Linux /dev/ttyS4 等场景）
+    // 刷新可用串口列表。
+    // 当前串口项按“自动识别 + 下拉选择”处理，不再允许自由手输。
     const QStringList availPorts = m_controller->availableSerialPorts();
     const QString savedPorts[2] = { dto.keySerialPort, dto.cardSerialPort };
     QComboBox *combos[2] = { ui->keySerialCombo, ui->cardSerialCombo };
@@ -387,8 +428,7 @@ void SystemPage::loadSettings()
         QComboBox *combo = combos[i];
         const QString &saved = savedPorts[i];
 
-        combo->setEditable(true);           // 允许手动输入任意端口名
-        combo->setInsertPolicy(QComboBox::NoInsert);  // 手动输入不自动入库
+        combo->setEditable(false);
         combo->clear();
         combo->addItem("");                 // 空选项 = 未配置
         for (const QString &portName : availPorts) {
@@ -398,11 +438,17 @@ void SystemPage::loadSettings()
         if (!saved.isEmpty() && combo->findText(saved) < 0) {
             combo->addItem(saved);
         }
-        combo->setCurrentText(saved);
+        if (!saved.isEmpty())
+        {
+            combo->setCurrentText(saved);
+        }
+        else if (combo->count() > 1)
+        {
+            // 第一阶段以“自动识别 / 自动回填”优先：
+            // 如果已有可枚举端口，则默认选第一个有效项，减少手工配置。
+            combo->setCurrentIndex(1);
+        }
     }
-
-    ui->baudRateCombo->setCurrentText(QString::number(dto.baudRate));
-    ui->dataBitsCombo->setCurrentText(QString::number(dto.dataBits));
 }
 
 /**
@@ -421,4 +467,87 @@ void SystemPage::saveSettings()
     dto.dataBits = ui->dataBitsCombo->currentText().toInt();
 
     m_controller->saveSettings(dto);
+}
+
+void SystemPage::onKeyboardVisibilityChanged(bool visible, int height)
+{
+    m_keyboardVisible = visible;
+    m_keyboardHeight = height;
+
+    if (!ui->formScrollArea || !ui->tabBasic->isChecked())
+    {
+        return;
+    }
+
+    if (!visible)
+    {
+        m_keyboardAdjustedScroll = false;
+        return;
+    }
+
+    ensureKeyboardTargetVisible();
+}
+
+void SystemPage::ensureKeyboardTargetVisible()
+{
+    if (!ui->formScrollArea || !ui->tabBasic->isChecked() || !m_keyboardTarget)
+    {
+        return;
+    }
+
+    QWidget *scrollContent = ui->formScrollArea->widget();
+    if (!scrollContent || !scrollContent->isAncestorOf(m_keyboardTarget))
+    {
+        return;
+    }
+
+    const QPoint posInScroll = m_keyboardTarget->mapTo(scrollContent, QPoint(0, 0));
+    QScrollBar *scrollBar = ui->formScrollArea->verticalScrollBar();
+    const int currentValue = scrollBar->value();
+    const int fieldTop = posInScroll.y();
+    const int fieldBottom = fieldTop + m_keyboardTarget->height();
+    const int viewportHeight = ui->formScrollArea->viewport()->height();
+    const int topPadding = 24;
+    const int bottomPadding = 24;
+    const int safeTop = currentValue + topPadding;
+    const int safeBottom = currentValue + viewportHeight - m_keyboardHeight - bottomPadding;
+
+    int nextValue = currentValue;
+    if (fieldBottom > safeBottom)
+    {
+        nextValue += (fieldBottom - safeBottom);
+    }
+    else if (fieldTop < safeTop)
+    {
+        nextValue -= (safeTop - fieldTop);
+    }
+
+    nextValue = qMax(scrollBar->minimum(), qMin(nextValue, scrollBar->maximum()));
+    if (nextValue != currentValue)
+    {
+        if (!m_keyboardAdjustedScroll)
+        {
+            m_lastKeyboardScrollValue = currentValue;
+            m_keyboardAdjustedScroll = true;
+        }
+        scrollBar->setValue(nextValue);
+    }
+}
+
+void SystemPage::onKeyboardTargetChanged(QWidget *target)
+{
+    QLineEdit *lineEdit = qobject_cast<QLineEdit *>(target);
+    if (lineEdit && this->isAncestorOf(lineEdit))
+    {
+        m_keyboardTarget = lineEdit;
+    }
+    else
+    {
+        m_keyboardTarget.clear();
+    }
+
+    if (m_keyboardVisible && m_keyboardHeight > 0)
+    {
+        ensureKeyboardTargetVisible();
+    }
 }

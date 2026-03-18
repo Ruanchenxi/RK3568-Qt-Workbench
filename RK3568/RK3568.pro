@@ -63,4 +63,5 @@ INCLUDEPATH += src \
                src/features/key/protocol
 
 RESOURCES += \
-        resources/inputmethod.qrc
+        resources/inputmethod.qrc \
+        resources/keyboard_dict.qrc

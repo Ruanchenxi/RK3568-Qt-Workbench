@@ -1,5 +1,7 @@
 # features module
 
+include($$PWD/keyboard/third_party/pinyin/pinyin.pri)
+
 SOURCES += \
     $$PWD/auth/ui/AccountSelectDialog.cpp \
     $$PWD/auth/ui/loginpage.cpp \
@@ -13,6 +15,19 @@ SOURCES += \
     $$PWD/auth/infra/device/FingerprintSource.cpp \
     $$PWD/workbench/ui/workbenchpage.cpp \
     $$PWD/workbench/application/WorkbenchController.cpp \
+    $$PWD/keyboard/application/KeyboardController.cpp \
+    $$PWD/keyboard/application/KeyboardModeResolver.cpp \
+    $$PWD/keyboard/application/KeyboardPagePolicy.cpp \
+    $$PWD/keyboard/application/KeyboardPinyinEngine.cpp \
+    $$PWD/keyboard/application/KeyboardSizingPolicy.cpp \
+    $$PWD/keyboard/application/KeyboardTargetAdapter.cpp \
+    $$PWD/keyboard/application/pinyindecoderservice.cpp \
+    $$PWD/keyboard/ui/KeyboardContainer.cpp \
+    $$PWD/keyboard/ui/CandidateBarWidget.cpp \
+    $$PWD/keyboard/ui/NormalKeyboard.cpp \
+    $$PWD/keyboard/ui/NumKeyboard.cpp \
+    $$PWD/keyboard/ui/SymbolKeyboard.cpp \
+    $$PWD/keyboard/ui/UrlKeyboard.cpp \
     $$PWD/key/ui/keymanagepage.cpp \
     $$PWD/key/application/KeySessionService.cpp \
     $$PWD/key/application/KeyManageController.cpp \
@@ -48,6 +63,20 @@ HEADERS += \
     $$PWD/auth/infra/device/FingerprintSource.h \
     $$PWD/workbench/ui/workbenchpage.h \
     $$PWD/workbench/application/WorkbenchController.h \
+    $$PWD/keyboard/application/KeyboardController.h \
+    $$PWD/keyboard/application/KeyboardModeResolver.h \
+    $$PWD/keyboard/application/KeyboardPinyinEngine.h \
+    $$PWD/keyboard/application/KeyboardPagePolicy.h \
+    $$PWD/keyboard/application/KeyboardSizingPolicy.h \
+    $$PWD/keyboard/application/KeyboardTargetAdapter.h \
+    $$PWD/keyboard/application/pinyindecoderservice_p.h \
+    $$PWD/keyboard/domain/KeyboardTypes.h \
+    $$PWD/keyboard/ui/KeyboardContainer.h \
+    $$PWD/keyboard/ui/CandidateBarWidget.h \
+    $$PWD/keyboard/ui/NormalKeyboard.h \
+    $$PWD/keyboard/ui/NumKeyboard.h \
+    $$PWD/keyboard/ui/SymbolKeyboard.h \
+    $$PWD/keyboard/ui/UrlKeyboard.h \
     $$PWD/key/ui/keymanagepage.h \
     $$PWD/key/application/KeySessionService.h \
     $$PWD/key/application/KeyManageController.h \

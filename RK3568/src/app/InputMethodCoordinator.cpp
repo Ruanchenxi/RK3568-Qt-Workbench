@@ -241,10 +241,10 @@ QString InputMethodCoordinator::resolveProviderName()
         const QString current =
             normalizedProviderName(settings.value(QStringLiteral("input/softKeyboardProvider"))
                                        .toString());
-        if (current.isEmpty() || current == QLatin1String("none"))
+        if (current.isEmpty() || current == QLatin1String("qtvirtualkeyboard"))
         {
             settings.setValue(QStringLiteral("input/softKeyboardProvider"),
-                              QStringLiteral("qtvirtualkeyboard"));
+                              QStringLiteral("none"));
         }
         settings.setValue(QStringLiteral("input/softKeyboardProviderMigratedV1EnableQtVk"),
                           true);
@@ -253,9 +253,9 @@ QString InputMethodCoordinator::resolveProviderName()
     return normalizedProviderName(
         settings.value(QStringLiteral("input/softKeyboardProvider"),
 #ifdef Q_OS_LINUX
-                          QStringLiteral("qtvirtualkeyboard")
+                          QStringLiteral("none")
 #else
-                          QStringLiteral("qtvirtualkeyboard")
+                          QStringLiteral("none")
 #endif
                           )
             .toString());

@@ -2,7 +2,7 @@
 
 Status: Active  
 Owner: 项目维护者（单人开发）  
-Last Updated: 2026-03-16
+Last Updated: 2026-03-17
 
 本文件是 `docs/` 的总入口，目标是让“零历史新 Agent / 新同事”在 5 分钟内回答：
 
@@ -62,19 +62,22 @@ Last Updated: 2026-03-16
 6. `architecture/TARGET_FOLDER_LAYOUT.md`  
 目的：理解长期目标结构与冻结决策。  
 
-7. `replay/REPLAY_SPEC.md`  
+7. `architecture/KEYBOARD_MODULE_ARCHITECTURE.md`
+目的：理解当前自定义键盘模块的分层、接入范围与后续扩展方式。
+
+8. `replay/REPLAY_SPEC.md`  
 目的：掌握无硬件回放验证方式。  
 
-8. `operations/STATUS_SNAPSHOT.md`  
+9. `operations/STATUS_SNAPSHOT.md`  
 目的：先知道当前做到哪里、哪些链路已经落地。  
 
-9. `operations/MIGRATION_EXECUTION_LOG.md`
+10. `operations/MIGRATION_EXECUTION_LOG.md`
 目的：理解当前迁移进度、已拍板规则、下一阶段重点。  
 
-10. `operations/VALIDATION_PLAYBOOK.md`  
+11. `operations/VALIDATION_PLAYBOOK.md`  
 目的：知道每次改动后该验证哪些功能。  
 
-11. `COMMENTING_GUIDE.md`  
+12. `COMMENTING_GUIDE.md`  
 目的：保证新增代码注释质量一致。  
 
 ## 3. 当前工程状态（2026-03-11）
@@ -83,7 +86,7 @@ Last Updated: 2026-03-16
 2. 传票状态：`工作台 JSON -> 本地 HTTP 接收 -> 系统票入池 -> 手动/自动传票` 主链已落地。  
 3. 回传状态：单帧回传主链已落地并通过本地程序真机零回归验证。  
 4. 初始化 / RFID：手工 `INIT(0x02)` 与手工 `DN_RFID(0x1A)` 已接入主程序，并通过真机 ACK 验证。  
-5. 当前重点：继续收送电样本、真实多帧回传真机样本，以及后续业务收口。  
+5. 当前重点：继续收送电样本、真实多帧回传真机样本，以及本地自定义键盘主线收口。  
 6. 构建体系：继续使用 `qmake + .pri`，暂不迁移 CMake。  
 7. 架构门禁：使用 `tools/arch_guard.ps1 -Phase 3`。  
 8. 串口体系：真机 `QtSerialTransport` 与回放 `ReplaySerialTransport` 可切换。  

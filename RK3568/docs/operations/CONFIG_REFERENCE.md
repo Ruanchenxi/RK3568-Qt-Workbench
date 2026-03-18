@@ -2,7 +2,7 @@
 
 Status: Active  
 Owner: 项目维护者  
-Last Updated: 2026-03-16  
+Last Updated: 2026-03-17  
 适用范围：说明当前项目关键配置项、默认值及其影响范围。  
 不适用范围：不描述完整协议细节。  
 
@@ -15,6 +15,25 @@ Last Updated: 2026-03-16
 | `system/stationId` | `001` | 当前站号；影响 `DEL`，后续可作为传票站号默认值 |
 | `system/tenantCode` | `000000` | 租户编码 |
 | `auth/accountListUrl` | 空字符串 | 登录页“选择账号”接口完整地址；为空时回退到 `system/apiUrl + /list-account` |
+
+## 1.1 键盘相关
+
+| Key | 默认值 | 说明 |
+|---|---|---|
+| `input/softKeyboardProvider` | `none` | 旧的官方输入法/官方键盘过渡路径 Provider。当前主线默认关闭，避免影响自定义 QWidget 键盘稳定性。 |
+| `input/softKeyboardEnabledPages` | `login,system` | 历史软键盘页面白名单配置，当前主要保留兼容和试验用途。 |
+| `input/qtVirtualKeyboardStyle` | 空字符串 | 仅在重新启用官方键盘路径时生效。当前自定义 QWidget 键盘主线不依赖此项。 |
+
+补充说明：
+
+1. 当前自定义 QWidget 键盘的页面级高度策略仍是代码内置策略，不走配置项：
+   - 登录页：`252`
+   - 系统设置页：`260`
+   - 其它默认：`256`
+2. 当前主线统一触发方式：
+   - 先点击可编辑输入框
+   - 再点击顶部 `虚拟键盘` 按钮
+3. 当前工作台页不纳入这条主线。
 
 ## 2. 串口
 

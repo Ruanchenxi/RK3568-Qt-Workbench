@@ -13,6 +13,7 @@
 #include "ui_loginpage.h"
 #include <QMessageBox>
 #include <QDebug>
+#include <QLayout>
 
 /**
  * @brief 构造函数
@@ -220,4 +221,10 @@ void LoginPage::setAccountListLoading(bool inProgress)
     {
         ui->selectAccountBtn->setText("选择");
     }
+}
+
+void LoginPage::onKeyboardVisibilityChanged(bool visible, int height)
+{
+    Q_UNUSED(visible);
+    Q_UNUSED(height);
 }

@@ -40,6 +40,9 @@ signals:
      */
     void loginSuccess(const QString &username, const QString &role);
 
+public slots:
+    void onKeyboardVisibilityChanged(bool visible, int height);
+
 private slots:
     void onShowAccountLogin();
     void onShowDeviceLogin();

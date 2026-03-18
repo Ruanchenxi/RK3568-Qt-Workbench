@@ -260,7 +260,7 @@ void ConfigManager::loadDefaults()
     }
     if (!m_settings->contains("input/softKeyboardProvider"))
     {
-        setValue("input/softKeyboardProvider", "qtvirtualkeyboard");
+        setValue("input/softKeyboardProvider", "none");
     }
     if (!m_settings->contains("input/softKeyboardEnabledPages"))
     {
@@ -274,9 +274,9 @@ void ConfigManager::loadDefaults()
     {
         const QString currentProvider =
             m_settings->value("input/softKeyboardProvider").toString().trimmed().toLower();
-        if (currentProvider.isEmpty() || currentProvider == "none")
+        if (currentProvider.isEmpty() || currentProvider == "qtvirtualkeyboard")
         {
-            setValue("input/softKeyboardProvider", "qtvirtualkeyboard");
+            setValue("input/softKeyboardProvider", "none");
         }
         setValue("input/softKeyboardProviderMigratedV1EnableQtVk", true);
     }

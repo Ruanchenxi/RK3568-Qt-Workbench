@@ -9,6 +9,10 @@
 #include "app/InputMethodCoordinator.h"
 #include "ui_mainwindow.h"
 #include "features/auth/ui/loginpage.h"
+#include "features/keyboard/application/KeyboardController.h"
+#include "features/keyboard/application/KeyboardPagePolicy.h"
+#include "features/keyboard/application/KeyboardSizingPolicy.h"
+#include "features/keyboard/ui/KeyboardContainer.h"
 #include "features/workbench/ui/workbenchpage.h"
 #include "features/key/ui/keymanagepage.h"
 #include "features/system/ui/systempage.h"
@@ -36,6 +40,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
                                           m_systemPage(nullptr),
                                           m_logPage(nullptr),
                                           m_inputMethodHost(nullptr),
+                                          m_keyboardContainer(nullptr),
+                                          m_keyboardController(nullptr),
                                           m_mainController(new MainWindowController(nullptr, this)),
                                           m_timeTimer(nullptr)
 {
@@ -68,6 +74,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
     // 创建登录页面并添加到QStackedWidget
     setupPages();
     setupInputMethodHost();
+    setupCustomKeyboard();
     
     // 初始化各模块
     setupConnections(); // 连接信号槽
@@ -224,6 +231,36 @@ void MainWindow::setupInputMethodHost()
     {
         return;
     }
+
+    m_inputMethodHost->hide();
+}
+
+void MainWindow::setupCustomKeyboard()
+{
+    m_keyboardContainer = new KeyboardContainer(ui->contentStackedWidget);
+    m_keyboardContainer->hide();
+    m_keyboardController = new KeyboardController(this);
+    m_keyboardController->attachContainer(m_keyboardContainer);
+    if (m_loginPage)
+    {
+        m_keyboardController->registerInputScope(m_loginPage);
+    }
+    if (m_systemPage)
+    {
+        m_keyboardController->registerInputScope(m_systemPage);
+    }
+    if (m_loginPage)
+    {
+        connect(m_keyboardController, &KeyboardController::visibilityChanged,
+                m_loginPage, &LoginPage::onKeyboardVisibilityChanged);
+    }
+    if (m_systemPage)
+    {
+        connect(m_keyboardController, &KeyboardController::visibilityChanged,
+                m_systemPage, &SystemPage::onKeyboardVisibilityChanged);
+        connect(m_keyboardController, &KeyboardController::targetChanged,
+                m_systemPage, &SystemPage::onKeyboardTargetChanged);
+    }
 }
 
 QWidget *MainWindow::currentPageWidget() const
@@ -339,6 +376,10 @@ void MainWindow::applyInputMethodPolicy(PageIndex page)
     // 第一阶段采用显式按钮控制：
     // 切页时统一收起键盘，避免页面切换造成残留和布局误判。
     InputMethodCoordinator::hideInputMethod();
+    if (m_keyboardController)
+    {
+        m_keyboardController->hide();
+    }
     ui->btnKeyboard->setChecked(false);
 
     if (!InputMethodCoordinator::pageAllowsVirtualKeyboard(pageKey))
@@ -415,13 +456,6 @@ void MainWindow::onBtnServiceClicked()
  */
 void MainWindow::onBtnKeyboardClicked()
 {
-    auto isSupportedEditor = [](QWidget *widget) -> bool
-    {
-        return qobject_cast<QLineEdit *>(widget)
-               || qobject_cast<QTextEdit *>(widget)
-               || qobject_cast<QPlainTextEdit *>(widget);
-    };
-
     QString pageKey;
     switch (ui->contentStackedWidget->currentIndex())
     {
@@ -447,27 +481,28 @@ void MainWindow::onBtnKeyboardClicked()
 
     qInfo() << "[MainWindow] virtual keyboard button clicked, pageKey=" << pageKey;
 
-    if (!InputMethodCoordinator::pageAllowsVirtualKeyboard(pageKey))
+    if (!KeyboardPagePolicy::supportsCustomKeyboard(pageKey))
     {
         QMessageBox::information(this, "虚拟键盘",
-                                 "当前页面暂不支持软键盘，请在登录页或系统设置页中使用。");
+                                 "当前阶段仅登录页和系统设置页接入自定义键盘。");
         ui->btnKeyboard->setChecked(false);
         return;
     }
 
     QWidget *page = currentPageWidget();
-    QWidget *focused = page ? page->focusWidget() : nullptr;
-
-    const bool visible = InputMethodCoordinator::isInputMethodVisible();
+    const bool visible = m_keyboardController && m_keyboardController->isVisible();
     qInfo() << "[MainWindow] virtual keyboard visible before toggle =" << visible;
     if (visible)
     {
-        InputMethodCoordinator::hideInputMethod();
+        if (m_keyboardController)
+        {
+            m_keyboardController->hide();
+        }
         ui->btnKeyboard->setChecked(false);
         return;
     }
 
-    if (!isSupportedEditor(focused))
+    if (!m_keyboardController || !m_keyboardController->hasTargetOnPage(page))
     {
         QMessageBox::information(this, "虚拟键盘",
                                  "请先点击一个可编辑输入框，再打开虚拟键盘。");
@@ -475,7 +510,11 @@ void MainWindow::onBtnKeyboardClicked()
         return;
     }
 
-    InputMethodCoordinator::showInputMethod();
+    if (m_keyboardController)
+    {
+        m_keyboardContainer->setKeyboardHeight(KeyboardSizingPolicy::keyboardHeightForPage(pageKey));
+        m_keyboardController->toggleOnPage(page);
+    }
     ui->btnKeyboard->setChecked(true);
 }
 

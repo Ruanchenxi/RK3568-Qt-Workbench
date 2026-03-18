@@ -244,6 +244,29 @@ Last Updated: 2026-03-16
      - 密码/普通文本用全键盘
 6. 当前这部分仍属于“方案已拍板、文档已补”，尚未正式并入主程序代码。
 
+## 4.4 2026-03-17 自定义键盘主线补充
+
+当前新增确认：
+
+1. 本地 Widgets 页自定义 QWidget 键盘主线已正式并入主程序。
+2. 键盘模块已按：
+   - `domain`
+   - `application`
+   - `ui`
+   分层落地在：
+   - `src/features/keyboard/`
+3. 第一阶段当前已支持：
+   - 登录页
+   - 系统设置页
+   - 普通 / 数字 / URL 键盘
+   - 中文候选最小闭环
+4. 旧 Qt Virtual Keyboard 过渡路径默认已切为：
+   - `input/softKeyboardProvider=none`
+5. 当前工作台页仍不纳入这条主线。
+6. 串口配置字段已收口：
+   - `keySerialCombo / cardSerialCombo` 下拉选择，不再自由手输
+   - `baudRate / dataBits` 固定展示，不再允许编辑
+
 ## 5. 建议新 agent 先读哪些文档
 
 按顺序：
