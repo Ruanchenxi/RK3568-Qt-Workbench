@@ -45,6 +45,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
                                           m_mainController(new MainWindowController(nullptr, this)),
                                           m_timeTimer(nullptr)
 {
+    constexpr int kDeviceWindowWidth = 1024;
+    constexpr int kDeviceWindowHeight = 768;
+
     // 初始化核心服务，服务单例（单例初始化）
     ConfigManager::instance();
     LogService::instance();
@@ -53,23 +56,20 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
 
     ui->setupUi(this); // ← 加载 .ui 文件，创建所有控件
 
-#ifdef Q_OS_LINUX
-    // Linux 板端/VNC 环境的可用画布可能小于 .ui 中固定的 1280x720。
-    // 这里覆盖主窗口硬编码最小尺寸，按当前屏幕可用区域自适应启动。
+    // 开发机与板端统一按设备逻辑分辨率启动，便于直接观察 4:3 工业屏布局。
     if (QScreen *screen = QGuiApplication::primaryScreen())
     {
         const QRect available = screen->availableGeometry();
-        const int width = qMin(1280, qMax(available.width(), 800));
-        const int height = qMin(720, qMax(available.height(), 480));
-        setMinimumSize(800, 480);
+        const int width = qMin(kDeviceWindowWidth, available.width());
+        const int height = qMin(kDeviceWindowHeight, available.height());
+        setMinimumSize(width, height);
         resize(width, height);
     }
     else
     {
-        setMinimumSize(800, 480);
-        resize(1024, 600);
+        setMinimumSize(kDeviceWindowWidth, kDeviceWindowHeight);
+        resize(kDeviceWindowWidth, kDeviceWindowHeight);
     }
-#endif
 
     // 创建登录页面并添加到QStackedWidget
     setupPages();

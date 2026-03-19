@@ -6,8 +6,13 @@
  */
 
 #include "app/mainwindow.h"
+#include "app/InputMethodCoordinator.h"
 #include "ui_mainwindow.h"
 #include "features/auth/ui/loginpage.h"
+#include "features/keyboard/application/KeyboardController.h"
+#include "features/keyboard/application/KeyboardPagePolicy.h"
+#include "features/keyboard/application/KeyboardSizingPolicy.h"
+#include "features/keyboard/ui/KeyboardContainer.h"
 #include "features/workbench/ui/workbenchpage.h"
 #include "features/key/ui/keymanagepage.h"
 #include "features/system/ui/systempage.h"
@@ -15,7 +20,11 @@
 #include "core/ConfigManager.h"
 #include "platform/logging/LogService.h"
 #include <QGuiApplication>
+#include <QComboBox>
 #include <QScreen>
+#include <QLineEdit>
+#include <QPlainTextEdit>
+#include <QTextEdit>
 
 /**
  * @brief 构造函数
@@ -30,6 +39,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
                                           m_keyManagePage(nullptr),
                                           m_systemPage(nullptr),
                                           m_logPage(nullptr),
+                                          m_inputMethodHost(nullptr),
+                                          m_keyboardContainer(nullptr),
+                                          m_keyboardController(nullptr),
                                           m_mainController(new MainWindowController(nullptr, this)),
                                           m_timeTimer(nullptr)
 {
@@ -61,6 +73,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
 
     // 创建登录页面并添加到QStackedWidget
     setupPages();
+    setupInputMethodHost();
+    setupCustomKeyboard();
     
     // 初始化各模块
     setupConnections(); // 连接信号槽
@@ -192,6 +206,8 @@ void MainWindow::setupConnections()
     connect(m_mainController, &MainWindowController::userStateChanged, this, [this](bool, const QString &, const QString &) {
         updateUserDisplay();
     });
+
+    ui->btnKeyboard->setAutoExclusive(false);
 }
 
 /**
@@ -206,6 +222,50 @@ void MainWindow::setupTimer()
 
     // 立即更新一次时间
     updateTime();
+}
+
+void MainWindow::setupInputMethodHost()
+{
+    m_inputMethodHost = InputMethodCoordinator::createEmbeddedHost(ui->contentStackedWidget);
+    if (!m_inputMethodHost)
+    {
+        return;
+    }
+
+    m_inputMethodHost->hide();
+}
+
+void MainWindow::setupCustomKeyboard()
+{
+    m_keyboardContainer = new KeyboardContainer(ui->contentStackedWidget);
+    m_keyboardContainer->hide();
+    m_keyboardController = new KeyboardController(this);
+    m_keyboardController->attachContainer(m_keyboardContainer);
+    if (m_loginPage)
+    {
+        m_keyboardController->registerInputScope(m_loginPage);
+    }
+    if (m_systemPage)
+    {
+        m_keyboardController->registerInputScope(m_systemPage);
+    }
+    if (m_loginPage)
+    {
+        connect(m_keyboardController, &KeyboardController::visibilityChanged,
+                m_loginPage, &LoginPage::onKeyboardVisibilityChanged);
+    }
+    if (m_systemPage)
+    {
+        connect(m_keyboardController, &KeyboardController::visibilityChanged,
+                m_systemPage, &SystemPage::onKeyboardVisibilityChanged);
+        connect(m_keyboardController, &KeyboardController::targetChanged,
+                m_systemPage, &SystemPage::onKeyboardTargetChanged);
+    }
+}
+
+QWidget *MainWindow::currentPageWidget() const
+{
+    return ui->contentStackedWidget->currentWidget();
 }
 
 /**
@@ -234,6 +294,7 @@ void MainWindow::switchToPage(PageIndex page)
 
     ui->contentStackedWidget->setCurrentIndex(targetIndex);
     updateNavButtonState();
+    applyInputMethodPolicy(page);
 }
 
 /**
@@ -249,7 +310,6 @@ void MainWindow::updateNavButtonState()
     ui->btnKeys->setChecked(currentIndex == PAGE_KEYS);
     ui->btnSystem->setChecked(currentIndex == PAGE_SYSTEM);
     ui->btnService->setChecked(currentIndex == PAGE_LOG);
-    ui->btnKeyboard->setChecked(currentIndex == PAGE_KEYBOARD);
 }
 
 /**
@@ -286,6 +346,46 @@ void MainWindow::updateStatusBar()
     // 目前显示为正常状态
     ui->cardStatusLabel->setText("读卡器正常");
     ui->fingerStatusLabel->setText("指纹仪正常");
+}
+
+void MainWindow::applyInputMethodPolicy(PageIndex page)
+{
+    QString pageKey;
+    switch (page)
+    {
+    case PAGE_LOGIN:
+        pageKey = QStringLiteral("login");
+        break;
+    case PAGE_SYSTEM:
+        pageKey = QStringLiteral("system");
+        break;
+    case PAGE_WORKBENCH:
+        pageKey = QStringLiteral("workbench");
+        break;
+    case PAGE_KEYS:
+        pageKey = QStringLiteral("keys");
+        break;
+    case PAGE_LOG:
+        pageKey = QStringLiteral("log");
+        break;
+    case PAGE_KEYBOARD:
+        pageKey = QStringLiteral("keyboard");
+        break;
+    }
+
+    // 第一阶段采用显式按钮控制：
+    // 切页时统一收起键盘，避免页面切换造成残留和布局误判。
+    InputMethodCoordinator::hideInputMethod();
+    if (m_keyboardController)
+    {
+        m_keyboardController->hide();
+    }
+    ui->btnKeyboard->setChecked(false);
+
+    if (!InputMethodCoordinator::pageAllowsVirtualKeyboard(pageKey))
+    {
+        return;
+    }
 }
 
 /**
@@ -356,7 +456,66 @@ void MainWindow::onBtnServiceClicked()
  */
 void MainWindow::onBtnKeyboardClicked()
 {
-    switchToPage(PAGE_KEYBOARD);
+    QString pageKey;
+    switch (ui->contentStackedWidget->currentIndex())
+    {
+    case PAGE_LOGIN:
+        pageKey = QStringLiteral("login");
+        break;
+    case PAGE_SYSTEM:
+        pageKey = QStringLiteral("system");
+        break;
+    case PAGE_WORKBENCH:
+        pageKey = QStringLiteral("workbench");
+        break;
+    case PAGE_KEYS:
+        pageKey = QStringLiteral("keys");
+        break;
+    case PAGE_LOG:
+        pageKey = QStringLiteral("log");
+        break;
+    default:
+        pageKey = QStringLiteral("unknown");
+        break;
+    }
+
+    qInfo() << "[MainWindow] virtual keyboard button clicked, pageKey=" << pageKey;
+
+    if (!KeyboardPagePolicy::supportsCustomKeyboard(pageKey))
+    {
+        QMessageBox::information(this, "虚拟键盘",
+                                 "当前阶段仅登录页和系统设置页接入自定义键盘。");
+        ui->btnKeyboard->setChecked(false);
+        return;
+    }
+
+    QWidget *page = currentPageWidget();
+    const bool visible = m_keyboardController && m_keyboardController->isVisible();
+    qInfo() << "[MainWindow] virtual keyboard visible before toggle =" << visible;
+    if (visible)
+    {
+        if (m_keyboardController)
+        {
+            m_keyboardController->hide();
+        }
+        ui->btnKeyboard->setChecked(false);
+        return;
+    }
+
+    if (!m_keyboardController || !m_keyboardController->hasTargetOnPage(page))
+    {
+        QMessageBox::information(this, "虚拟键盘",
+                                 "请先点击一个可编辑输入框，再打开虚拟键盘。");
+        ui->btnKeyboard->setChecked(false);
+        return;
+    }
+
+    if (m_keyboardController)
+    {
+        m_keyboardContainer->setKeyboardHeight(KeyboardSizingPolicy::keyboardHeightForPage(pageKey));
+        m_keyboardController->toggleOnPage(page);
+    }
+    ui->btnKeyboard->setChecked(true);
 }
 
 /**

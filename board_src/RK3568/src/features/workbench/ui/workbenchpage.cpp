@@ -4,6 +4,7 @@
  */
 
 #include "workbenchpage.h"
+#include "app/InputMethodCoordinator.h"
 #include "ui_workbenchpage.h"
 #include <QWebEnginePage>
 #include <QVBoxLayout>
@@ -88,6 +89,7 @@ WorkbenchPage::WorkbenchPage(QWidget *parent)
       m_webViewInitialized(false)
 {
     ui->setupUi(this);
+    disableSoftKeyboard();
 }
 
 /**
@@ -115,6 +117,7 @@ void WorkbenchPage::initWebView()
 {
     // 创建 QWebEngineView
     m_webView = new QWebEngineView(this);
+    InputMethodCoordinator::blockSoftKeyboardForWidgetTree(m_webView);
     m_webView->setPage(new DebugWorkbenchPage(m_webView));
 
     // 将 WebView 添加到容器中
@@ -164,6 +167,11 @@ void WorkbenchPage::initWebView()
                 qWarning() << "[WorkbenchPage] 网页加载失败, finalUrl=" << maskedUrl(m_webView->url());
             }
         } });
+}
+
+void WorkbenchPage::disableSoftKeyboard()
+{
+    InputMethodCoordinator::blockSoftKeyboardForWidgetTree(this);
 }
 
 /**

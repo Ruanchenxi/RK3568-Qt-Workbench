@@ -10,6 +10,7 @@
 #include <QStackedWidget>
 #include <QMessageBox>
 #include <QComboBox>
+#include <QPointer>
 #include <QSpinBox>
 #include <QCheckBox>
 #include <QTableWidget>
@@ -29,6 +30,10 @@ public:
     explicit SystemPage(QWidget *parent = nullptr);
     ~SystemPage();
 
+public slots:
+    void onKeyboardTargetChanged(QWidget *target);
+    void onKeyboardVisibilityChanged(bool visible, int height);
+
 private slots:
     void onTabBasicClicked();
     void onTabAdvancedClicked();
@@ -43,12 +48,18 @@ private:
     void saveSettings();
     void createUserIdentityContent(); // 创建用户身份采集页面
     void applyGlobalStyles();         // 应用全局样式
+    void ensureKeyboardTargetVisible();
     void updateTabStyles();           // 更新标签按钮样式
     void loadUserList();              // 加载用户列表
 
     Ui::SystemPage *ui;
     SystemController *m_controller;
     QWidget *m_userIdentityWidget; // 用户身份采集页面
+    QPointer<QLineEdit> m_keyboardTarget;
+    bool m_keyboardVisible;
+    int m_keyboardHeight;
+    int m_lastKeyboardScrollValue;
+    bool m_keyboardAdjustedScroll;
 
     // 用户身份采集控件
     QTableWidget *m_userTable;

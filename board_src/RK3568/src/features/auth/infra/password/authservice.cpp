@@ -7,6 +7,7 @@
 #include <QTimer>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QCryptographicHash>
 #include <QDebug>
 
@@ -16,7 +17,9 @@ AuthService::AuthService(QObject *parent)
     : QObject(parent),
       m_networkManager(new QNetworkAccessManager(this)),
       m_pendingLoginReply(nullptr),
-      m_loginInProgress(false)
+      m_loginInProgress(false),
+      m_pendingAccountListReply(nullptr),
+      m_accountListInProgress(false)
 {
 }
 
@@ -51,6 +54,23 @@ void AuthService::login(const QString &userName, const QString &password, const 
 
     // 发送登录请求
     sendLoginRequest(userName, encryptedPassword, tenantId);
+}
+
+void AuthService::fetchAccountList(const QString &tenantId)
+{
+    if (m_accountListInProgress)
+    {
+        emit accountListFailed("账号列表请求处理中，请稍候...");
+        return;
+    }
+
+    QString normalizedTenantId = tenantId.trimmed();
+    if (normalizedTenantId.isEmpty())
+    {
+        normalizedTenantId = QStringLiteral("000000");
+    }
+
+    sendAccountListRequest(normalizedTenantId);
 }
 
 void AuthService::saveToken(const QString &accessToken, const QString &refreshToken, const QJsonObject &userInfo)
@@ -114,10 +134,20 @@ void AuthService::clearToken()
         m_pendingLoginReply->abort();
     }
     m_pendingLoginReply = nullptr;
+    if (m_pendingAccountListReply && m_pendingAccountListReply->isRunning())
+    {
+        m_pendingAccountListReply->abort();
+    }
+    m_pendingAccountListReply = nullptr;
     if (m_loginInProgress)
     {
         m_loginInProgress = false;
         emit loginStateChanged(false);
+    }
+    if (m_accountListInProgress)
+    {
+        m_accountListInProgress = false;
+        emit accountListStateChanged(false);
     }
 
     m_accessToken.clear();
@@ -288,7 +318,100 @@ void AuthService::sendLoginRequest(const QString &userName, const QString &encry
         finishLoginRequest(reply);
 
         qDebug() << "[AuthService] 登录成功，用户:" << userName;
-        emit loginSuccess(data); });
+            emit loginSuccess(data); });
+}
+
+void AuthService::sendAccountListRequest(const QString &tenantId)
+{
+    QString accountListUrl = ConfigManager::instance()
+            ->value("auth/accountListUrl", "")
+            .toString()
+            .trimmed();
+
+    if (accountListUrl.isEmpty())
+    {
+        QString apiBaseUrl = ConfigManager::instance()->apiUrl().trimmed();
+        if (apiBaseUrl.isEmpty())
+        {
+            apiBaseUrl = "http://localhost/api/kids-outage/third-api";
+        }
+
+        while (apiBaseUrl.endsWith('/'))
+        {
+            apiBaseUrl.chop(1);
+        }
+        accountListUrl = apiBaseUrl + "/list-account";
+    }
+
+    qDebug() << "[AuthService] 账号列表请求 URL:" << accountListUrl
+             << "tenantId:" << tenantId;
+
+    QJsonObject requestBody;
+    requestBody["tenantId"] = tenantId;
+
+    const QByteArray requestData = QJsonDocument(requestBody).toJson(QJsonDocument::Compact);
+
+    QNetworkRequest request;
+    request.setUrl(QUrl(accountListUrl));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setRawHeader("Authorization", "Basic cmlkZXI6cmlkZXJfc2VjcmV0");
+
+    QNetworkReply *reply = m_networkManager->post(request, requestData);
+    m_pendingAccountListReply = reply;
+    m_accountListInProgress = true;
+    emit accountListStateChanged(true);
+
+    int timeoutMs = ConfigManager::instance()->connectionTimeout() * 1000;
+    if (timeoutMs < 3000)
+    {
+        timeoutMs = 3000;
+    }
+    QTimer::singleShot(timeoutMs, this, [this, reply]()
+                       {
+        if (m_pendingAccountListReply != reply || !reply->isRunning()) {
+            return;
+        }
+        reply->setProperty("timeoutAbort", true);
+        reply->abort(); });
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply]()
+            {
+        reply->deleteLater();
+
+        if (m_pendingAccountListReply != reply) {
+            return;
+        }
+
+        if (reply->error() != QNetworkReply::NoError) {
+            const bool timeoutAbort = reply->property("timeoutAbort").toBool();
+            const QString errorMsg = timeoutAbort
+                    ? QString("账号列表请求超时(%1秒)").arg(ConfigManager::instance()->connectionTimeout())
+                    : QString("网络错误: %1").arg(reply->errorString());
+            finishAccountListRequest(reply);
+            emit accountListFailed(errorMsg);
+            return;
+        }
+
+        const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (httpStatus < 200 || httpStatus >= 300) {
+            finishAccountListRequest(reply);
+            emit accountListFailed(QString("HTTP状态异常: %1").arg(httpStatus));
+            return;
+        }
+
+        QString errorMessage;
+        const QStringList accounts = parseAccountList(reply->readAll(), &errorMessage);
+        finishAccountListRequest(reply);
+
+        if (accounts.isEmpty()) {
+            if (errorMessage.trimmed().isEmpty()) {
+                errorMessage = QStringLiteral("未获取到可选账号");
+            }
+            emit accountListFailed(errorMessage);
+            return;
+        }
+
+        emit accountListReady(accounts); });
 }
 
 void AuthService::finishLoginRequest(QNetworkReply *reply)
@@ -302,4 +425,121 @@ void AuthService::finishLoginRequest(QNetworkReply *reply)
         m_loginInProgress = false;
         emit loginStateChanged(false);
     }
+}
+
+void AuthService::finishAccountListRequest(QNetworkReply *reply)
+{
+    if (m_pendingAccountListReply == reply)
+    {
+        m_pendingAccountListReply = nullptr;
+    }
+    if (m_accountListInProgress)
+    {
+        m_accountListInProgress = false;
+        emit accountListStateChanged(false);
+    }
+}
+
+QStringList AuthService::parseAccountList(const QByteArray &responseData, QString *errorMessage) const
+{
+    QJsonParseError parseError;
+    const QJsonDocument responseDoc = QJsonDocument::fromJson(responseData, &parseError);
+    if (responseDoc.isNull())
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("服务器响应格式错误: %1").arg(parseError.errorString());
+        }
+        return QStringList();
+    }
+
+    QJsonArray array;
+    if (responseDoc.isArray())
+    {
+        array = responseDoc.array();
+    }
+    else if (responseDoc.isObject())
+    {
+        const QJsonObject responseObj = responseDoc.object();
+        const int code = responseObj.value("code").toInt();
+        const bool success = responseObj.value("success").toBool() || code == 200 || code == 0;
+        if (!success)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = responseObj.value("msg").toString().trimmed();
+                if (errorMessage->isEmpty())
+                {
+                    *errorMessage = QStringLiteral("账号列表接口返回失败");
+                }
+            }
+            return QStringList();
+        }
+
+        if (responseObj.value("data").isArray())
+        {
+            array = responseObj.value("data").toArray();
+        }
+        else if (responseObj.value("data").isObject())
+        {
+            const QJsonObject dataObj = responseObj.value("data").toObject();
+            if (dataObj.value("list").isArray())
+            {
+                array = dataObj.value("list").toArray();
+            }
+            else if (dataObj.value("records").isArray())
+            {
+                array = dataObj.value("records").toArray();
+            }
+            else if (dataObj.value("rows").isArray())
+            {
+                array = dataObj.value("rows").toArray();
+            }
+            else if (dataObj.value("items").isArray())
+            {
+                array = dataObj.value("items").toArray();
+            }
+        }
+        else if (responseObj.value("list").isArray())
+        {
+            array = responseObj.value("list").toArray();
+        }
+    }
+
+    QStringList accounts;
+    for (const QJsonValue &value : array)
+    {
+        QString account;
+        if (value.isString())
+        {
+            account = value.toString().trimmed();
+        }
+        else if (value.isObject())
+        {
+            const QJsonObject obj = value.toObject();
+            const char *keys[] = {
+                "userName", "user_name", "username", "account",
+                "accountName", "loginName", "name", "userCode", "accountNo"
+            };
+            for (const char *key : keys)
+            {
+                account = obj.value(QLatin1String(key)).toString().trimmed();
+                if (!account.isEmpty())
+                {
+                    break;
+                }
+            }
+        }
+
+        if (!account.isEmpty() && !accounts.contains(account))
+        {
+            accounts.append(account);
+        }
+    }
+
+    if (accounts.isEmpty() && errorMessage)
+    {
+        *errorMessage = QStringLiteral("未获取到可选账号");
+    }
+    return accounts;
 }

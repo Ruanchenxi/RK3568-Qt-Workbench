@@ -9,9 +9,11 @@
  */
 
 #include "loginpage.h"
+#include "features/auth/ui/AccountSelectDialog.h"
 #include "ui_loginpage.h"
 #include <QMessageBox>
 #include <QDebug>
+#include <QLayout>
 
 /**
  * @brief 构造函数
@@ -20,6 +22,7 @@
 LoginPage::LoginPage(QWidget *parent) : QWidget(parent),
                                         ui(new Ui::LoginPage),
                                         m_loginInProgress(false),
+                                        m_accountListLoading(false),
                                         m_controller(new LoginController(nullptr, this))
 {
     ui->setupUi(this); // 加载 loginpage.ui 界面
@@ -40,6 +43,8 @@ LoginPage::LoginPage(QWidget *parent) : QWidget(parent),
     // "登录" 按钮 → 验证账号密码
     connect(ui->loginBtn, &QPushButton::clicked,
             this, &LoginPage::onLoginButtonClicked);
+    connect(ui->selectAccountBtn, &QPushButton::clicked,
+            this, &LoginPage::onSelectAccountClicked);
 
     // 连接 Controller 信号
     connect(m_controller, &LoginController::loginSucceeded,
@@ -48,8 +53,15 @@ LoginPage::LoginPage(QWidget *parent) : QWidget(parent),
             this, &LoginPage::onLoginFailed);
     connect(m_controller, &LoginController::loginStateChanged,
             this, &LoginPage::onLoginStateChanged);
+    connect(m_controller, &LoginController::accountListReady,
+            this, &LoginPage::onAccountListReady);
+    connect(m_controller, &LoginController::accountListFailed,
+            this, &LoginPage::onAccountListFailed);
+    connect(m_controller, &LoginController::accountListStateChanged,
+            this, &LoginPage::onAccountListStateChanged);
 
     setLoginInProgress(false);
+    setAccountListLoading(false);
 
     qDebug() << "[LoginPage] 登录页面初始化完成";
 }
@@ -87,7 +99,7 @@ void LoginPage::onShowDeviceLogin()
  */
 void LoginPage::onLoginButtonClicked()
 {
-    if (m_loginInProgress)
+    if (m_loginInProgress || m_accountListLoading)
     {
         return;
     }
@@ -107,6 +119,16 @@ void LoginPage::onLoginButtonClicked()
 
     // 调用控制器
     m_controller->login(username, password);
+}
+
+void LoginPage::onSelectAccountClicked()
+{
+    if (m_loginInProgress || m_accountListLoading)
+    {
+        return;
+    }
+
+    m_controller->requestAccountList();
 }
 
 /**
@@ -140,12 +162,39 @@ void LoginPage::onLoginStateChanged(bool inProgress)
     setLoginInProgress(inProgress);
 }
 
+void LoginPage::onAccountListReady(const QStringList &accounts)
+{
+    AccountSelectDialog dialog(accounts, ui->usernameEdit->text().trimmed(), this);
+    if (dialog.exec() == QDialog::Accepted)
+    {
+        const QString account = dialog.selectedAccount();
+        if (!account.isEmpty())
+        {
+            ui->usernameEdit->setText(account);
+            ui->passwordEdit->setFocus();
+        }
+    }
+}
+
+void LoginPage::onAccountListFailed(const QString &errorMessage)
+{
+    qDebug() << "[LoginPage] 获取账号列表失败:" << errorMessage;
+    QMessageBox::warning(this, "账号列表", errorMessage);
+}
+
+void LoginPage::onAccountListStateChanged(bool inProgress)
+{
+    setAccountListLoading(inProgress);
+}
+
 void LoginPage::setLoginInProgress(bool inProgress)
 {
     m_loginInProgress = inProgress;
-    ui->loginBtn->setEnabled(!inProgress);
-    ui->accountLoginBtn->setEnabled(!inProgress);
-    ui->backBtn->setEnabled(!inProgress);
+    const bool controlsEnabled = !m_loginInProgress && !m_accountListLoading;
+    ui->loginBtn->setEnabled(controlsEnabled);
+    ui->accountLoginBtn->setEnabled(controlsEnabled);
+    ui->backBtn->setEnabled(controlsEnabled);
+    ui->selectAccountBtn->setEnabled(controlsEnabled);
     if (inProgress)
     {
         ui->loginBtn->setText("登录中...");
@@ -154,4 +203,28 @@ void LoginPage::setLoginInProgress(bool inProgress)
     {
         ui->loginBtn->setText("登录");
     }
+}
+
+void LoginPage::setAccountListLoading(bool inProgress)
+{
+    m_accountListLoading = inProgress;
+    const bool controlsEnabled = !m_loginInProgress && !m_accountListLoading;
+    ui->loginBtn->setEnabled(controlsEnabled);
+    ui->accountLoginBtn->setEnabled(controlsEnabled);
+    ui->backBtn->setEnabled(controlsEnabled);
+    ui->selectAccountBtn->setEnabled(controlsEnabled);
+    if (inProgress)
+    {
+        ui->selectAccountBtn->setText("加载中...");
+    }
+    else
+    {
+        ui->selectAccountBtn->setText("选择");
+    }
+}
+
+void LoginPage::onKeyboardVisibilityChanged(bool visible, int height)
+{
+    Q_UNUSED(visible);
+    Q_UNUSED(height);
 }

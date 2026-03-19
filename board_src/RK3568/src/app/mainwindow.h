@@ -26,6 +26,9 @@ class WorkbenchPage;
 class KeyManagePage;
 class SystemPage;
 class LogPage;
+class KeyboardContainer;
+class KeyboardController;
+class QWidget;
 
 namespace Ui
 {
@@ -94,6 +97,9 @@ private:
     KeyManagePage *m_keyManagePage; ///< 钥匙管理页面
     SystemPage *m_systemPage;       ///< 系统设置页面
     LogPage *m_logPage;             ///< 服务日志页面
+    QWidget *m_inputMethodHost;     ///< 应用内输入法宿主
+    KeyboardContainer *m_keyboardContainer; ///< 自定义 QWidget 键盘
+    KeyboardController *m_keyboardController; ///< 键盘控制器
     MainWindowController *m_mainController; ///< 主窗口登录态控制器
 
     // ========== 状态变量 ==========
@@ -104,10 +110,14 @@ private:
     void setupPages();                       ///< 设置页面
     void setupConnections();                 ///< 设置信号槽连接
     void setupTimer();                       ///< 设置定时器
+    void setupInputMethodHost();             ///< 设置应用内键盘宿主
+    void setupCustomKeyboard();              ///< 设置自定义 QWidget 键盘
+    QWidget *currentPageWidget() const;      ///< 返回当前页面控件
     void switchToPage(PageIndex page);       ///< 切换页面
     void updateNavButtonState();             ///< 更新导航按钮状态
     void updateUserDisplay();                ///< 更新用户显示信息
     void updateStatusBar();                  ///< 更新状态栏
+    void applyInputMethodPolicy(PageIndex page); ///< 应用当前页面输入法边界
     bool checkLoginRequired(PageIndex page); ///< 检查是否需要登录
 };
 

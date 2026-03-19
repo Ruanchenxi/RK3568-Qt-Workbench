@@ -355,7 +355,7 @@ QComboBox::down-arrow {
            <x>0</x>
            <y>0</y>
            <width>1230</width>
-           <height>442</height>
+           <height>436</height>
           </rect>
          </property>
          <layout class="QGridLayout" name="gridLayout">
@@ -542,6 +542,10 @@ QComboBox::down-arrow {
             </item>
             <item>
              <widget class="QComboBox" name="cardSerialCombo">
+              <property name="styleSheet">
+               <string notr="true">
+background-color: rgb(255, 255, 255);</string>
+              </property>
               <item>
                <property name="text">
                 <string>COM1</string>

@@ -7,6 +7,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 
 class AuthFlowCoordinator;
 
@@ -18,11 +19,15 @@ public:
     ~LoginController() override = default;
 
     void login(const QString &username, const QString &password);
+    void requestAccountList();
 
 signals:
     void loginSucceeded(const QString &username, const QString &role);
     void loginFailed(const QString &errorMessage);
     void loginStateChanged(bool inProgress);
+    void accountListReady(const QStringList &accounts);
+    void accountListFailed(const QString &errorMessage);
+    void accountListStateChanged(bool inProgress);
 
 private:
     AuthFlowCoordinator *m_flow;

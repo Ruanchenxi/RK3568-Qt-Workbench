@@ -34,6 +34,7 @@ class WorkbenchPage : public QWidget
 public:
     explicit WorkbenchPage(QWidget *parent = nullptr);
     ~WorkbenchPage();
+    void disableSoftKeyboard();
 
 protected:
     void showEvent(QShowEvent *event) override; // 页面显示时按需加载（首次或令牌变化）

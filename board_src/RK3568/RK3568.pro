@@ -7,6 +7,7 @@
 QT       += core gui
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
+greaterThan(QT_MAJOR_VERSION, 4): QT += quick quickwidgets qml
 
 # 串口通讯支持（如果没有此模块，SerialService 会使用模拟模式）
 QT += serialport
@@ -60,3 +61,7 @@ INCLUDEPATH += src \
                src/platform \
                src/platform/serial \
                src/features/key/protocol
+
+RESOURCES += \
+        resources/inputmethod.qrc \
+        resources/keyboard_dict.qrc

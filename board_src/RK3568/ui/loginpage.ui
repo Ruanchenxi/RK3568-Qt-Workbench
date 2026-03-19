@@ -139,6 +139,24 @@
     border-color: #2E7D32;
 }
 
+#selectAccountBtn {
+    background-color: #F5F7FA;
+    color: #2E7D32;
+    font-size: 14px;
+    font-weight: bold;
+    border: 1px solid #D0D7DE;
+    border-radius: 8px;
+    padding: 12px 18px;
+}
+
+#selectAccountBtn:hover {
+    background-color: #E8F5E9;
+}
+
+#selectAccountBtn:disabled {
+    color: #9AA4AF;
+}
+
 #loginBtn {
     background-color: #2E7D32;
     color: #FFFFFF;
@@ -736,17 +754,37 @@
              
              <!-- 用户名 -->
              <item>
-              <widget class="QLineEdit" name="usernameEdit">
-               <property name="placeholderText">
-                <string>请输入用户名</string>
+              <layout class="QHBoxLayout" name="usernameRowLayout">
+               <property name="spacing">
+                <number>12</number>
                </property>
-               <property name="minimumSize">
-                <size>
-                 <width>0</width>
-                 <height>48</height>
-                </size>
-               </property>
-              </widget>
+               <item>
+                <widget class="QLineEdit" name="usernameEdit">
+                 <property name="placeholderText">
+                  <string>请输入用户名</string>
+                 </property>
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>48</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="selectAccountBtn">
+                 <property name="text">
+                  <string>选择</string>
+                 </property>
+                 <property name="minimumSize">
+                  <size>
+                   <width>84</width>
+                   <height>48</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+              </layout>
              </item>
              
              <!-- 密码 -->

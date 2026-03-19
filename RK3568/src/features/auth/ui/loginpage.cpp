@@ -9,11 +9,12 @@
  */
 
 #include "loginpage.h"
-#include "features/auth/ui/AccountSelectDialog.h"
 #include "ui_loginpage.h"
-#include <QMessageBox>
+#include <QAction>
 #include <QDebug>
 #include <QLayout>
+#include <QMenu>
+#include <QMessageBox>
 
 /**
  * @brief 构造函数
@@ -23,22 +24,58 @@ LoginPage::LoginPage(QWidget *parent) : QWidget(parent),
                                         ui(new Ui::LoginPage),
                                         m_loginInProgress(false),
                                         m_accountListLoading(false),
+                                        m_pendingAccountPopup(false),
                                         m_controller(new LoginController(nullptr, this))
 {
     ui->setupUi(this); // 加载 loginpage.ui 界面
 
-    // 确保初始显示设备登录页面（页面索引0）
-    ui->loginStackedWidget->setCurrentIndex(0);
+    if (ui->selectAccountBtn)
+    {
+        ui->selectAccountBtn->setText(QStringLiteral("⌄"));
+        ui->selectAccountBtn->setFixedWidth(56);
+        ui->selectAccountBtn->setStyleSheet(QStringLiteral(
+            "QPushButton {"
+            " background-color: #F5F7FA;"
+            " color: #2E7D32;"
+            " border: 1px solid #D0D7DE;"
+            " border-left: none;"
+            " border-top-right-radius: 8px;"
+            " border-bottom-right-radius: 8px;"
+            " border-top-left-radius: 0;"
+            " border-bottom-left-radius: 0;"
+            " font-size: 18px;"
+            " font-weight: bold;"
+            " padding: 0px;"
+            "}"
+            "QPushButton:hover { background-color: #E8F5E9; }"
+            "QPushButton:disabled { color: #9AA4AF; }"));
+    }
+
+    if (ui->usernameRowLayout)
+    {
+        ui->usernameRowLayout->setSpacing(0);
+    }
+
+    if (ui->usernameEdit)
+    {
+        ui->usernameEdit->setPlaceholderText(QStringLiteral("Select Operator..."));
+        ui->usernameEdit->setStyleSheet(QStringLiteral(
+            "QLineEdit {"
+            " background-color: #FFFFFF;"
+            " border: 1px solid #E0E0E0;"
+            " border-right: none;"
+            " border-top-left-radius: 8px;"
+            " border-bottom-left-radius: 8px;"
+            " border-top-right-radius: 0;"
+            " border-bottom-right-radius: 0;"
+            " padding: 12px 16px;"
+            " font-size: 14px;"
+            " color: #333333;"
+            "}"
+            "QLineEdit:focus { border-color: #2E7D32; }"));
+    }
 
     // ========== 连接信号与槽 ==========
-
-    // "账号密码登录" 按钮 → 切换到账号密码页面
-    connect(ui->accountLoginBtn, &QPushButton::clicked,
-            this, &LoginPage::onShowAccountLogin);
-
-    // "返回" 按钮 → 返回设备登录页面
-    connect(ui->backBtn, &QPushButton::clicked,
-            this, &LoginPage::onShowDeviceLogin);
 
     // "登录" 按钮 → 验证账号密码
     connect(ui->loginBtn, &QPushButton::clicked,
@@ -72,25 +109,6 @@ LoginPage::LoginPage(QWidget *parent) : QWidget(parent),
 LoginPage::~LoginPage()
 {
     delete ui;
-}
-
-/**
- * @brief 显示账号密码登录页面
- */
-void LoginPage::onShowAccountLogin()
-{
-    ui->loginStackedWidget->setCurrentIndex(1); // 切换到账号密码页面
-    ui->usernameEdit->setFocus();               // 自动聚焦到用户名输入框
-}
-
-/**
- * @brief 返回设备登录页面（刷卡/指纹）
- */
-void LoginPage::onShowDeviceLogin()
-{
-    ui->loginStackedWidget->setCurrentIndex(0); // 切换回设备登录页面
-    ui->usernameEdit->clear();                  // 清空输入
-    ui->passwordEdit->clear();
 }
 
 /**
@@ -128,6 +146,13 @@ void LoginPage::onSelectAccountClicked()
         return;
     }
 
+    if (!m_cachedAccounts.isEmpty())
+    {
+        showAccountDropdown();
+        return;
+    }
+
+    m_pendingAccountPopup = true;
     m_controller->requestAccountList();
 }
 
@@ -164,20 +189,17 @@ void LoginPage::onLoginStateChanged(bool inProgress)
 
 void LoginPage::onAccountListReady(const QStringList &accounts)
 {
-    AccountSelectDialog dialog(accounts, ui->usernameEdit->text().trimmed(), this);
-    if (dialog.exec() == QDialog::Accepted)
+    m_cachedAccounts = accounts;
+    if (m_pendingAccountPopup)
     {
-        const QString account = dialog.selectedAccount();
-        if (!account.isEmpty())
-        {
-            ui->usernameEdit->setText(account);
-            ui->passwordEdit->setFocus();
-        }
+        m_pendingAccountPopup = false;
+        showAccountDropdown();
     }
 }
 
 void LoginPage::onAccountListFailed(const QString &errorMessage)
 {
+    m_pendingAccountPopup = false;
     qDebug() << "[LoginPage] 获取账号列表失败:" << errorMessage;
     QMessageBox::warning(this, "账号列表", errorMessage);
 }
@@ -192,8 +214,6 @@ void LoginPage::setLoginInProgress(bool inProgress)
     m_loginInProgress = inProgress;
     const bool controlsEnabled = !m_loginInProgress && !m_accountListLoading;
     ui->loginBtn->setEnabled(controlsEnabled);
-    ui->accountLoginBtn->setEnabled(controlsEnabled);
-    ui->backBtn->setEnabled(controlsEnabled);
     ui->selectAccountBtn->setEnabled(controlsEnabled);
     if (inProgress)
     {
@@ -210,21 +230,38 @@ void LoginPage::setAccountListLoading(bool inProgress)
     m_accountListLoading = inProgress;
     const bool controlsEnabled = !m_loginInProgress && !m_accountListLoading;
     ui->loginBtn->setEnabled(controlsEnabled);
-    ui->accountLoginBtn->setEnabled(controlsEnabled);
-    ui->backBtn->setEnabled(controlsEnabled);
     ui->selectAccountBtn->setEnabled(controlsEnabled);
-    if (inProgress)
-    {
-        ui->selectAccountBtn->setText("加载中...");
-    }
-    else
-    {
-        ui->selectAccountBtn->setText("选择");
-    }
+    ui->selectAccountBtn->setText(QStringLiteral("⌄"));
 }
 
 void LoginPage::onKeyboardVisibilityChanged(bool visible, int height)
 {
     Q_UNUSED(visible);
     Q_UNUSED(height);
+}
+
+void LoginPage::showAccountDropdown()
+{
+    if (m_cachedAccounts.isEmpty())
+    {
+        return;
+    }
+
+    QMenu menu(this);
+    menu.setStyleSheet(QStringLiteral(
+        "QMenu { background-color: #FFFFFF; border: 1px solid #D0D7DE; border-radius: 8px; padding: 6px; }"
+        "QMenu::item { padding: 8px 14px; color: #333333; border-radius: 6px; }"
+        "QMenu::item:selected { background-color: #E8F5E9; color: #1B5E20; }"));
+
+    for (const QString &account : m_cachedAccounts)
+    {
+        QAction *action = menu.addAction(account);
+        connect(action, &QAction::triggered, this, [this, account]() {
+            ui->usernameEdit->setText(account);
+            ui->passwordEdit->setFocus();
+        });
+    }
+
+    const QPoint popupPoint = ui->selectAccountBtn->mapToGlobal(QPoint(ui->selectAccountBtn->width() - 4, ui->selectAccountBtn->height()));
+    menu.exec(popupPoint);
 }

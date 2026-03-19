@@ -44,8 +44,6 @@ public slots:
     void onKeyboardVisibilityChanged(bool visible, int height);
 
 private slots:
-    void onShowAccountLogin();
-    void onShowDeviceLogin();
     void onLoginButtonClicked();
     void onSelectAccountClicked();
 
@@ -60,10 +58,13 @@ private slots:
 private:
     void setLoginInProgress(bool inProgress);
     void setAccountListLoading(bool inProgress);
+    void showAccountDropdown();
 
     Ui::LoginPage *ui;
     bool m_loginInProgress;
     bool m_accountListLoading;
+    bool m_pendingAccountPopup;
+    QStringList m_cachedAccounts;
     LoginController *m_controller;
 };
 
