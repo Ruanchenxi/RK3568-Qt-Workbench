@@ -58,6 +58,38 @@
      <property name="spacing">
       <number>0</number>
      </property>
+     <item>
+      <widget class="QPlainTextEdit" name="logDisplay">
+       <property name="readOnly">
+        <bool>true</bool>
+       </property>
+       <property name="styleSheet">
+        <string notr="true">
+         QPlainTextEdit {
+           background-color: #1E1E1E;
+           color: #00FF00;
+           border: 1px solid #333333;
+           border-radius: 6px;
+           padding: 10px;
+           font-family: 'Consolas', 'Courier New', monospace;
+           font-size: 12px;
+           line-height: 1.4;
+         }
+         QPlainTextEdit QScrollBar:vertical {
+           background-color: #2A2A2A;
+           width: 10px;
+         }
+         QPlainTextEdit QScrollBar::handle:vertical {
+           background-color: #555555;
+           border-radius: 5px;
+         }
+         QPlainTextEdit QScrollBar::handle:vertical:hover {
+           background-color: #777777;
+         }
+        </string>
+       </property>
+      </widget>
+     </item>
     </layout>
    </item>
   </layout>
