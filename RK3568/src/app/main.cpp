@@ -1,9 +1,7 @@
 #include "app/mainwindow.h"
-#include "app/InputMethodCoordinator.h"
 
 #include <QApplication>
 #include <QCoreApplication>
-#include <QDebug>
 
 namespace
 {
@@ -60,16 +58,15 @@ int main(int argc, char *argv[]) // C++ 标准入口函数
 #endif
 
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
-    InputMethodCoordinator::applyStartupEnvironment();
 
     QApplication a(argc, argv); // 创建应用对象，负责管理应用级资源和主事件循环
 
-    qInfo().noquote()
-            << "[input-method]"
-            << "provider=" << InputMethodCoordinator::configuredProviderName()
-            << "QT_IM_MODULE=" << qEnvironmentVariable("QT_IM_MODULE", "<unset>")
-            << "QT_VIRTUALKEYBOARD_STYLE="
-            << qEnvironmentVariable("QT_VIRTUALKEYBOARD_STYLE", "<unset>");
+    QObject::connect(&a, &QGuiApplication::lastWindowClosed, []() {
+        qInfo() << "[app-lifecycle] lastWindowClosed emitted";
+    });
+    QObject::connect(&a, &QCoreApplication::aboutToQuit, []() {
+        qInfo() << "[app-lifecycle] aboutToQuit emitted";
+    });
 
     MainWindow w; // 创建主窗口
     w.show();     // 显示主窗口到屏幕上

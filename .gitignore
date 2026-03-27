@@ -51,3 +51,13 @@ test/http_ticket_server/tests/[0-9]*.hex
 RK3568/tmp_doc/*.csv
 RK3568/tmp_doc/*.txt
 RK3568/tmp_doc/*.log
+
+# Local workspace noise
+node_modules/
+_tmp_qvk_repo/
+_verify_debug_clean*/
+QVirtualKeyboard-master.zip
+tmp_*.cmd
+tmp_*.js
+docs/
+'+from)

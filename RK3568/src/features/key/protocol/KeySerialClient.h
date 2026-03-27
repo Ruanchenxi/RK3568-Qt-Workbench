@@ -78,12 +78,14 @@ static const int MIN_FRAME_LEN = 11; ///< 最小帧长（Data 为空时）
 // --- 命令码别名 ---
 static constexpr quint8 CMD_SET_COM   = KeyProtocol::CmdSetCom;   ///< 握手命令 0x0F
 static constexpr quint8 CMD_INIT      = KeyProtocol::CmdInit;     ///< 初始化电脑钥匙 0x02
+static constexpr quint8 CMD_SET_TIME  = KeyProtocol::CmdSetTime;  ///< 钥匙校时 0x09
 static constexpr quint8 CMD_Q_TASK    = KeyProtocol::CmdQTask;    ///< 查询任务 0x04
 static constexpr quint8 CMD_I_TASK_LOG = KeyProtocol::CmdITaskLog; ///< 请求回传任务日志 0x05
 static constexpr quint8 CMD_DEL       = KeyProtocol::CmdDel;      ///< 删除任务 0x06
 static constexpr quint8 CMD_DN_RFID   = KeyProtocol::CmdDownloadRfid; ///< 下传 RFID 数据 0x1A
 static constexpr quint8 CMD_TICKET    = KeyProtocol::CmdTicket;   ///< 传票单帧/最后帧 0x03
 static constexpr quint8 CMD_TICKET_MORE = KeyProtocol::CmdTicketMore; ///< 传票还有后续帧 0x83
+static constexpr quint8 CMD_Q_KEYEQ   = KeyProtocol::CmdQKeyEq;   ///< 查询钥匙电量 0x14
 static constexpr quint8 CMD_ACK       = KeyProtocol::CmdAck;      ///< 设备确认 0x5A
 static constexpr quint8 CMD_NAK       = KeyProtocol::CmdNak;      ///< 设备拒绝 0x00
 static constexpr quint8 CMD_KEY_EVENT = KeyProtocol::CmdKeyEvent;  ///< 钥匙事件 0x11
@@ -123,6 +125,8 @@ static const quint8 INFLIGHT_TICKET = 4;  ///< 正在等待传票分帧 ACK
 static const quint8 INFLIGHT_TASKLOG = 5; ///< 正在等待 I_TASK_LOG 的响应帧
 static const quint8 INFLIGHT_INIT_TRANSFER = 6; ///< 正在等待 INIT 分帧 ACK
 static const quint8 INFLIGHT_RFID_TRANSFER = 7; ///< 正在等待 DN_RFID 分帧 ACK
+static const quint8 INFLIGHT_QKEYEQ = 8; ///< 正在等待 Q_KEYEQ 的响应帧
+static const quint8 INFLIGHT_SETTIME = 9; ///< 正在等待 SET_TIME 的 ACK
 
 } // namespace KeyProto
 
@@ -186,10 +190,12 @@ public:
     bool isConnected() const;
 
     void queryTasksAll();
+    void queryBattery();
     void refreshHandshake();
     void requestTaskLog(const QByteArray &taskId16);
     void deleteTask(const QByteArray &taskId16);
     void deleteFirstTask();
+    void syncDeviceTime();
     void sendInitPayload(const QByteArray &payload);
     void sendRfidPayload(const QByteArray &payload);
     void transferTicketJson(const QByteArray &jsonBytes,
@@ -208,6 +214,7 @@ public:
     qint64 lastBusinessSuccessMs() const { return m_lastBusinessSuccessMs; }
     qint64 lastProtocolFailureMs() const { return m_lastProtocolFailureMs; }
     bool recoveryWindowActive() const { return m_recoveryWindowActive; }
+    int batteryPercent() const { return m_batteryPercent; }
 
     /**
      * @brief 设置当前操作ID（由 UI 层在用户点击按钮时调用）
@@ -378,6 +385,7 @@ private:
     qint64         m_lastBusinessSuccessMs; ///< 最近一次业务成功响应时间戳（ms since epoch）
     qint64         m_lastProtocolFailureMs; ///< 最近一次协议失败时间戳（ms since epoch）
     bool           m_recoveryWindowActive;  ///< 最近是否处于恢复窗口内
+    int            m_batteryPercent;        ///< 最近一次查询到的电量百分比；-1=未知/无效
 
     // 钥匙稳定性检测
     QElapsedTimer  m_keyPlacedElapsed;     ///< 钥匙放上时刻计时器（用于稳定性窗口判定）

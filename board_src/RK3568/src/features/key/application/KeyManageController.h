@@ -37,6 +37,8 @@ public:
 
     void onInitClicked();
     void onDownloadRfidClicked();
+    void onQueryBatteryClicked();
+    void onSyncDeviceTimeClicked();
     void onQueryTasksClicked();
     void onDeleteClicked();
     void onTransferSelectedTicket();
@@ -88,6 +90,10 @@ private slots:
     void handleReturnUploadFailed(const QString &taskId, const QString &reason);
 
 private:
+    bool ingestWorkbenchJson(const QByteArray &jsonBytes,
+                             const QString &savedPath,
+                             QString *taskId = nullptr,
+                             QString *resultMessage = nullptr);
     void tryAutoConnectKeyPort();
     bool autoTransferEnabled() const;
     void tryAutoRefreshKeyTasksOnReady(const KeySessionSnapshot &snapshot);

@@ -7,7 +7,6 @@
 QT       += core gui
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
-greaterThan(QT_MAJOR_VERSION, 4): QT += quick quickwidgets qml
 
 # 串口通讯支持（如果没有此模块，SerialService 会使用模拟模式）
 QT += serialport
@@ -44,14 +43,15 @@ include(src/platform/platform.pri)
 include(src/shared/shared.pri)
 
 # ========== 界面文件 ==========
+# 当前界面清单仅保留正式主线页面。
+# 历史 dialog 键盘 `ui/keyboarddialog.ui` 已正式删除，不再参与工程构建。
 FORMS += \
         ui/mainwindow.ui \
         ui/loginpage.ui \
         ui/workbenchpage.ui \
         ui/keymanagepage.ui \
         ui/systempage.ui \
-        ui/logpage.ui \
-        ui/keyboarddialog.ui
+        ui/logpage.ui
 
 # ========== 包含路径 ==========
 INCLUDEPATH += src \
@@ -63,5 +63,6 @@ INCLUDEPATH += src \
                src/features/key/protocol
 
 RESOURCES += \
-        resources/inputmethod.qrc \
+        resources/branding.qrc \
         resources/keyboard_dict.qrc
+

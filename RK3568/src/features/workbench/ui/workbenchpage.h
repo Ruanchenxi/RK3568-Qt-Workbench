@@ -13,10 +13,13 @@
 #ifndef WORKBENCHPAGE_H
 #define WORKBENCHPAGE_H
 
+#include <functional>
 #include <QWidget>
 #include <QWebEngineView>
 #include <QShowEvent>
 #include "features/workbench/application/WorkbenchController.h"
+
+class KeyboardContainer;
 
 namespace Ui
 {
@@ -34,7 +37,7 @@ class WorkbenchPage : public QWidget
 public:
     explicit WorkbenchPage(QWidget *parent = nullptr);
     ~WorkbenchPage();
-    void disableSoftKeyboard();
+    void requestKeyboardActivation(KeyboardContainer *container, std::function<void(bool)> callback);
 
 protected:
     void showEvent(QShowEvent *event) override; // 页面显示时按需加载（首次或令牌变化）
@@ -48,6 +51,10 @@ private:
     void ensureWebViewInitialized();
     void initWebView();   // 初始化 WebView
     void loadWorkbench(); // 加载工作台网页（带 token，通过中转页面）
+    void insertTextFromKeyboard(const QString &text);
+    void backspaceFromKeyboard();
+    void commitFromKeyboard();
+    void clearFromKeyboard();
 };
 
 #endif // WORKBENCHPAGE_H

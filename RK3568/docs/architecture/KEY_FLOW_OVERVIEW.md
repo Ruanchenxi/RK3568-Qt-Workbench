@@ -43,6 +43,37 @@ Workbench(QWebEngine 黑盒页面)
 3. 展示到 `HTTP服务端报文`  
 4. 入 `系统票数据`  
 
+当前入口约束：
+
+1. 当前正式入口只接：
+   - `POST ticket/httpIngressPath`
+2. 错路径会返回：
+   - `404`
+3. 错方法会返回：
+   - `405`
+4. 坏请求（例如请求行非法、`Content-Length` 非法、JSON 无法入池）会返回：
+   - `400`
+5. 当前只有在系统票真实入池成功后，HTTP 才返回：
+   - `success=true`
+6. 启动日志会打印当前实际监听的：
+   - `host`
+   - `port`
+   - `path`
+
+补充说明（2026-03-23）：
+
+1. 当前本地 HTTP 接收已按更严格语义收口：
+   - 错路径：`404`
+   - 错方法：`405`
+   - 坏请求 / 非法 JSON / `taskId` 为空：`400`
+2. `TicketIngressService` 当前会把“HTTP 收到请求”和“业务成功入池”区分开：
+   - 只有 `TicketStore` 真正接受后，才返回 `success=true`
+   - 若业务拒绝，则返回 `success=false`
+3. 启动日志当前打印真实配置的：
+   - `ticket/httpIngressHost`
+   - `ticket/httpIngressPort`
+   - `ticket/httpIngressPath`
+
 ## 3. 系统票 -> 手动传票链
 
 ```text
@@ -179,7 +210,7 @@ LoginPage(点击“选择”)
   -> LoginController::requestAccountList()
     -> AuthService::fetchAccountList(...)
       -> HTTP /list-account
-        -> AccountSelectDialog
+        -> QMenu 下拉菜单
           -> 回填 usernameEdit
 ```
 
@@ -198,13 +229,18 @@ LoginPage(点击“选择”)
 ```text
 本地 Qt Widgets 输入页
   -> 自定义 QWidget 键盘
+    -> 顶部统一入口
     -> 字段分型
     -> 页面局部避让
     -> 当前输入框保持可见
 
 工作台 QWebEngine 页
-  -> 当前不并入自定义 QWidget 键盘主线
-  -> 后续若接入，按特例方案单独设计
+  -> 特例 bridge
+  -> 仅在网页当前焦点位于可编辑元素时允许打开
+
+钥匙管理 / 服务日志页
+  -> 当前不作为有效输入页
+  -> 不提供“弹出后可直接输入”的正式承诺
 ```
 
 要点：
@@ -213,9 +249,13 @@ LoginPage(点击“选择”)
    - 应用内自定义 QWidget 键盘
    - 主窗口底部停靠式非模态面板
    - 页面自动让位，但不做整页缩放
-2. 工作台页当前不纳入这条主线：
-   - 不接管工作台输入
-   - 不做外层缩放/避让联动
+   - 跨页切换时统一收起键盘并清空上一个页面的输入上下文
+2. 页面能力当前按分层处理：
+   - 登录页：完整支持
+   - 系统设置页：完整支持
+   - 工作台页：仅在网页当前焦点位于可编辑元素时允许通过 bridge 输入
+   - 钥匙管理页：当前不作为有效输入页
+   - 服务日志页：当前不支持
 3. 键盘采用字段分型，不只做一种传统全键盘：
    - 账号：优先选择
    - 数字字段：数字键盘
@@ -226,6 +266,7 @@ LoginPage(点击“选择”)
    - 当前已支持：
      - 登录页
      - 系统设置页
+     - 工作台页（仅特例 bridge，需先聚焦网页输入元素）
    - 当前主要支持控件：
      - `QLineEdit`
    - 当前已补基础目标识别：

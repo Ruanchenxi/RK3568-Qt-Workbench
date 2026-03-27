@@ -53,7 +53,7 @@ bool DictList::alloc_resource(size_t buf_size, size_t scis_num) {
   if (NULL == buf_)
     return false;
 
-  scis_num_ = scis_num;
+  scis_num_ = static_cast<uint32>(scis_num);
 
   scis_hz_ = static_cast<char16*>(malloc(scis_num_ * sizeof(char16)));
   if (NULL == scis_hz_)

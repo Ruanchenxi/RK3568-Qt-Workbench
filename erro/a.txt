@@ -1,0 +1,162 @@
+[HTTP-INGRESS] listening host=127.0.0.1 port=8888 path=/ywticket/WebApi/transTicket
+[2026-03-26 15:26:37.177] OPTIONS /ywticket/WebApi/transTicket -> 200 OK
+[2026-03-26 15:26:37.271] POST /ywticket/WebApi/transTicket -> 200 ACCEPTED taskId=2037059029316804610
+\u5df2\u4fdd\u5b58\u5230: /home/linaro/dev/build-rk3568/logs/http_ticket_20260326_152637_263.json
+{
+    "data": {
+        "createTime": "202603261448",
+        "planTime": "202603271526",
+        "stepNum": 1,
+        "steps": [
+            {
+                "innerCode": 1,
+                "lockerOperate": 2,
+                "rfid": "C9:04:99:A0:02",
+                "stepDetail": "\u89e3\u9664\u9501\u5b9a\uff0c\u5c06411\u65ad\u8def\u5668\u64cd\u4f5c\u5230\u9694\u79bb\u4f4d\u7f6e\u5e76\u6267\u884c\u9501\u5b9a",
+                "stepId": "2037059029652348929",
+                "stepType": 1
+            }
+        ],
+        "taskId": "2037059029316804610",
+        "taskName": "TD-2026-03-26-000005-\u8bbe\u5907\u68c0\u4fee-\u5927\u6a2a\u7434B2\u4f4e\u538b\u914d\u7535\u623f-411\u65ad\u8def\u5668",
+        "taskType": 0
+    }
+}
+
+[2026-03-26 15:27:37.893] POST /ywticket/WebApi/transTicket -> 200 ACCEPTED taskId=2037059029316804610
+\u5df2\u4fdd\u5b58\u5230: /home/linaro/dev/build-rk3568/logs/http_ticket_20260326_152737_891.json
+{
+    "data": {
+        "createTime": "202603261448",
+        "planTime": "202603271527",
+        "stepNum": 1,
+        "steps": [
+            {
+                "innerCode": 1,
+                "lockerOperate": 2,
+                "rfid": "C9:04:99:A0:02",
+                "stepDetail": "\u89e3\u9664\u9501\u5b9a\uff0c\u5c06411\u65ad\u8def\u5668\u64cd\u4f5c\u5230\u9694\u79bb\u4f4d\u7f6e\u5e76\u6267\u884c\u9501\u5b9a",
+                "stepId": "2037059029652348929",
+                "stepType": 1
+            }
+        ],
+        "taskId": "2037059029316804610",
+        "taskName": "TD-2026-03-26-000005-\u8bbe\u5907\u68c0\u4fee-\u5927\u6a2a\u7434B2\u4f4e\u538b\u914d\u7535\u623f-411\u65ad\u8def\u5668",
+        "taskType": 0
+    }
+}
+
+[2026-03-26 15:28:01.032] POST /ywticket/WebApi/transTicket -> 200 ACCEPTED taskId=2037059029316804610
+\u5df2\u4fdd\u5b58\u5230: /home/linaro/dev/build-rk3568/logs/http_ticket_20260326_152801_031.json
+{
+    "data": {
+        "createTime": "202603261448",
+        "planTime": "202603271528",
+        "stepNum": 1,
+        "steps": [
+            {
+                "innerCode": 1,
+                "lockerOperate": 2,
+                "rfid": "C9:04:99:A0:02",
+                "stepDetail": "\u89e3\u9664\u9501\u5b9a\uff0c\u5c06411\u65ad\u8def\u5668\u64cd\u4f5c\u5230\u9694\u79bb\u4f4d\u7f6e\u5e76\u6267\u884c\u9501\u5b9a",
+                "stepId": "2037059029652348929",
+                "stepType": 1
+            }
+        ],
+        "taskId": "2037059029316804610",
+        "taskName": "TD-2026-03-26-000005-\u8bbe\u5907\u68c0\u4fee-\u5927\u6a2a\u7434B2\u4f4e\u538b\u914d\u7535\u623f-411\u65ad\u8def\u5668",
+        "taskType": 0
+    }
+}
+
+[2026-03-26 15:32:07.817] POST /ywticket/WebApi/transTicket -> 200 ACCEPTED taskId=2037059029316804610
+\u5df2\u4fdd\u5b58\u5230: /home/linaro/dev/build-rk3568/logs/http_ticket_20260326_153207_816.json
+{
+    "data": {
+        "createTime": "202603261448",
+        "planTime": "202603271532",
+        "stepNum": 1,
+        "steps": [
+            {
+                "innerCode": 1,
+                "lockerOperate": 2,
+                "rfid": "C9:04:99:A0:02",
+                "stepDetail": "\u89e3\u9664\u9501\u5b9a\uff0c\u5c06411\u65ad\u8def\u5668\u64cd\u4f5c\u5230\u9694\u79bb\u4f4d\u7f6e\u5e76\u6267\u884c\u9501\u5b9a",
+                "stepId": "2037059029652348929",
+                "stepType": 1
+            }
+        ],
+        "taskId": "2037059029316804610",
+        "taskName": "TD-2026-03-26-000005-\u8bbe\u5907\u68c0\u4fee-\u5927\u6a2a\u7434B2\u4f4e\u538b\u914d\u7535\u623f-411\u65ad\u8def\u5668",
+        "taskType": 0
+    }
+}
+
+[2026-03-26 15:41:50.154] POST /ywticket/WebApi/transTicket -> 200 ACCEPTED taskId=2037059029316804610
+\u5df2\u4fdd\u5b58\u5230: /home/linaro/dev/build-rk3568/logs/http_ticket_20260326_154150_153.json
+{
+    "data": {
+        "createTime": "202603261448",
+        "planTime": "202603271541",
+        "stepNum": 1,
+        "steps": [
+            {
+                "innerCode": 1,
+                "lockerOperate": 2,
+                "rfid": "C9:04:99:A0:02",
+                "stepDetail": "\u89e3\u9664\u9501\u5b9a\uff0c\u5c06411\u65ad\u8def\u5668\u64cd\u4f5c\u5230\u9694\u79bb\u4f4d\u7f6e\u5e76\u6267\u884c\u9501\u5b9a",
+                "stepId": "2037059029652348929",
+                "stepType": 1
+            }
+        ],
+        "taskId": "2037059029316804610",
+        "taskName": "TD-2026-03-26-000005-\u8bbe\u5907\u68c0\u4fee-\u5927\u6a2a\u7434B2\u4f4e\u538b\u914d\u7535\u623f-411\u65ad\u8def\u5668",
+        "taskType": 0
+    }
+}
+
+[2026-03-26 15:41:56.349] POST /ywticket/WebApi/transTicket -> 200 ACCEPTED taskId=2037059029316804610
+\u5df2\u4fdd\u5b58\u5230: /home/linaro/dev/build-rk3568/logs/http_ticket_20260326_154156_349.json
+{
+    "data": {
+        "createTime": "202603261448",
+        "planTime": "202603271541",
+        "stepNum": 1,
+        "steps": [
+            {
+                "innerCode": 1,
+                "lockerOperate": 2,
+                "rfid": "C9:04:99:A0:02",
+                "stepDetail": "\u89e3\u9664\u9501\u5b9a\uff0c\u5c06411\u65ad\u8def\u5668\u64cd\u4f5c\u5230\u9694\u79bb\u4f4d\u7f6e\u5e76\u6267\u884c\u9501\u5b9a",
+                "stepId": "2037059029652348929",
+                "stepType": 1
+            }
+        ],
+        "taskId": "2037059029316804610",
+        "taskName": "TD-2026-03-26-000005-\u8bbe\u5907\u68c0\u4fee-\u5927\u6a2a\u7434B2\u4f4e\u538b\u914d\u7535\u623f-411\u65ad\u8def\u5668",
+        "taskType": 0
+    }
+}
+
+[2026-03-26 15:43:12.124] POST /ywticket/WebApi/transTicket -> 200 ACCEPTED taskId=2037072709651693570
+\u5df2\u4fdd\u5b58\u5230: /home/linaro/dev/build-rk3568/logs/http_ticket_20260326_154312_122.json
+{
+    "data": {
+        "createTime": "202603261542",
+        "planTime": "202603271543",
+        "stepNum": 1,
+        "steps": [
+            {
+                "innerCode": 1,
+                "lockerOperate": 2,
+                "rfid": "C9:04:99:A0:02",
+                "stepDetail": "\u89e3\u9664\u9501\u5b9a\uff0c\u5c06411\u65ad\u8def\u5668\u64cd\u4f5c\u5230\u9694\u79bb\u4f4d\u7f6e\u5e76\u6267\u884c\u9501\u5b9a",
+                "stepId": "2037072711006453761",
+                "stepType": 1
+            }
+        ],
+        "taskId": "2037072709651693570",
+        "taskName": "TD-2026-03-26-000006-\u65e5\u5e38\u8fd0\u7ef4-\u5927\u6a2a\u7434B2\u4f4e\u538b\u914d\u7535\u623f-411\u65ad\u8def\u5668",
+        "taskType": 0
+    }
+}

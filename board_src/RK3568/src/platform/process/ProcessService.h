@@ -37,7 +37,7 @@ private slots:
 
 private:
     void appendLog(const QString &text);
-    void startServices();
+    void startServices(bool forceRestart = false);
     bool checkPortInUse(int port) const;
     void killProcessByPort(int port);
     QString queryProcessNameByPid(const QString &pid) const;
@@ -55,6 +55,8 @@ private:
     void stopExternalLogTailing();
     QStringList resolveExternalLogFiles() const;
     void scheduleStartRetry(const QString &reason);
+    QString serviceStartupLogPath() const;
+    void appendServiceStartupLogLine(const QString &text) const;
 
     QProcess *m_process;
     QTimer *m_autoStartTimer;

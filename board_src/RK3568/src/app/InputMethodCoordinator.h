@@ -1,6 +1,8 @@
 /**
  * @file InputMethodCoordinator.h
- * @brief 输入法协调层：隔离 Qt Virtual Keyboard 与业务页面
+ * @brief 旧 Qt Virtual Keyboard 历史兼容壳
+ *
+ * 该文件保留作为评估态/删除前条件参考，不再纳入当前主构建。
  */
 
 #ifndef INPUTMETHODCOORDINATOR_H
@@ -23,10 +25,6 @@ public:
     static void showInputMethod();
     static void hideInputMethod();
     static void blockSoftKeyboardForWidgetTree(QWidget *root);
-
-private:
-    static QString resolveProviderName();
-    static QString readSettingString(const QString &key, const QString &defaultValue);
 };
 
 #endif // INPUTMETHODCOORDINATOR_H

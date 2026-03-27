@@ -26,6 +26,7 @@ public:
     bool isVisible() const;
     void toggleOnPage(QWidget *page);
     void hide();
+    void clearCurrentTarget();
 
 signals:
     void targetChanged(QWidget *target);

@@ -1,0 +1,207 @@
+=== \u670d\u52a1\u65e5\u5fd7 ===
+\u7b49\u5f85\u542f\u52a8\u670d\u52a1...
+
+[2026-03-26 15:25:11] \u51c6\u5907\u81ea\u52a8\u542f\u52a8\u670d\u52a1...
+[INFO] \u542f\u52a8\u6a21\u5f0f: remote
+[INFO] \u5df2\u5339\u914d\u539f\u4ea7\u54c1 AdapterService/outage \u542f\u52a8\u94fe\uff0c\u6309\u539f\u4ea7\u54c1\u65b9\u5f0f\u76f4\u63a5\u6267\u884c start.sh
+[INFO] \u68c0\u67e5\u7aef\u53e3\u5360\u7528\u60c5\u51b5...
+[INFO] \u5df2\u5339\u914d\u539f\u4ea7\u54c1 outage/start.sh\uff0c\u8df3\u8fc7\u524d\u7f6e\u7aef\u53e3\u6cbb\u7406\uff0c\u4ea4\u7531\u811a\u672c\u81ea\u884c\u5904\u7406 8081
+[INFO] \u542f\u52a8\u811a\u672c: /home/linaro/outage/start.sh
+[INFO] \u5de5\u4f5c\u76ee\u5f55: /home/linaro/outage
+[INFO] \u6267\u884c\u547d\u4ee4: /home/linaro/outage/start.sh
+
+[INFO] \u7b2c 1/3 \u6b21\u542f\u52a8\u5c1d\u8bd5
+[INFO] \u542f\u52a8\u547d\u4ee4\u5df2\u63d0\u4ea4\uff0c\u7b49\u5f85\u8fdb\u7a0b\u56de\u8c03...
+
+[SUCCESS] \u670d\u52a1\u811a\u672c\u5df2\u542f\u52a8\uff0c\u6b63\u5728\u6267\u884c...
+
+outage-api is not running.
+\u5f53\u524d\u673a\u5668\u8bc6\u522b\u7801:MkMtQzYtODItMkQtN0EtQzE=
+2026-03-26 15:25:19.189  INFO 4900 --- [kground-preinit] o.h.validator.internal.util.Version      : HV000001: Hibernate Validator 8.0.1.Final
+:: Kids 4.0.0.RELEASE :: kids-api:test :: Running SpringBoot 3.2.4 ::
+2026-03-26 15:25:25.692  INFO 4900 --- [           main] cn.zhkeen.Application                    : The following 1 profile is active: "test"
+2026-03-26 15:25:33.430  INFO 4900 --- [           main] .s.d.r.c.RepositoryConfigurationDelegate : Multiple Spring Data modules found, entering strict repository configuration mode
+2026-03-26 15:25:33.448  INFO 4900 --- [           main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data Redis repositories in DEFAULT mode.
+2026-03-26 15:25:33.966  INFO 4900 --- [           main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 453 ms. Found 0 Redis repository interfaces.
+2026-03-26 15:25:34.712  INFO 4900 --- [           main] faultConfiguringBeanFactoryPostProcessor : No bean named 'errorChannel' has been explicitly defined. Therefore, a default PublishSubscribeChannel will be created.
+2026-03-26 15:25:34.789  INFO 4900 --- [           main] faultConfiguringBeanFactoryPostProcessor : No bean named 'integrationHeaderChannelRegistry' has been explicitly defined. Therefore, a default DefaultHeaderChannelRegistry will be created.
+2026-03-26 15:25:35.592  INFO 4900 --- [           main] o.s.cloud.context.scope.GenericScope     : BeanFactory id=6ff0bdd0-be70-3db4-b85e-2088ea7f6102
+2026-03-26 15:25:35.605  INFO 4900 --- [           main] .z.c.l.p.KidsPropertySourcePostProcessor : KidsPropertySourcePostProcessor init.
+2026-03-26 15:25:35.780  INFO 4900 --- [           main] .z.c.l.p.KidsPropertySourcePostProcessor : KidsPropertySourcePostProcessor process @KidsPropertySource bean.
+2026-03-26 15:25:38.776  WARN 4900 --- [           main] trationDelegate$BeanPostProcessorChecker : Bean 'com.yomahub.liteflow.springboot.config.LiteflowMainAutoConfiguration' of type [com.yomahub.liteflow.springboot.config.LiteflowMainAutoConfiguration$$SpringCGLIB$$0] is not eligible for getting processed by all BeanPostProcessors (for example: not eligible for auto-proxying). The currently created BeanPostProcessor [componentScanner] is declared through a non-static factory method on that class; consider declaring it as static instead.
+2026-03-26 15:25:38.936  WARN 4900 --- [           main] trationDelegate$BeanPostProcessorChecker : Bean 'com.yomahub.liteflow.springboot.config.LiteflowPropertyAutoConfiguration' of type [com.yomahub.liteflow.springboot.config.LiteflowPropertyAutoConfiguration$$SpringCGLIB$$0] is not eligible for getting processed by all BeanPostProcessors (for example: not eligible for auto-proxying). Is this bean getting eagerly injected into a currently created BeanPostProcessor [componentScanner]? Check the corresponding BeanPostProcessor declaration and its dependencies.
+2026-03-26 15:25:39.050  WARN 4900 --- [           main] trationDelegate$BeanPostProcessorChecker : Bean 'org.springframework.cloud.commons.config.CommonsConfigAutoConfiguration' of type [org.springframework.cloud.commons.config.CommonsConfigAutoConfiguration] is not eligible for getting processed by all BeanPostProcessors (for example: not eligible for auto-proxying). Is this bean getting eagerly injected into a currently created BeanPostProcessor [componentScanner]? Check the corresponding BeanPostProcessor declaration and its dependencies.
+2026-03-26 15:25:39.082  WARN 4900 --- [           main] trationDelegate$BeanPostProcessorChecker : Bean 'org.springframework.cloud.client.loadbalancer.LoadBalancerDefaultMappingsProviderAutoConfiguration' of type [org.springframework.cloud.client.loadbalancer.LoadBalancerDefaultMappingsProviderAutoConfiguration] is not eligible for getting processed by all BeanPostProcessors (for example: not eligible for auto-proxying). Is this bean getting eagerly injected into a currently created BeanPostProcessor [componentScanner]? Check the corresponding BeanPostProcessor declaration and its dependencies.
+2026-03-26 15:25:39.092  WARN 4900 --- [           main] trationDelegate$BeanPostProcessorChecker : Bean 'loadBalancerClientsDefaultsMappingsProvider' of type [org.springframework.cloud.client.loadbalancer.LoadBalancerDefaultMappingsProviderAutoConfiguration$$Lambda$780/0x000000010165d4c0] is not eligible for getting processed by all BeanPostProcessors (for example: not eligible for auto-proxying). Is this bean getting eagerly injected into a currently created BeanPostProcessor [componentScanner]? Check the corresponding BeanPostProcessor declaration and its dependencies.
+2026-03-26 15:25:39.181  WARN 4900 --- [           main] trationDelegate$BeanPostProcessorChecker : Bean 'defaultsBindHandlerAdvisor' of type [org.springframework.cloud.commons.config.DefaultsBindHandlerAdvisor] is not eligible for getting processed by all BeanPostProcessors (for example: not eligible for auto-proxying). Is this bean getting eagerly injected into a currently created BeanPostProcessor [componentScanner]? Check the corresponding BeanPostProcessor declaration and its dependencies.
+2026-03-26 15:25:39.256  WARN 4900 --- [           main] trationDelegate$BeanPostProcessorChecker : Bean 'liteflow-com.yomahub.liteflow.springboot.LiteflowProperty' of type [com.yomahub.liteflow.springboot.LiteflowProperty] is not eligible for getting processed by all BeanPostProcessors (for example: not eligible for auto-proxying). Is this bean getting eagerly injected into a currently created BeanPostProcessor [componentScanner]? Check the corresponding BeanPostProcessor declaration and its dependencies.
+2026-03-26 15:25:39.335  WARN 4900 --- [           main] trationDelegate$BeanPostProcessorChecker : Bean 'liteflow.monitor-com.yomahub.liteflow.springboot.LiteflowMonitorProperty' of type [com.yomahub.liteflow.springboot.LiteflowMonitorProperty] is not eligible for getting processed by all BeanPostProcessors (for example: not eligible for auto-proxying). Is this bean getting eagerly injected into a currently created BeanPostProcessor [componentScanner]? Check the corresponding BeanPostProcessor declaration and its dependencies.
+2026-03-26 15:25:39.367  WARN 4900 --- [           main] trationDelegate$BeanPostProcessorChecker : Bean 'liteflowConfig' of type [com.yomahub.liteflow.property.LiteflowConfig] is not eligible for getting processed by all BeanPostProcessors (for example: not eligible for auto-proxying). Is this bean getting eagerly injected into a currently created BeanPostProcessor [componentScanner]? Check the corresponding BeanPostProcessor declaration and its dependencies.
+2026-03-26 15:25:39.499  WARN 4900 --- [           main] trationDelegate$BeanPostProcessorChecker : Bean 'com.yomahub.liteflow.spi.spring.SpringAware' of type [com.yomahub.liteflow.spi.spring.SpringAware] is not eligible for getting processed by all BeanPostProcessors (for example: not eligible for auto-proxying). Is this bean getting eagerly injected into a currently created BeanPostProcessor [componentScanner]? Check the corresponding BeanPostProcessor declaration and its dependencies.
+2026-03-26 15:25:41.647  WARN 4900 --- [           main] io.undertow.websockets.jsr               : UT026010: Buffer pool was not set on WebSocketDeploymentInfo, the default pool will be used
+2026-03-26 15:25:41.763  INFO 4900 --- [           main] io.undertow.servlet                      : Initializing Spring embedded WebApplicationContext
+2026-03-26 15:25:41.764  INFO 4900 --- [           main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 15954 ms
+2026-03-26 15:25:42.503  INFO 4900 --- [           main] c.a.d.s.b.a.DruidDataSourceAutoConfigure : Init DruidDataSource
+2026-03-26 15:25:44.009  INFO 4900 --- [           main] com.alibaba.druid.pool.DruidDataSource   : {dataSource-1} inited
+2026-03-26 15:25:58.574  INFO 4900 --- [           main] f.a.AutowiredAnnotationBeanPostProcessor : Inconsistent constructor declaration on bean with name 'serverInfo': single autowire-marked constructor flagged as optional - this constructor is effectively required since there is no default constructor to fall back to: public cn.zhkeen.core.launch.server.ServerInfo(org.springframework.boot.autoconfigure.web.ServerProperties)
+2026-03-26 15:26:03.356  INFO 4900 --- [           main] o.f.s.b.c.CmmnEngineAutoConfiguration    : No deployment resources were found for autodeployment
+2026-03-26 15:26:04.035  INFO 4900 --- [           main] o.f.s.b.dmn.DmnEngineAutoConfiguration   : No deployment resources were found for autodeployment
+2026-03-26 15:26:04.442  INFO 4900 --- [           main] o.f.s.b.e.EventRegistryAutoConfiguration : No deployment resources were found for autodeployment
+2026-03-26 15:26:05.031  INFO 4900 --- [           main] o.f.s.b.app.AppEngineAutoConfiguration   : No deployment resources were found for autodeployment
+2026-03-26 15:26:05.161  INFO 4900 --- [           main] o.f.a.s.SpringAppEngineConfiguration     : Found 5 Engine Configurators in total:
+2026-03-26 15:26:05.162  INFO 4900 --- [           main] o.f.a.s.SpringAppEngineConfiguration     : class org.flowable.engine.spring.configurator.SpringProcessEngineConfigurator (priority:50000)
+2026-03-26 15:26:05.163  INFO 4900 --- [           main] o.f.a.s.SpringAppEngineConfiguration     : class org.flowable.eventregistry.spring.configurator.SpringEventRegistryConfigurator (priority:100000)
+2026-03-26 15:26:05.165  INFO 4900 --- [           main] o.f.a.s.SpringAppEngineConfiguration     : class org.flowable.idm.spring.configurator.SpringIdmEngineConfigurator (priority:150000)
+2026-03-26 15:26:05.165  INFO 4900 --- [           main] o.f.a.s.SpringAppEngineConfiguration     : class org.flowable.dmn.spring.configurator.SpringDmnEngineConfigurator (priority:200000)
+2026-03-26 15:26:05.165  INFO 4900 --- [           main] o.f.a.s.SpringAppEngineConfiguration     : class org.flowable.cmmn.spring.configurator.SpringCmmnEngineConfigurator (priority:500000)
+2026-03-26 15:26:05.166  INFO 4900 --- [           main] o.f.a.s.SpringAppEngineConfiguration     : Executing beforeInit() of class org.flowable.engine.spring.configurator.SpringProcessEngineConfigurator (priority:50000)
+2026-03-26 15:26:05.179  INFO 4900 --- [           main] o.f.a.s.SpringAppEngineConfiguration     : Executing beforeInit() of class org.flowable.eventregistry.spring.configurator.SpringEventRegistryConfigurator (priority:100000)
+2026-03-26 15:26:05.193  INFO 4900 --- [           main] o.f.a.s.SpringAppEngineConfiguration     : Executing beforeInit() of class org.flowable.idm.spring.configurator.SpringIdmEngineConfigurator (priority:150000)
+2026-03-26 15:26:05.204  INFO 4900 --- [           main] o.f.a.s.SpringAppEngineConfiguration     : Executing beforeInit() of class org.flowable.dmn.spring.configurator.SpringDmnEngineConfigurator (priority:200000)
+2026-03-26 15:26:05.215  INFO 4900 --- [           main] o.f.a.s.SpringAppEngineConfiguration     : Executing beforeInit() of class org.flowable.cmmn.spring.configurator.SpringCmmnEngineConfigurator (priority:500000)
+2026-03-26 15:26:11.368  INFO 4900 --- [           main] o.f.a.s.SpringAppEngineConfiguration     : Executing configure() of class org.flowable.engine.spring.configurator.SpringProcessEngineConfigurator (priority:50000)
+2026-03-26 15:26:12.930  INFO 4900 --- [           main] c.z.core.mp.plugins.SqlLogInterceptor    :
+==============  Sql Start  ==============
+Execute SQL : select VALUE_ from ACT_GE_PROPERTY where NAME_ = 'schema.version'
+Execute Time: 2.464ms
+==============  Sql  End   ==============
+2026-03-26 15:26:12.965  INFO 4900 --- [           main] o.f.engine.impl.ProcessEngineImpl        : ProcessEngine default created
+2026-03-26 15:26:13.063  INFO 4900 --- [           main] c.z.core.mp.plugins.SqlLogInterceptor    :
+==============  Sql Start  ==============
+Execute SQL : select count(RES.ID_) from ACT_RE_DEPLOYMENT RES where RES.ENGINE_VERSION_ = 'v5'
+Execute Time: 1.939ms
+==============  Sql  End   ==============
+2026-03-26 15:26:13.064  INFO 4900 --- [           main] o.f.e.impl.cmd.ValidateV5EntitiesCmd     : Total of v5 deployments found: 0
+2026-03-26 15:26:13.074  INFO 4900 --- [           main] c.z.core.mp.plugins.SqlLogInterceptor    :
+==============  Sql Start  ==============
+Execute SQL : select * from ACT_GE_PROPERTY where NAME_ = 'cfg.execution-related-entities-count'
+Execute Time: 1.401ms
+==============  Sql  End   ==============
+2026-03-26 15:26:13.084  INFO 4900 --- [           main] c.z.core.mp.plugins.SqlLogInterceptor    :
+==============  Sql Start  ==============
+Execute SQL : select * from ACT_GE_PROPERTY where NAME_ = 'cfg.task-related-entities-count'
+Execute Time: 1.161ms
+==============  Sql  End   ==============
+2026-03-26 15:26:13.086  INFO 4900 --- [           main] o.f.a.s.SpringAppEngineConfiguration     : Executing configure() of class org.flowable.eventregistry.spring.configurator.SpringEventRegistryConfigurator (priority:100000)
+2026-03-26 15:26:13.163  INFO 4900 --- [           main] o.f.e.impl.EventRegistryEngineImpl       : EventRegistryEngine default created
+2026-03-26 15:26:13.166  INFO 4900 --- [           main] o.f.a.s.SpringAppEngineConfiguration     : Executing configure() of class org.flowable.idm.spring.configurator.SpringIdmEngineConfigurator (priority:150000)
+2026-03-26 15:26:13.214  INFO 4900 --- [           main] c.z.core.mp.plugins.SqlLogInterceptor    :
+==============  Sql Start  ==============
+Execute SQL : select VALUE_ from ACT_ID_PROPERTY where NAME_ = 'schema.version'
+Execute Time: 1.235ms
+==============  Sql  End   ==============
+2026-03-26 15:26:13.220  INFO 4900 --- [           main] o.f.idm.engine.impl.IdmEngineImpl        : IdmEngine default created
+2026-03-26 15:26:13.223  INFO 4900 --- [           main] o.f.a.s.SpringAppEngineConfiguration     : Executing configure() of class org.flowable.dmn.spring.configurator.SpringDmnEngineConfigurator (priority:200000)
+2026-03-26 15:26:13.302  INFO 4900 --- [           main] o.f.dmn.engine.impl.DmnEngineImpl        : DmnEngine default created
+2026-03-26 15:26:13.305  INFO 4900 --- [           main] o.f.a.s.SpringAppEngineConfiguration     : Executing configure() of class org.flowable.cmmn.spring.configurator.SpringCmmnEngineConfigurator (priority:500000)
+2026-03-26 15:26:13.686  INFO 4900 --- [           main] o.f.cmmn.engine.impl.CmmnEngineImpl      : CmmnEngine default created
+2026-03-26 15:26:13.695  INFO 4900 --- [           main] o.f.app.engine.impl.AppEngineImpl        : AppEngine default created
+2026-03-26 15:26:21.276  INFO 4900 --- [           main] org.redisson.Version                     : Redisson 3.17.7
+2026-03-26 15:26:22.068  INFO 4900 --- [isson-netty-4-6] o.r.c.pool.MasterPubSubConnectionPool    : 1 connections initialized for localhost/127.0.0.1:6379
+2026-03-26 15:26:22.100  INFO 4900 --- [sson-netty-4-14] o.r.c.pool.MasterConnectionPool          : 5 connections initialized for localhost/127.0.0.1:6379
+2026-03-26 15:26:27.639  INFO 4900 --- [           main] c.z.m.o.s.impl.FingerprintServiceImpl    : \u52a8\u6001\u5e93\u52a0\u8f7d\u6210\u529f
+2026-03-26 15:26:28.216  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[aliOssRule] has been found
+2026-03-26 15:26:28.226  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[amazonS3Rule] has been found
+2026-03-26 15:26:28.231  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[finallyOssRule] has been found
+2026-03-26 15:26:28.235  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[huaweiObsRule] has been found
+2026-03-26 15:26:28.240  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[minioRule] has been found
+2026-03-26 15:26:28.251  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[ossBuildRule] has been found
+2026-03-26 15:26:28.256  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[ossCacheRule] has been found
+2026-03-26 15:26:28.261  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[ossDataRule] has been found
+2026-03-26 15:26:28.265  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[ossReadRule] has been found
+2026-03-26 15:26:28.270  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[ossTemplateRule] has been found
+2026-03-26 15:26:28.275  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[preOssRule] has been found
+2026-03-26 15:26:28.280  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[qiniuOssRule] has been found
+2026-03-26 15:26:28.287  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[tencentCosRule] has been found
+2026-03-26 15:26:28.293  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[aliSmsRule] has been found
+2026-03-26 15:26:28.298  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[cacheSmsRule] has been found
+2026-03-26 15:26:28.303  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[finallySmsRule] has been found
+2026-03-26 15:26:28.307  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[preSmsRule] has been found
+2026-03-26 15:26:28.312  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[qiniuSmsRule] has been found
+2026-03-26 15:26:28.317  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[smsBuildRule] has been found
+2026-03-26 15:26:28.322  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[tencentSmsRule] has been found
+2026-03-26 15:26:28.326  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[yunpianSmsRule] has been found
+2026-03-26 15:26:29.697  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[tenantDeptRule] has been found
+2026-03-26 15:26:29.702  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[tenantDeviceTypeOperateRule] has been found
+2026-03-26 15:26:29.708  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[tenantDeviceTypeRule] has been found
+2026-03-26 15:26:29.714  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[tenantDictBizRule] has been found
+2026-03-26 15:26:29.719  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[tenantOssRule] has been found
+2026-03-26 15:26:29.724  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[tenantParasRule] has been found
+2026-03-26 15:26:29.729  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[tenantPostRule] has been found
+2026-03-26 15:26:29.736  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[tenantRoleMenuRule] has been found
+2026-03-26 15:26:29.741  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[tenantRoleRule] has been found
+2026-03-26 15:26:29.747  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[tenantRule] has been found
+2026-03-26 15:26:29.752  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[tenantSmsRule] has been found
+2026-03-26 15:26:29.757  INFO 4900 --- [           main] c.y.liteflow.spring.ComponentScanner     : component[tenantUserRule] has been found
+2026-03-26 15:26:30.928  INFO 4900 --- [           main] c.z.c.b.config.KidsRetryConfiguration    : configServerRetryInterceptor: Changing backOffOptions to initial: 1000, multiplier: 1.2, maxInterval: 5000
+2026-03-26 15:26:31.225  INFO 4900 --- [           main] cn.zhkeen.core.log.logger.KidsLogger     : kids-api: KidsLogger init success!
+2026-03-26 15:26:36.130  INFO 4900 --- [           main] m.e.s.MybatisPlusApplicationContextAware : Register ApplicationContext instances org.springframework.boot.web.servlet.context.AnnotationConfigServletWebServerApplicationContext@767f6ee7
+2026-03-26 15:26:36.560  INFO 4900 --- [           main] com.yomahub.liteflow.core.FlowExecutor   : flow info loaded from local file,path=liteflow/*.el.xml
+2026-03-26 15:26:43.005  INFO 4900 --- [           main] o.s.i.endpoint.EventDrivenConsumer       : Adding {logging-channel-adapter:_org.springframework.integration.errorLogger} as a subscriber to the 'errorChannel' channel
+2026-03-26 15:26:43.006  INFO 4900 --- [           main] o.s.i.channel.PublishSubscribeChannel    : Channel 'kids-api-1.errorChannel' has 1 subscriber(s).
+2026-03-26 15:26:43.007  INFO 4900 --- [           main] o.s.i.endpoint.EventDrivenConsumer       : started bean '_org.springframework.integration.errorLogger'
+2026-03-26 15:26:43.048  INFO 4900 --- [           main] c.z.core.mp.plugins.SqlLogInterceptor    :
+==============  Sql Start  ==============
+Execute SQL : select RES.* from FLW_CHANNEL_DEFINITION RES where RES.VERSION_ = ( select max(VERSION_) from FLW_CHANNEL_DEFINITION where KEY_ = RES.KEY_ and ((TENANT_ID_ is not null and TENANT_ID_ = RES.TENANT_ID_) or (TENANT_ID_ is null and RES.TENANT_ID_ is null)) ) order by RES.ID_ asc
+Execute Time: 3.276ms
+==============  Sql  End   ==============
+2026-03-26 15:26:43.084  INFO 4900 --- [           main] io.undertow                              : starting server: Undertow - 2.3.12.Final
+2026-03-26 15:26:43.139  INFO 4900 --- [           main] org.xnio                                 : XNIO version 3.8.8.Final
+2026-03-26 15:26:43.242  INFO 4900 --- [           main] org.xnio.nio                             : XNIO NIO Implementation Version 3.8.8.Final
+2026-03-26 15:26:43.362  INFO 4900 --- [           main] org.jboss.threads                        : JBoss Threads version 3.5.0.Final
+2026-03-26 15:26:43.547  INFO 4900 --- [           main] io.undertow                              : stopping server: Undertow - 2.3.12.Final
+2026-03-26 15:26:43.586  INFO 4900 --- [           main] o.s.i.endpoint.EventDrivenConsumer       : Removing {logging-channel-adapter:_org.springframework.integration.errorLogger} as a subscriber to the 'errorChannel' channel
+2026-03-26 15:26:43.587  INFO 4900 --- [           main] o.s.i.channel.PublishSubscribeChannel    : Channel 'kids-api-1.errorChannel' has 0 subscriber(s).
+2026-03-26 15:26:43.588  INFO 4900 --- [           main] o.s.i.endpoint.EventDrivenConsumer       : stopped bean '_org.springframework.integration.errorLogger'
+2026-03-26 15:26:43.589  WARN 4900 --- [           main] ConfigServletWebServerApplicationContext : Exception encountered during context initialization - cancelling refresh attempt: org.springframework.context.ApplicationContextException: Failed to start bean 'webServerStartStop'
+2026-03-26 15:26:43.679  INFO 4900 --- [           main] c.z.core.mp.plugins.SqlLogInterceptor    :
+==============  Sql Start  ==============
+Execute SQL : update ACT_RU_EXECUTION set LOCK_TIME_ = null, LOCK_OWNER_ = null where LOCK_OWNER_ = 'e0581fc4-6b31-4cec-a327-7ddef9d4e512'
+Execute Time: 6.804ms
+==============  Sql  End   ==============
+2026-03-26 15:26:43.715  INFO 4900 --- [           main] com.alibaba.druid.pool.DruidDataSource   : {dataSource-1} closing ...
+2026-03-26 15:26:43.729  INFO 4900 --- [           main] com.alibaba.druid.pool.DruidDataSource   : {dataSource-1} closed
+2026-03-26 15:26:43.785  INFO 4900 --- [           main] .s.b.a.l.ConditionEvaluationReportLogger :
+Error starting ApplicationContext. To display the condition evaluation report re-run your application with 'debug' enabled.
+2026-03-26 15:26:43.837 ERROR 4900 --- [           main] o.s.boot.SpringApplication               : Application run failed
+org.springframework.context.ApplicationContextException: Failed to start bean 'webServerStartStop'
+at org.springframework.context.support.DefaultLifecycleProcessor.doStart(DefaultLifecycleProcessor.java:291)
+at org.springframework.context.support.DefaultLifecycleProcessor$LifecycleGroup.start(DefaultLifecycleProcessor.java:471)
+at java.base/java.lang.Iterable.forEach(Iterable.java:75)
+at org.springframework.context.support.DefaultLifecycleProcessor.startBeans(DefaultLifecycleProcessor.java:260)
+at org.springframework.context.support.DefaultLifecycleProcessor.onRefresh(DefaultLifecycleProcessor.java:205)
+at org.springframework.context.support.AbstractApplicationContext.finishRefresh(AbstractApplicationContext.java:981)
+at org.springframework.context.support.AbstractApplicationContext.refresh(AbstractApplicationContext.java:627)
+at org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext.refresh(ServletWebServerApplicationContext.java:146)
+at org.springframework.boot.SpringApplication.refresh(SpringApplication.java:754)
+at org.springframework.boot.SpringApplication.refreshContext(SpringApplication.java:456)
+at org.springframework.boot.SpringApplication.run(SpringApplication.java:334)
+at org.springframework.boot.builder.SpringApplicationBuilder.run(SpringApplicationBuilder.java:149)
+at cn.zhkeen.core.launch.KidsApplication.run(KidsApplication.java:32)
+at cn.zhkeen.Application.main(Application.java:24)
+at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+at org.springframework.boot.loader.launch.Launcher.launch(Launcher.java:91)
+at org.springframework.boot.loader.launch.Launcher.launch(Launcher.java:53)
+at org.springframework.boot.loader.launch.JarLauncher.main(JarLauncher.java:58)
+Caused by: org.springframework.boot.web.server.WebServerException: Unable to start embedded Undertow
+at org.springframework.boot.web.embedded.undertow.UndertowWebServer.start(UndertowWebServer.java:132)
+at org.springframework.boot.web.servlet.context.WebServerStartStopLifecycle.start(WebServerStartStopLifecycle.java:44)
+at org.springframework.context.support.DefaultLifecycleProcessor.doStart(DefaultLifecycleProcessor.java:288)
+... 20 common frames omitted
+Caused by: java.lang.RuntimeException: java.net.BindException: \u5730\u5740\u5df2\u5728\u4f7f\u7528
+at io.undertow.Undertow.start(Undertow.java:254)
+at org.springframework.boot.web.embedded.undertow.UndertowWebServer.start(UndertowWebServer.java:118)
+... 22 common frames omitted
+Caused by: java.net.BindException: \u5730\u5740\u5df2\u5728\u4f7f\u7528
+at java.base/sun.nio.ch.Net.bind0(Native Method)
+at java.base/sun.nio.ch.Net.bind(Net.java:555)
+at java.base/sun.nio.ch.ServerSocketChannelImpl.netBind(ServerSocketChannelImpl.java:337)
+at java.base/sun.nio.ch.ServerSocketChannelImpl.bind(ServerSocketChannelImpl.java:294)
+at java.base/sun.nio.ch.ServerSocketAdaptor.bind(ServerSocketAdaptor.java:89)
+at org.xnio.nio.NioXnioWorker.createTcpConnectionServer(NioXnioWorker.java:178)
+at org.xnio.XnioWorker.createStreamConnectionServer(XnioWorker.java:310)
+at io.undertow.Undertow.start(Undertow.java:196)
+... 23 common frames omitted

@@ -8,5 +8,6 @@
 bool KeyboardPagePolicy::supportsCustomKeyboard(const QString &pageKey)
 {
     return pageKey == QLatin1String("login")
-           || pageKey == QLatin1String("system");
+           || pageKey == QLatin1String("system")
+           || pageKey == QLatin1String("workbench");
 }

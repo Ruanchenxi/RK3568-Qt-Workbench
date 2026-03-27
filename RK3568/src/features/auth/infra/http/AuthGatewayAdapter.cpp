@@ -65,8 +65,18 @@ void AuthGatewayAdapter::loginByPassword(const PasswordCredential &credential)
 
 void AuthGatewayAdapter::loginByCard(const CardCredential &credential)
 {
-    Q_UNUSED(credential)
-    emit loginFailed(QStringLiteral("刷卡登录暂未启用"));
+    const QString cardNo = credential.cardNo.trimmed();
+    if (cardNo.isEmpty()) {
+        emit loginFailed(QStringLiteral("未检测到有效卡号"));
+        return;
+    }
+
+    QString tenantId = credential.tenantId.trimmed();
+    if (tenantId.isEmpty()) {
+        tenantId = QStringLiteral("000000");
+    }
+
+    m_auth->loginByCard(cardNo, tenantId);
 }
 
 void AuthGatewayAdapter::loginByFingerprint(const FingerprintCredential &credential)

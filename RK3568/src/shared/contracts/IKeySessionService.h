@@ -23,6 +23,8 @@ enum class CommandId
 {
     SetCom,
     InitKey,
+    QueryBattery,
+    SyncDeviceTime,
     QueryTasks,
     QueryTaskLog,
     DeleteTask,
@@ -49,6 +51,7 @@ struct KeySessionSnapshot
     qint64 lastBusinessSuccessMs = 0;
     qint64 lastProtocolFailureMs = 0;
     bool recoveryWindowActive = false;
+    int batteryPercent = -1;  ///< -1=未知/无效；0~100=钥匙当前电量百分比
     QString portName;
     QString verifiedPortName;  ///< 已验证的端口名（收到合法协议帧后锁定），空=未验证
 };

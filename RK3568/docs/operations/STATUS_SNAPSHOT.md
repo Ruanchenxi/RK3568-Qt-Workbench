@@ -2,9 +2,10 @@
 
 Status: Active  
 Owner: 项目维护者  
-Last Updated: 2026-03-16  
+Last Updated: 2026-03-26
 适用范围：快速说明“项目当前做到哪里、哪些链路可用、哪些仍待真机验证”。  
 不适用范围：不替代协议逐字节参考，不替代完整架构文档。  
+说明：本文件按历史增量持续追加，早期条目保留原编号，可能存在重复号或预留号；新增条目以最新事实为准。  
 
 ## 1. 当前阶段一句话
 
@@ -16,35 +17,43 @@ RK3568 主程序已完成“工作台 JSON 进入主程序 -> 系统票入池 ->
    - 默认 `127.0.0.1:8888`
    - 默认路径 `/ywticket/WebApi/transTicket`
    - 支持 `OPTIONS` 预检与跨域
+   - 启动日志当前会打印真实配置的 `host / port / path`
 2. 接收到的 JSON 会：
    - 落盘到 `logs/http_ticket_*.json`
    - 进入系统票池
    - 展示到钥匙管理页 `HTTP服务端报文`
    - 展示到钥匙管理页 `系统票数据`
-3. 主程序内已经移植传票协议纯逻辑：
+   - 只有在业务真正入池成功时才返回 `success=true`
+3. 当前本地 HTTP 接票入口的错误语义已收紧：
+   - 错路径：`404`
+   - 错方法：`405`
+   - 请求行非法 / `Content-Length` 缺失或非法 / JSON 无法入池：`400`
+4. 主程序内已经移植传票协议纯逻辑：
    - `JSON -> payload`
    - `payload -> frame(s)`
    - 单帧 / 多帧
    - ACK 驱动续发
-4. 手动传票入口已改成：
+5. 手动传票入口已改成：
    - 选中系统票
    - 点“传票”
    - 走主程序钥匙主链
-5. 自动传票逻辑已落地，并已开启默认值：
+6. 自动传票逻辑已落地，并已开启默认值：
    - `ticket/autoTransferEnabled=true`
    - 仍受串口连接、钥匙在位、钥匙稳定、`sessionReady` 共同约束
-6. 同一 `taskId` 在 `sending/success` 状态下再次触发时，当前默认忽略重复下发
-7. 若钥匙中的对应任务已被手动删除（DEL 成功），系统票会进入 `key-cleared`，允许后续再次传票
-8. 当前真机联调已确认：
+7. 同一 `taskId` 在 `sending/success` 状态下再次触发时，当前默认忽略重复下发
+   - HTTP 当前仍返回 `success=true`
+   - 但 `msg` 会区分“duplicate ignored / already sending / auto transfer disabled”等业务语义
+8. 若钥匙中的对应任务已被手动删除（DEL 成功），系统票会进入 `key-cleared`，允许后续再次传票
+9. 当前真机联调已确认：
    - 工作台 JSON 接收正常
    - 系统票入池正常
    - 手动传票主链可进入正式发送入口
    - 自动传票主链已开始真机验证
-9. 单帧回传主链已接入：
+10. 单帧回传主链已接入：
    - `Q_TASK(status=0x02) -> I_TASK_LOG -> ACK(5A 05 00 00) -> UP_TASK_LOG -> HTTP回传 -> DEL`
-10. `HTTP客户端报文` 页已能显示真实回传请求与响应
-11. 本地 `localhost` 后端可接受 `/finish-step-batch` 的 `POST application/json`
-12. 原产品与当前主程序都已证实：
+11. `HTTP客户端报文` 页已能显示真实回传请求与响应
+12. 本地 `localhost` 后端可接受 `/finish-step-batch` 的 `POST application/json`
+13. 原产品与当前主程序都已证实：
    - 工作台任务中的 `rfid` 与回传日志中的 `rfid` 不是同一个语义
    - 单步停电 / 送电的回传 `rfid` 可能不同
 13. 多帧 `UP_TASK_LOG` 回传代码已实现，并已通过 replay 场景验证
@@ -146,6 +155,155 @@ RK3568 主程序已完成“工作台 JSON 进入主程序 -> 系统票入池 ->
 42. 工作台页特例接入当前仍未开始做正式代码并入：
    - 当前不纳入自定义 QWidget 键盘主线
    - 后续若要支持，按特例方案单独设计
+43. 旧键盘清理口径已收口：
+   - `ui/keyboarddialog.ui` 属于历史 dialog 键盘方案，已不再属于当前正式主线
+   - 当前正式主线不再依赖这份历史 UI 壳
+44. 旧 Qt Virtual Keyboard 过渡链已退出当前工程主构建：
+   - `RK3568.pro` 不再装配 `resources/inputmethod.qrc`
+   - `src/app/app.pri` 不再编译 `QtVirtualKeyboardProvider.*` 和 `QtVirtualKeyboardDock.*`
+   - `InputMethodCoordinator.*` 仍保留在源码树中，作为历史评估壳与删除前条件参考
+   - `resources/inputmethod.qrc` 与 `src/app/qml/InputPanelHost.qml` 已退出工程装配
+   - `ui/mainwindow.ui` 的 `keyboardPage` 历史壳页已清理
+45. 当前阶段对旧键盘 / 旧输入法链只保留历史说明：
+   - 只读盘点
+   - 文档口径固化
+   - 不再把旧链带回主线设计、实现与评审
+46. 日常维护视角当前已进一步收口：
+   - `keyboarddialog.ui` 不再属于日常页面维护对象
+   - 旧 Qt Virtual Keyboard 过渡链不再进入日常开发主视野
+   - 只有在专项历史核对时，才需要重新查看这组文件
+47. 本轮清理后的主线判断以当前自定义 QWidget 键盘为准：
+   - 登录页与系统设置页继续走自定义键盘主线
+   - 旧链仅作为历史占位和兼容壳保留
+48. 当前可执行的下一步已切换为新主线维护：
+   - 继续补自定义键盘体验细节
+   - 继续完善页面级避让与字段判型
+   - 不再把旧 Qt Virtual Keyboard 过渡链纳入主线推进
+
+51. 2026-03-23 本地 HTTP 接票入口已收紧错误语义：
+   - 错路径：`404`
+   - 错方法：`405`
+   - request line / `Content-Length` / 非法 JSON / `taskId` 为空：`400`
+52. 2026-03-23 `TicketIngressService` 启动日志已改成打印真实配置：
+   - `ticket/httpIngressHost`
+   - `ticket/httpIngressPort`
+   - `ticket/httpIngressPath`
+53. 2026-03-23 `TicketIngressService` 当前不再“收到 POST 就 success=true”：
+   - 业务成功由 `KeyManageController -> TicketStore` 的真实入池结果决定
+   - 重复任务被业务忽略时，也会返回更准确的成功消息，而不是统一 `ticket accepted`
+54. 2026-03-24 系统设置页已进一步收口为更接近设备产品的简化形态：
+   - 基础配置页主按钮统一为 `保存并应用`
+   - `baudRate / dataBits` 已降级为固定参数说明
+   - `keySerialCombo / cardSerialCombo` 保持统一下拉选择器外观
+55. 2026-03-24 主窗口底部状态栏已收口为更明确的设备态展示：
+   - 公司名口径为 `珠海云望科技有限公司`
+   - 底部当前用户显示直接读取登录用户名
+   - 角色信息单独显示
+56. 2026-03-24 服务日志策略已重新收回到更接近原产品的口径：
+   - 默认 `service/forceRestartScript=false`
+   - 服务健康时不重启脚本
+   - 服务异常时，再按当前模式决定是否恢复
+57. 2026-03-24 服务日志来源已收口为“真实服务侧日志优先”：
+   - 优先 `service_startup.log`
+   - Linux 板端继续识别 `/home/linaro/outage/target/kids/log/*.log`
+   - Windows 本地不再默认拿前端 `app.log` 冒充服务日志
+58. 2026-03-24 当前若手动开启强制重启脚本，运行时仍支持更激进的恢复口径：
+   - Windows：识别不到进程名时仍可按 PID 尝试终止
+   - Linux：`fuser` 不存在时会自动回退 `ss` 查 PID 再杀
+   - 但这条路径默认关闭，仅作为应急恢复能力保留
+59. 2026-03-24 已确认原产品 `AdapterService` 的 Linux 服务恢复链：
+   - 前端原产品进程是 `/home/linaro/AdapterService/bin/AdapterService`
+   - 后端恢复脚本是 `/home/linaro/outage/start.sh`
+   - 脚本本身只显式处理 `8081`，随后直接 `cd /home/linaro/outage && java -jar outage-api.jar`
+60. 2026-03-24 当前 Linux 板端服务日志口径已继续向原产品对齐：
+   - 优先读取 `/home/linaro/outage/target/kids/log/info-当天.log`
+   - 优先读取 `/home/linaro/outage/target/kids/log/error-当天.log`
+   - 不再把前端 `run.log / app.log` 视为板端服务日志主来源
+61. 2026-03-24 系统设置页的 `保存并应用` 按钮已补双层保障：
+   - `.ui` 静态样式中直接可见，方便 Qt Designer 调整
+   - `systempage.cpp` 运行时仍会再次显式设尺寸、样式与抬层级，提升板端稳定性
+62. 2026-03-25 刷卡登录主链已按原产品口径接入第一版：
+   - 登录页接入 `CardSerialSource`
+   - Linux 板端默认读 `/dev/ttyS3`
+   - 当前固定按 `9600 8-N-1` 打开读卡串口
+   - 采用 8 字节定长帧流式解析，不按“一次 readyRead 就是一条消息”处理
+63. 2026-03-25 原产品抓包真值已并入当前实现：
+   - 刷卡帧示例：`AA 31 08 00 49 A7 E0 06`
+   - 实际上送后端的 `cardNo` 为 `080049a7e006`
+   - 实际请求体为 `{\"cardNo\":\"080049a7e006\",\"tenantId\":\"000000\"}`
+   - 请求接口为 `POST /api/kids-outage/third-api/login-by-card`
+64. 2026-03-25 刷卡登录成功后的状态传播继续复用密码登录主链：
+   - `AuthService::saveToken()` 仍负责写入 token 与 `AppContext`
+   - `LoginPage -> MainWindow` 的成功回调链保持不变
+   - 顶部用户名、底部当前用户、页面跳转与权限刷新不需要单独重写
+65. 2026-03-25 系统设置页“用户身份采集”开始接入真实采卡闭环：
+   - 不再使用阻塞式“准备采卡”占位弹窗
+   - 改为页内提示“选择用户 -> 刷卡 -> 保存卡号”
+   - 采卡阶段复用与登录页相同的 `CardSerialSource`
+66. 2026-03-25 用户身份采集页后端接口口径已收口：
+   - 刷新用户默认回退到 `POST /list-user`
+   - 保存卡号默认调用 `POST /update-card-no`
+   - 保存请求体固定为 `{"userId":"...","cardNo":"..."}` 
+67. 2026-03-25 用户身份采集页当前依赖后端返回 `userId`：
+   - 若用户列表接口只返回账号字符串、不返回 `userId`
+   - 页面会允许查看用户，但会阻止“采集卡号”落库，并明确提示原因
+68. 2026-03-25 系统页 `list-user / update-card-no` 业务请求当前改为优先带登录 token：
+   - 若已登录，按后端文档发送 `kids-auth: bearer <accessToken>`
+   - 同时保留 `kids-requested-with: KidsHttpRequest`
+   - 不再把 `Authorization: Basic` 或 `Blade-Auth` 当作系统页业务接口默认认证头
+69. 2026-03-25 Linux 板端增加一轮读卡串口迁移：
+   - 若旧配置仍残留 `/dev/ttyACM0`
+   - 且板端存在 `/dev/ttyS3`
+   - 程序会自动迁到 `/dev/ttyS3`
+70. 2026-03-26 用户身份采集页已进一步按原产品权限边界收口：
+   - `list-user` 对普通已登录角色可读
+   - `update-card-no` 当前以后端权限为准，管理员可操作，审核等普通角色会被拒绝
+   - 前端当前已同步改为：非管理员仅可查看用户列表，不可采集或删除卡号
+71. 2026-03-26 用户身份采集页当前交互已收口为更安全的设备侧流程：
+   - 表格固定显示垂直滚动条，适配 1024x768 板端
+   - 指纹列默认摘要显示，完整值通过 tooltip 查看
+   - 新增 `删除卡号` 按钮
+   - 若刷到的卡已绑定其他用户，前端会直接提示“请先删除原绑定后再采集”，不再把后端 `400 Bad Request` 直接暴露给用户
+72. 2026-03-26 用户身份采集页与原产品权限验证结果已固化：
+   - `s1/audit` 等普通角色：`list-user` 可读，但 `update-card-no` 会被后端拒绝
+   - `admin/administrator`：可执行 `删除卡号 / 采集卡号`
+   - 前端当前已主动按此规则置灰非管理员操作按钮，减少无效操作
+73. 2026-03-26 登录页已补第一版“服务就绪门禁”：
+   - 登录页显示时会轻量探测 `list-account`
+   - 只有探测返回正常后，才开放账号密码登录与刷卡登录
+   - 服务未就绪时，页面会提示“服务启动中，请稍候”
+74. 2026-03-26 用户身份采集页已补原产品风格占位按钮：
+   - `删除指纹`
+   - `采指纹`
+   当前仅做静态展示与权限提示，功能尚未接入
+75. 2026-03-26 当前产品口径已明确：
+   - “服务日志页打开”不等于“后端服务已 ready”
+   - 登录门禁以后端探测结果为准
+   - 服务日志页只承担日志查看与服务侧状态观察
+76. 2026-03-26 当前切换用户不会主动重启后端服务：
+   - 主窗口切换用户只更新登录态与页面可访问状态
+   - Linux 默认 `remote` 模式下，通常在首次显示日志页时启动日志控制器
+   - 非 Linux `remote` 模式下，也可能在日志页构造阶段直接启动
+   - 当前主链更偏向“检查服务可达 + 跟踪日志”，不是每次都重新执行本地启动脚本
+77. 2026-03-26 底部硬件状态栏已开始从占位文案改为真实状态链：
+   - 读卡器状态当前已接入 `CardSerialSource` 的状态变化
+   - 当前可区分：`空闲 / 检测中 / 就绪 / 异常 / 未配置串口`
+   - 指纹仪当前明确显示为 `未接入`
+78. 2026-03-26 当前读卡器状态实现仍是“页内读卡源复用”方案：
+   - 底部状态当前跟随登录页/系统设置页中的读卡源生命周期
+   - 这样优先避免多个对象争抢 `/dev/ttyS3`
+   - 尚未升级为独立常驻的全局硬件探测服务
+79. 2026-03-26 登录页服务就绪探测已收口为异步轮询：
+   - 不再在 GUI 线程里通过同步 `QEventLoop` 阻塞等待探测结果
+   - 服务未就绪时仍保持门禁，但不会周期性拖慢登录页触摸与键盘交互
+
+补充说明（2026-03-20）：
+
+1. 旧 Qt Virtual Keyboard 过渡链已从当前工程主构建中退出。
+2. `RK3568.pro` 已不再装配 `resources/inputmethod.qrc`。
+3. `src/app/app.pri` 已不再编译 `QtVirtualKeyboardProvider.*` 和 `QtVirtualKeyboardDock.*`。
+4. `InputMethodCoordinator.*` 仍保留在源码树中，作为历史评估壳与删除前条件参考。
+5. `resources/inputmethod.qrc` 与 `src/app/qml/InputPanelHost.qml` 已退出工程装配。
 
 ## 3. 当前页面能力
 
@@ -236,3 +394,18 @@ RK3568 主程序已完成“工作台 JSON 进入主程序 -> 系统票入池 ->
 6. `刷新本地系统票列表` 当前仅刷新主程序本地票池，不会重新向工作台/后端主动拉票
 7. `transferState` 表示“主程序对传票下发状态的本地判断”，不是钥匙侧真值；当本地状态和钥匙真实任务状态冲突时，当前以 `Q_TASK` 结果做对账修正
 8. 顶部“通讯”状态不再只看 `SET_COM ACK`；当前只有在握手完成后又拿到一次真实业务响应（例如 `Q_TASK / I_TASK_LOG / UP_TASK_LOG`）才视为“钥匙已就绪”
+
+## 9. 2026-03-23 键盘口径补充
+
+1. 当前页面能力已按产品边界收口：
+   - 登录页 / 系统设置页：完整支持
+   - 工作台页：条件支持（必须先聚焦网页输入元素）
+   - 钥匙管理页：当前不作为有效输入页
+   - 服务日志页：当前不支持
+2. 工作台页当前已进入特例 bridge 阶段：
+   - 不按普通 Widgets 输入页处理
+   - 只有在网页当前焦点位于可编辑元素时，才允许打开并输入
+3. 主窗口已增加跨页键盘收口：
+   - 页面切换时统一收起键盘
+   - 清空上一个页面的输入目标
+   - 复位顶部键盘按钮状态

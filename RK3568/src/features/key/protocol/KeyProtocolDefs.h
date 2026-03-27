@@ -34,6 +34,7 @@ static constexpr quint8  Addr2DefaultHi = 0x00;  ///< SET_COM/Q_TASK/Q_KEYEQ：H
 // ---------- 命令码 ----------
 static constexpr quint8  CmdSetCom      = 0x0F;  ///< 握手命令
 static constexpr quint8  CmdInit        = 0x02;  ///< 初始化电脑钥匙
+static constexpr quint8  CmdSetTime     = 0x09;  ///< 校时（7 字节时间同步）
 static constexpr quint8  CmdQTask       = 0x04;  ///< 查询任务列表
 static constexpr quint8  CmdITaskLog    = 0x05;  ///< 请求任务操作日志
 static constexpr quint8  CmdDel         = 0x06;  ///< 删除任务

@@ -1,6 +1,6 @@
 /**
  * @file logpage.cpp
- * @brief 服务日志页面（仅负责日志渲染）
+ * @brief 服务日志页面（静态骨架在 .ui，动态逻辑在 .cpp）
  */
 
 #include "logpage.h"
@@ -9,36 +9,39 @@
 #include "features/log/application/LogController.h"
 #include "core/ConfigManager.h"
 
-#include <QPlainTextEdit>
 #include <QShowEvent>
+#include <QPlainTextEdit>
 #include <QTextCursor>
+#include <QTextOption>
+
+namespace
+{
+void scrollToEnd(QPlainTextEdit *logDisplay)
+{
+    if (!logDisplay) {
+        return;
+    }
+
+    QTextCursor cursor = logDisplay->textCursor();
+    cursor.movePosition(QTextCursor::End);
+    logDisplay->setTextCursor(cursor);
+}
+}
 
 LogPage::LogPage(QWidget *parent)
     : QWidget(parent),
       ui(new Ui::LogPage),
-      m_logDisplay(nullptr),
       m_controller(new LogController(nullptr, this)),
-      m_started(false),
-      m_visibleOnce(false)
+      m_started(false)
 {
     ui->setupUi(this);
-    initServiceLog();
+    ui->logDisplay->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+    ui->logDisplay->setWordWrapMode(QTextOption::WrapAnywhere);
 
     connect(m_controller, &LogController::logGenerated,
             this, &LogPage::onServiceLogGenerated);
 
-    bool startImmediately = true;
-#ifdef Q_OS_LINUX
-    const QString startMode = ConfigManager::instance()
-            ->value("service/startMode", QStringLiteral("remote"))
-            .toString()
-            .trimmed()
-            .toLower();
-    if (startMode == QLatin1String("remote")) {
-        startImmediately = false;
-    }
-#endif
-    if (startImmediately) {
+    if (shouldStartControllerOnConstruction()) {
         ensureStarted();
     }
 }
@@ -55,9 +58,24 @@ LogPage::~LogPage()
 void LogPage::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
-    m_visibleOnce = true;
     ensureStarted();
-    flushPendingLogs();
+    flushBufferedLogs();
+}
+
+bool LogPage::shouldStartControllerOnConstruction() const
+{
+    bool startImmediately = true;
+#ifdef Q_OS_LINUX
+    const QString startMode = ConfigManager::instance()
+            ->value("service/startMode", QStringLiteral("remote"))
+            .toString()
+            .trimmed()
+            .toLower();
+    if (startMode == QLatin1String("remote")) {
+        startImmediately = false;
+    }
+#endif
+    return startImmediately;
 }
 
 void LogPage::ensureStarted()
@@ -70,67 +88,30 @@ void LogPage::ensureStarted()
     m_started = true;
 }
 
-void LogPage::flushPendingLogs()
+void LogPage::flushBufferedLogs()
 {
-    if (!m_logDisplay || !isVisible() || m_pendingLogs.isEmpty()) {
+    if (!ui || !ui->logDisplay || !isVisible() || m_pendingLogs.isEmpty()) {
         return;
     }
 
-    m_logDisplay->setUpdatesEnabled(false);
+    ui->logDisplay->setUpdatesEnabled(false);
     for (const QString &text : qAsConst(m_pendingLogs)) {
-        m_logDisplay->appendPlainText(text);
+        ui->logDisplay->appendPlainText(text);
     }
-    m_logDisplay->setUpdatesEnabled(true);
+    ui->logDisplay->setUpdatesEnabled(true);
     m_pendingLogs.clear();
 
-    QTextCursor cursor = m_logDisplay->textCursor();
-    cursor.movePosition(QTextCursor::End);
-    m_logDisplay->setTextCursor(cursor);
-}
-
-void LogPage::initServiceLog()
-{
-    m_logDisplay = new QPlainTextEdit(this);
-    m_logDisplay->setReadOnly(true);
-    m_logDisplay->setMaximumBlockCount(5000);
-
-    m_logDisplay->setStyleSheet(
-        "QPlainTextEdit {"
-        "  background-color: #1E1E1E;"
-        "  color: #00FF00;"
-        "  border: 1px solid #333333;"
-        "  border-radius: 6px;"
-        "  padding: 10px;"
-        "  font-family: 'Consolas', 'Courier New', monospace;"
-        "  font-size: 12px;"
-        "  line-height: 1.4;"
-        "}"
-        "QPlainTextEdit QScrollBar:vertical {"
-        "  background-color: #2A2A2A;"
-        "  width: 10px;"
-        "}"
-        "QPlainTextEdit QScrollBar::handle:vertical {"
-        "  background-color: #555555;"
-        "  border-radius: 5px;"
-        "}"
-        "QPlainTextEdit QScrollBar::handle:vertical:hover {"
-        "  background-color: #777777;"
-        "}");
-
-    if (ui->layoutLog)
-    {
-        ui->layoutLog->addWidget(m_logDisplay);
-    }
+    scrollToEnd(ui->logDisplay);
 }
 
 void LogPage::onServiceLogGenerated(const QString &text)
 {
-    appendLog(text);
+    appendOrBufferLog(text);
 }
 
-void LogPage::appendLog(const QString &text)
+void LogPage::appendOrBufferLog(const QString &text)
 {
-    if (!m_logDisplay)
+    if (!ui || !ui->logDisplay)
     {
         return;
     }
@@ -140,8 +121,6 @@ void LogPage::appendLog(const QString &text)
         return;
     }
 
-    m_logDisplay->appendPlainText(text);
-    QTextCursor cursor = m_logDisplay->textCursor();
-    cursor.movePosition(QTextCursor::End);
-    m_logDisplay->setTextCursor(cursor);
+    ui->logDisplay->appendPlainText(text);
+    scrollToEnd(ui->logDisplay);
 }

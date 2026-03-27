@@ -56,3 +56,13 @@ compile_commands.json
 build/
 build-*/
 *.pro.user
+
+# Historical/temporary local artifacts
+build-agent/
+tmp_*.log
+tmp_*.cmd
+tmp_*.cpp
+tmp_*.h
+tmp_*.txt
+tmp_doc/
+tmp_keyboard_mockups/

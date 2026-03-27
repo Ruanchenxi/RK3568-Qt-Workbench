@@ -8,6 +8,7 @@
 #include <QCoreApplication>
 #include <QHostAddress>
 #include <QJsonDocument>
+#include <QJsonObject>
 
 #include "core/ConfigManager.h"
 
@@ -29,10 +30,17 @@ TicketIngressService::TicketIngressService(QObject *parent)
             this, &TicketIngressService::onNewConnection);
 }
 
+void TicketIngressService::setIngressHandler(IngressHandler handler)
+{
+    m_ingressHandler = std::move(handler);
+}
+
 bool TicketIngressService::start()
 {
     const QHostAddress host(ConfigManager::instance()->value("ticket/httpIngressHost", "127.0.0.1").toString());
     const quint16 port = static_cast<quint16>(ConfigManager::instance()->value("ticket/httpIngressPort", 8888).toUInt());
+    const QString path = ConfigManager::instance()
+            ->value("ticket/httpIngressPath", "/ywticket/WebApi/transTicket").toString();
 
     if (m_server->isListening())
         return true;
@@ -42,9 +50,15 @@ bool TicketIngressService::start()
         return false;
     }
 
+    m_listenHost = host.toString();
+    m_listenPort = port;
+    m_listenPath = path;
+
     emit httpServerLogAppended(QString::fromUtf8(
-        "[HTTP-INGRESS] listening http://%1:%2/ywticket/WebApi/transTicket")
-        .arg(host.toString()).arg(port));
+        "[HTTP-INGRESS] listening host=%1 port=%2 path=%3")
+        .arg(m_listenHost)
+        .arg(m_listenPort)
+        .arg(m_listenPath));
     return true;
 }
 
@@ -88,13 +102,21 @@ void TicketIngressService::tryProcessRequest(QTcpSocket *socket)
     const QByteArray requestLine = (firstLineEnd > 0) ? headerBlock.left(firstLineEnd) : headerBlock;
     const QList<QByteArray> parts = requestLine.split(' ');
     if (parts.size() < 3) {
+        emit httpServerLogAppended(QString::fromUtf8(
+            "[%1] malformed request line -> 400 Bad Request")
+            .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz")));
         sendResponse(socket, 400, "Bad Request",
-                     R"({"success":false,"msg":"bad request line"})");
+                     buildJsonResponseBody(false, 400, QStringLiteral("bad request line")));
         return;
     }
 
     const QByteArray method = parts[0];
     const QByteArray path = parts[1];
+    const QString methodText = QString::fromLatin1(method).toUpper();
+    const QString pathText = QString::fromLatin1(path);
+
+    bool contentLengthSeen = false;
+    bool contentLengthOk = true;
     int contentLength = 0;
     const QList<QByteArray> lines = headerBlock.mid(firstLineEnd + 2).split('\n');
     for (const QByteArray &line : lines) {
@@ -104,44 +126,116 @@ void TicketIngressService::tryProcessRequest(QTcpSocket *socket)
             continue;
         const QByteArray key = trimmed.left(colon).trimmed().toLower();
         const QByteArray val = trimmed.mid(colon + 1).trimmed();
-        if (key == "content-length")
-            contentLength = val.toInt();
+        if (key == "content-length") {
+            contentLengthSeen = true;
+            bool ok = false;
+            contentLength = val.toInt(&ok);
+            contentLengthOk = ok && contentLength >= 0;
+        }
+    }
+
+    if (pathText != m_listenPath) {
+        emit httpServerLogAppended(QString::fromUtf8(
+            "[%1] %2 %3 -> 404 Not Found (expected path: %4)")
+            .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"))
+            .arg(methodText)
+            .arg(pathText)
+            .arg(m_listenPath));
+        sendResponse(socket, 404, "Not Found",
+                     buildJsonResponseBody(false, 404, QStringLiteral("ingress path not found")));
+        return;
     }
 
     const int bodyAvailable = buf.size() - bodyOffset;
-    if (bodyAvailable < contentLength)
+    if ((method == "POST" || method == "OPTIONS") && contentLengthSeen && bodyAvailable < contentLength)
         return;
-
-    const QByteArray body = buf.mid(bodyOffset, contentLength);
-    buf.clear();
-
-    const QString targetPath = ConfigManager::instance()
-            ->value("ticket/httpIngressPath", "/ywticket/WebApi/transTicket").toString();
 
     if (method == "OPTIONS") {
         emit httpServerLogAppended(QString::fromUtf8(
             "[%1] OPTIONS %2 -> 200 OK")
             .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"))
-            .arg(QString::fromLatin1(path)));
+            .arg(pathText));
+        buf.clear();
         sendCorsPreflightResponse(socket);
-    } else if (method == "POST" && QString::fromLatin1(path) == targetPath) {
-        const QString savedPath = saveBodyToFile(body);
-        const QJsonDocument doc = QJsonDocument::fromJson(body);
-        QString pretty = QString::fromUtf8(body);
-        if (!doc.isNull())
-            pretty = QString::fromUtf8(doc.toJson(QJsonDocument::Indented));
-
-        emit httpServerLogAppended(QString::fromUtf8(
-            "[%1] POST %2\n已保存到: %3\n%4")
-            .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"))
-            .arg(targetPath)
-            .arg(savedPath)
-            .arg(pretty));
-        emit jsonReceived(body, savedPath);
-        sendResponse(socket, 200, "OK", R"({"success":true,"msg":"ok"})");
-    } else {
-        sendResponse(socket, 200, "OK", R"({"success":false,"msg":"not found"})");
+        return;
     }
+
+    if (method != "POST") {
+        emit httpServerLogAppended(QString::fromUtf8(
+            "[%1] %2 %3 -> 405 Method Not Allowed")
+            .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"))
+            .arg(methodText)
+            .arg(pathText));
+        sendResponse(socket, 405, "Method Not Allowed",
+                     buildJsonResponseBody(false, 405, QStringLiteral("method not allowed")));
+        return;
+    }
+
+    if (!contentLengthSeen || !contentLengthOk) {
+        emit httpServerLogAppended(QString::fromUtf8(
+            "[%1] POST %2 -> 400 Bad Request (invalid Content-Length)")
+            .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"))
+            .arg(pathText));
+        sendResponse(socket, 400, "Bad Request",
+                     buildJsonResponseBody(false, 400, QStringLiteral("invalid content-length")));
+        return;
+    }
+
+    const QByteArray body = buf.mid(bodyOffset, contentLength);
+    buf.clear();
+
+    if (!m_ingressHandler) {
+        emit httpServerLogAppended(QString::fromUtf8(
+            "[%1] POST %2 -> 500 Internal Server Error (ingress handler missing)")
+            .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"))
+            .arg(pathText));
+        sendResponse(socket, 500, "Internal Server Error",
+                     buildJsonResponseBody(false, 500, QStringLiteral("ingress handler missing")));
+        return;
+    }
+
+    const QString savedPath = saveBodyToFile(body);
+    const QJsonDocument doc = QJsonDocument::fromJson(body);
+    QString pretty = QString::fromUtf8(body);
+    if (!doc.isNull())
+        pretty = QString::fromUtf8(doc.toJson(QJsonDocument::Indented));
+
+    const IngressResult result = m_ingressHandler(body, savedPath);
+    const int statusCode = result.statusCode > 0 ? result.statusCode : (result.accepted ? 200 : 400);
+    const QByteArray statusText = result.accepted ? QByteArrayLiteral("OK")
+                                                  : (statusCode == 404 ? QByteArrayLiteral("Not Found")
+                                                                       : (statusCode == 405 ? QByteArrayLiteral("Method Not Allowed")
+                                                                                            : (statusCode == 500 ? QByteArrayLiteral("Internal Server Error")
+                                                                                                                 : QByteArrayLiteral("Bad Request"))));
+
+    emit httpServerLogAppended(QString::fromUtf8(
+        "[%1] POST %2 -> %3 %4%5\n已保存到: %6\n%7")
+        .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"))
+        .arg(pathText)
+        .arg(statusCode)
+        .arg(result.accepted ? QStringLiteral("ACCEPTED") : QStringLiteral("REJECTED"))
+        .arg(result.taskId.isEmpty() ? QString() : QStringLiteral(" taskId=%1").arg(result.taskId))
+        .arg(savedPath)
+        .arg(pretty));
+
+    if (!result.accepted && !result.message.trimmed().isEmpty()) {
+        emit httpServerLogAppended(QString::fromUtf8(
+            "[HTTP-INGRESS] business reject reason: %1")
+            .arg(result.message));
+    }
+
+    if (result.accepted) {
+        emit jsonReceived(body, savedPath);
+    }
+
+    sendResponse(socket, statusCode, statusText,
+                 buildJsonResponseBody(result.accepted,
+                                       statusCode,
+                                       result.message.isEmpty()
+                                           ? (result.accepted ? QStringLiteral("ticket accepted")
+                                                              : QStringLiteral("ticket ingest failed"))
+                                           : result.message,
+                                       result.taskId));
 }
 
 void TicketIngressService::sendResponse(QTcpSocket *socket, int statusCode,
@@ -168,7 +262,23 @@ void TicketIngressService::sendResponse(QTcpSocket *socket, int statusCode,
 
 void TicketIngressService::sendCorsPreflightResponse(QTcpSocket *socket)
 {
-    sendResponse(socket, 200, "OK", R"({"success":true,"msg":"ok"})");
+    sendResponse(socket, 200, "OK",
+                 buildJsonResponseBody(true, 200, QStringLiteral("preflight ok")));
+}
+
+QByteArray TicketIngressService::buildJsonResponseBody(bool success,
+                                                       int code,
+                                                       const QString &message,
+                                                       const QString &taskId) const
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("success"), success);
+    obj.insert(QStringLiteral("code"), code);
+    obj.insert(QStringLiteral("msg"), message);
+    if (!taskId.trimmed().isEmpty()) {
+        obj.insert(QStringLiteral("taskId"), taskId);
+    }
+    return QJsonDocument(obj).toJson(QJsonDocument::Compact);
 }
 
 QString TicketIngressService::saveBodyToFile(const QByteArray &body) const

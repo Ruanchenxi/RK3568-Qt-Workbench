@@ -105,6 +105,13 @@ QString bcd6ToDateTimeString(const QByteArray &bytes)
             .arg(part(0), part(1), part(2), part(3), part(4), part(5));
 }
 
+quint8 toBcdByte(int value)
+{
+    const int tens = qBound(0, value / 10, 9);
+    const int ones = qBound(0, value % 10, 9);
+    return static_cast<quint8>((tens << 4) | ones);
+}
+
 } // namespace
 
 /**
@@ -161,6 +168,7 @@ KeySerialClient::KeySerialClient(ISerialTransport *transport, QObject *parent)
     , m_lastBusinessSuccessMs(0)
     , m_lastProtocolFailureMs(0)
     , m_recoveryWindowActive(false)
+    , m_batteryPercent(-1)
     , m_qtaskSawFrameHeader(false)
     , m_qtaskProbeInFlight(false)
     , m_resyncDropBytes(0)
@@ -276,6 +284,7 @@ bool KeySerialClient::connectPort(const QString &portName, int baud)
     m_lastBusinessSuccessMs = 0;
     m_lastProtocolFailureMs = 0;
     m_recoveryWindowActive = false;
+    m_batteryPercent = -1;
     m_deferredInFlightType = INFLIGHT_NONE;
     m_deferredDeleteTaskId.clear();
     clearTicketTransferState();
@@ -339,6 +348,7 @@ void KeySerialClient::disconnectPort()
     m_lastBusinessSuccessMs = 0;
     m_lastProtocolFailureMs = 0;
     m_recoveryWindowActive = false;
+    m_batteryPercent = -1;
     m_deferredInFlightType = INFLIGHT_NONE;
     m_deferredDeleteTaskId.clear();
     clearTicketTransferState();
@@ -380,6 +390,31 @@ void KeySerialClient::queryTasksAll()
     queryTasksAllInternal(false, false);
 }
 
+void KeySerialClient::queryBattery()
+{
+    if (!m_serial->isOpen()) {
+        emitNotice("Q_KEYEQ 失败：串口未连接");
+        return;
+    }
+    if (m_inFlight) {
+        emitNotice("Q_KEYEQ 失败：当前有命令在途");
+        return;
+    }
+    if (!m_keyPlaced || !m_keyStable || !m_sessionReady) {
+        emitNotice("Q_KEYEQ 失败：钥匙未就绪");
+        return;
+    }
+
+    log("发送 Q_KEYEQ(0x14) 查询钥匙电量...");
+    drainBeforeBusinessSend("Q_KEYEQ");
+
+    QByteArray addr2;
+    addr2.append(static_cast<char>(KeyProtocol::Addr2DefaultLo));
+    addr2.append(static_cast<char>(KeyProtocol::Addr2DefaultHi));
+    const QByteArray frame = buildFrame(CMD_Q_KEYEQ, QByteArray(), addr2);
+    sendFrame(frame, CMD_Q_KEYEQ, INFLIGHT_QKEYEQ);
+}
+
 void KeySerialClient::refreshHandshake()
 {
     if (!m_serial->isOpen()) {
@@ -391,6 +426,44 @@ void KeySerialClient::refreshHandshake()
         return;
     }
     sendSetComHandshake("manual refresh");
+}
+
+void KeySerialClient::syncDeviceTime()
+{
+    if (!m_serial->isOpen()) {
+        emitNotice("SET_TIME 失败：串口未连接");
+        return;
+    }
+    if (m_inFlight) {
+        emitNotice("SET_TIME 失败：当前有命令在途");
+        return;
+    }
+    if (!m_keyPlaced || !m_keyStable || !m_sessionReady) {
+        emitNotice("SET_TIME 失败：钥匙未就绪");
+        return;
+    }
+
+    // 原产品 2026-03-20 抓包已确认：SET_TIME(0x09) 的 payload 为 7 字节 BCD 时间：
+    // [century][year][month][day][hour][minute][second]，如 2026-03-20 16:15:10
+    // -> 20 26 03 20 16 15 10。
+    const QDateTime now = QDateTime::currentDateTime();
+    QByteArray payload;
+    payload.append(static_cast<char>(toBcdByte(now.date().year() / 100)));
+    payload.append(static_cast<char>(toBcdByte(now.date().year() % 100)));
+    payload.append(static_cast<char>(toBcdByte(now.date().month())));
+    payload.append(static_cast<char>(toBcdByte(now.date().day())));
+    payload.append(static_cast<char>(toBcdByte(now.time().hour())));
+    payload.append(static_cast<char>(toBcdByte(now.time().minute())));
+    payload.append(static_cast<char>(toBcdByte(now.time().second())));
+
+    log(QString("发送 SET_TIME(0x09) 校时: %1").arg(now.toString("yyyy-MM-dd hh:mm:ss")));
+    drainBeforeBusinessSend("SET_TIME");
+
+    QByteArray addr2;
+    addr2.append(static_cast<char>(KeyProtocol::Addr2DefaultLo));
+    addr2.append(static_cast<char>(KeyProtocol::Addr2DefaultHi));
+    const QByteArray frame = buildFrame(CMD_SET_TIME, payload, addr2);
+    sendFrame(frame, CMD_ACK, INFLIGHT_SETTIME);
 }
 
 void KeySerialClient::requestTaskLog(const QByteArray &taskId16)
@@ -1292,6 +1365,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
                 m_qtaskProbeInFlight = false;
                 m_deferredInFlightType = INFLIGHT_NONE;
                 m_deferredDeleteTaskId.clear();
+                m_batteryPercent = -1;
                 m_keyPlacedElapsed.invalidate();
                 m_lastNoiseElapsed.invalidate();
                 log("  >> [EVENT] KEY_REMOVED (钥匙拿走)");
@@ -1310,6 +1384,43 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
         return;
     }
 
+    // --- Q_KEYEQ 电量响应 (0x14) ---
+    if (cmd == CMD_Q_KEYEQ) {
+        const bool matched = (m_inFlightType == INFLIGHT_QKEYEQ);
+        if (matched) {
+            stopRetryTimer();
+            clearInFlight();
+        } else if (m_inFlight) {
+            emitLog(LogDir::WARN, CMD_Q_KEYEQ, lenField,
+                    QString("Q_KEYEQ resp ignored while cmd=%1 in-flight")
+                        .arg(m_inFlightType),
+                    frame, true, true);
+            return;
+        }
+
+        int batteryPercent = -1;
+        if (dataLen >= 1) {
+            const quint8 batteryByte = static_cast<quint8>(data[0]);
+            if (batteryByte <= 100) {
+                batteryPercent = batteryByte;
+            }
+        }
+
+        m_batteryPercent = batteryPercent;
+        noteBusinessSuccess(QStringLiteral("Q_KEYEQ response"));
+        setProtocolHealthy(true, QStringLiteral("Q_KEYEQ response"));
+        emit stateFlagsChanged();
+
+        const QString summary = (batteryPercent >= 0)
+                ? QString("Q_KEYEQ resp: battery=%1%").arg(batteryPercent)
+                : QStringLiteral("Q_KEYEQ resp: battery=invalid");
+        emitLog(LogDir::RX, CMD_Q_KEYEQ, lenField, summary, frame);
+        emitNotice(batteryPercent >= 0
+                       ? QString("钥匙当前电量：%1%").arg(batteryPercent)
+                       : QStringLiteral("钥匙电量返回无效值"));
+        return;
+    }
+
     // --- ACK (0x5A) ---
     if (cmd == CMD_ACK) {
         quint8 ackedCmd = dataLen > 0 ? static_cast<quint8>(data[0]) : 0x00;
@@ -1320,6 +1431,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
         QString ackSummary = QString("ACK for 0x%1").arg(ackedCmd, 2, 16, QChar('0'));
         switch (ackedCmd) {
         case CMD_SET_COM: ackSummary = "ACK for SET_COM"; break;
+        case CMD_SET_TIME: ackSummary = "ACK for SET_TIME"; break;
         case CMD_DEL:     ackSummary = "ACK for DEL"; break;
         case CMD_INIT:    ackSummary = "ACK for INIT"; break;
         case static_cast<quint8>(CMD_INIT | 0x80): ackSummary = "ACK for INIT_MORE"; break;
@@ -1330,6 +1442,8 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
 
         bool matched = false;
         if (m_inFlightType == INFLIGHT_SETCOM && ackedCmd == CMD_SET_COM)
+            matched = true;
+        else if (m_inFlightType == INFLIGHT_SETTIME && ackedCmd == CMD_SET_TIME)
             matched = true;
         else if (m_inFlightType == INFLIGHT_DEL && ackedCmd == CMD_DEL)
             matched = true;
@@ -1361,6 +1475,8 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
             m_sessionReady = true;
             markPortVerified("SET_COM ACK");
             scheduleStartupProbeQTask();
+        } else if (matched && ackedCmd == CMD_SET_TIME) {
+            emitNotice(QStringLiteral("钥匙校时完成"));
         }
 
         if (matched
@@ -1796,7 +1912,9 @@ void KeySerialClient::sendFrame(const QByteArray &frame, quint8 expectedAckCmd,
     case CMD_INIT: txSummary = "INIT send"; break;
     case static_cast<quint8>(CMD_INIT | 0x80): txSummary = "INIT_MORE send"; break;
     case CMD_SET_COM: txSummary = "SET_COM send"; break;
+    case CMD_SET_TIME: txSummary = "SET_TIME send"; break;
     case CMD_Q_TASK:  txSummary = "Q_TASK(all) send"; break;
+    case CMD_Q_KEYEQ: txSummary = "Q_KEYEQ send"; break;
     case CMD_I_TASK_LOG: txSummary = "I_TASK_LOG send"; break;
     case CMD_DN_RFID: txSummary = "DN_RFID send"; break;
     case static_cast<quint8>(CMD_DN_RFID | 0x80): txSummary = "DN_RFID_MORE send"; break;
@@ -2405,6 +2523,7 @@ void KeySerialClient::onSerialError(int errorCode, const QString &errorMessage)
     m_protocolConfirmedOnce = false;
     m_deferredInFlightType = INFLIGHT_NONE;
     m_deferredDeleteTaskId.clear();
+    m_batteryPercent = -1;
     clearTicketTransferState();
     clearDataTransferState();
     clearTaskLogState();
@@ -2459,6 +2578,10 @@ void KeySerialClient::onRetryTimeout()
         QString cmdName = QString("0x%1").arg(timeoutCmd, 2, 16, QChar('0')).toUpper();
         if (timeoutInFlight == INFLIGHT_QTASK) {
             cmdName = "Q_TASK";
+        } else if (timeoutInFlight == INFLIGHT_QKEYEQ) {
+            cmdName = "Q_KEYEQ";
+        } else if (timeoutInFlight == INFLIGHT_SETTIME) {
+            cmdName = "SET_TIME";
         } else if (timeoutInFlight == INFLIGHT_TASKLOG) {
             cmdName = "I_TASK_LOG";
         } else if (timeoutInFlight == INFLIGHT_DEL) {
@@ -2522,6 +2645,10 @@ void KeySerialClient::onRetryTimeout()
             emitNotice(QString("INIT 超时：%1").arg(cmdName));
         } else if (timeoutInFlight == INFLIGHT_RFID_TRANSFER) {
             emitNotice(QString("下载 RFID 超时：%1").arg(cmdName));
+        } else if (timeoutInFlight == INFLIGHT_QKEYEQ) {
+            emitNotice(QString("获取电量超时：%1").arg(cmdName));
+        } else if (timeoutInFlight == INFLIGHT_SETTIME) {
+            emitNotice(QString("钥匙校时超时：%1").arg(cmdName));
         }
         stopRetryTimer();
         clearInFlight();
@@ -2569,6 +2696,8 @@ void KeySerialClient::onRetryTimeout()
     case INFLIGHT_SETCOM: retrySummary += " for SET_COM"; break;
     case INFLIGHT_DEL:    retrySummary += " for DEL"; break;
     case INFLIGHT_QTASK:  retrySummary += " for Q_TASK"; break;
+    case INFLIGHT_QKEYEQ: retrySummary += " for Q_KEYEQ"; break;
+    case INFLIGHT_SETTIME: retrySummary += " for SET_TIME"; break;
     case INFLIGHT_TASKLOG: retrySummary += " for I_TASK_LOG"; break;
     case INFLIGHT_INIT_TRANSFER:
         retrySummary += QString(" for INIT frame %1/%2")

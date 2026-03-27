@@ -19,6 +19,7 @@ public:
     ~LoginController() override = default;
 
     void login(const QString &username, const QString &password);
+    void loginByCard(const QString &cardNo);
     void requestAccountList();
 
 signals:

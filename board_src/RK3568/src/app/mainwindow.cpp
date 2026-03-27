@@ -6,8 +6,8 @@
  */
 
 #include "app/mainwindow.h"
-#include "app/InputMethodCoordinator.h"
 #include "ui_mainwindow.h"
+#include "features/auth/infra/device/CardSerialSource.h"
 #include "features/auth/ui/loginpage.h"
 #include "features/keyboard/application/KeyboardController.h"
 #include "features/keyboard/application/KeyboardPagePolicy.h"
@@ -20,11 +20,32 @@
 #include "core/ConfigManager.h"
 #include "platform/logging/LogService.h"
 #include <QGuiApplication>
-#include <QComboBox>
+#include <QPushButton>
 #include <QScreen>
-#include <QLineEdit>
-#include <QPlainTextEdit>
-#include <QTextEdit>
+#include <QCloseEvent>
+#include <QShowEvent>
+#include <QStyle>
+
+namespace
+{
+void setNeutralStatusDot(QLabel *dot)
+{
+    if (!dot)
+    {
+        return;
+    }
+    dot->setStyleSheet(QStringLiteral("background-color: #B0B0B0; border-radius: 4px;"));
+}
+
+void setStatusDot(QLabel *dot, const QString &color)
+{
+    if (!dot)
+    {
+        return;
+    }
+    dot->setStyleSheet(QStringLiteral("background-color: %1; border-radius: 4px;").arg(color));
+}
+} // namespace
 
 /**
  * @brief 构造函数
@@ -39,13 +60,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
                                           m_keyManagePage(nullptr),
                                           m_systemPage(nullptr),
                                           m_logPage(nullptr),
-                                          m_inputMethodHost(nullptr),
                                           m_keyboardContainer(nullptr),
                                           m_keyboardController(nullptr),
                                           m_mainController(new MainWindowController(nullptr, this)),
                                           m_timeTimer(nullptr)
 {
-    // 初始化核心服务，服务单例（单例初始化）
+    // 初始化核心服务，确保主窗口壳体和页面替换流程进入稳定默认态。
     ConfigManager::instance();
     LogService::instance();
 
@@ -53,34 +73,16 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
 
     ui->setupUi(this); // ← 加载 .ui 文件，创建所有控件
 
-#ifdef Q_OS_LINUX
-    // Linux 板端/VNC 环境的可用画布可能小于 .ui 中固定的 1280x720。
-    // 这里覆盖主窗口硬编码最小尺寸，按当前屏幕可用区域自适应启动。
-    if (QScreen *screen = QGuiApplication::primaryScreen())
-    {
-        const QRect available = screen->availableGeometry();
-        const int width = qMin(1280, qMax(available.width(), 800));
-        const int height = qMin(720, qMax(available.height(), 480));
-        setMinimumSize(800, 480);
-        resize(width, height);
-    }
-    else
-    {
-        setMinimumSize(800, 480);
-        resize(1024, 600);
-    }
-#endif
-
-    // 创建登录页面并添加到QStackedWidget
+    // 创建登录页面并添加到QStackedWidget，保持 .ui 壳体与真实页面 mixed 替换。
     setupPages();
-    setupInputMethodHost();
     setupCustomKeyboard();
+    applyInitialWindowGeometry();
     
     // 初始化各模块
     setupConnections(); // 连接信号槽
     setupTimer();       // 设置定时器
 
-    // 初始显示登录页面
+    // 初始显示登录页面，避免启动后直接落到业务页。
     switchToPage(PAGE_LOGIN);
 
     // 更新界面显示
@@ -145,6 +147,8 @@ void MainWindow::setupPages()
     if (m_loginPage) {
         connect(m_loginPage, &LoginPage::loginSuccess,
                 this, &MainWindow::onUserLoggedIn);
+        connect(m_loginPage, &LoginPage::cardReaderStatusChanged,
+                this, &MainWindow::onCardReaderStatusChanged);
     }
 
     // ========== 创建工作台页面 ==========
@@ -169,6 +173,11 @@ void MainWindow::setupPages()
     {
         delete m_systemPage;
         m_systemPage = nullptr;
+    }
+    else
+    {
+        connect(m_systemPage, &SystemPage::cardReaderStatusChanged,
+                this, &MainWindow::onCardReaderStatusChanged);
     }
 
     // ========== 创建服务日志页面 ==========
@@ -203,8 +212,26 @@ void MainWindow::setupConnections()
             this, &MainWindow::onLogoutBtnClicked);
 
     // 认证状态统一由控制器提供，避免主窗口直接访问具体认证/上下文实现。
-    connect(m_mainController, &MainWindowController::userStateChanged, this, [this](bool, const QString &, const QString &) {
+    connect(m_mainController, &MainWindowController::userStateChanged, this, [this](bool loggedIn, const QString &, const QString &) {
         updateUserDisplay();
+
+        if (!loggedIn && ui && ui->contentStackedWidget)
+        {
+            const int currentIndex = ui->contentStackedWidget->currentIndex();
+            if (currentIndex >= 0 && currentIndex < ui->contentStackedWidget->count()
+                    && pageRequiresLogin(static_cast<PageIndex>(currentIndex)))
+            {
+                switchToPage(PAGE_LOGIN);
+                return;
+            }
+        }
+
+        updateNavButtonState();
+    });
+    connect(ui->contentStackedWidget, &QStackedWidget::currentChanged, this, [this](int) {
+        resetKeyboardContext();
+        updateNavButtonState();
+        updateKeyboardButtonState();
     });
 
     ui->btnKeyboard->setAutoExclusive(false);
@@ -222,17 +249,6 @@ void MainWindow::setupTimer()
 
     // 立即更新一次时间
     updateTime();
-}
-
-void MainWindow::setupInputMethodHost()
-{
-    m_inputMethodHost = InputMethodCoordinator::createEmbeddedHost(ui->contentStackedWidget);
-    if (!m_inputMethodHost)
-    {
-        return;
-    }
-
-    m_inputMethodHost->hide();
 }
 
 void MainWindow::setupCustomKeyboard()
@@ -263,9 +279,129 @@ void MainWindow::setupCustomKeyboard()
     }
 }
 
+void MainWindow::applyInitialWindowGeometry()
+{
+    constexpr int kDeviceWindowWidth = 1024;
+    constexpr int kDeviceWindowHeight = 768;
+
+    // WHY:
+    // 板端页面在真实 .ui + 运行时替换后，实际 sizeHint 可能高于历史固定 768。
+    // 若仍强行按 1024x768 启动，会把底部 footerWidget 挤出可见区域。
+    // 这里保持宽度基线不变，但允许高度按页面 sizeHint 上探，再受屏幕可用区裁剪。
+    if (ui && ui->centralWidget && ui->centralWidget->layout()) {
+        ui->centralWidget->layout()->activate();
+    }
+
+    const int hintedHeight = qMax(kDeviceWindowHeight, sizeHint().height());
+    const QSize desiredSize(kDeviceWindowWidth, hintedHeight);
+
+    if (QScreen *screen = QGuiApplication::primaryScreen())
+    {
+        const QRect available = screen->availableGeometry();
+        const int width = qMin(desiredSize.width(), available.width());
+        const int height = qMin(desiredSize.height(), available.height());
+        setMinimumSize(qMin(960, available.width()),
+                       qMin(640, available.height()));
+        resize(width, height);
+    }
+    else
+    {
+        setMinimumSize(960, 640);
+        resize(desiredSize);
+    }
+}
+
+void MainWindow::fitWindowToAvailableGeometry()
+{
+    QScreen *screen = QGuiApplication::screenAt(frameGeometry().center());
+    if (!screen)
+    {
+        screen = QGuiApplication::primaryScreen();
+    }
+    if (!screen)
+    {
+        return;
+    }
+
+    const QRect available = screen->availableGeometry();
+    const QRect currentFrame = frameGeometry();
+    const QRect currentClient = geometry();
+    const int nonClientWidth = qMax(0, currentFrame.width() - currentClient.width());
+    const int nonClientHeight = qMax(0, currentFrame.height() - currentClient.height());
+    const int maxClientWidth = qMax(320, available.width() - nonClientWidth);
+    const int maxClientHeight = qMax(240, available.height() - nonClientHeight);
+
+    const QSize targetSize(qMin(width(), maxClientWidth),
+                           qMin(height(), maxClientHeight));
+
+    if (minimumWidth() > maxClientWidth || minimumHeight() > maxClientHeight)
+    {
+        setMinimumSize(qMin(minimumWidth(), maxClientWidth),
+                       qMin(minimumHeight(), maxClientHeight));
+    }
+
+    if (size() != targetSize)
+    {
+        resize(targetSize);
+    }
+
+    const QRect finalFrame = frameGeometry();
+    const int x = available.x() + qMax(0, (available.width() - finalFrame.width()) / 2);
+    const int y = available.y() + qMax(0, (available.height() - finalFrame.height()) / 2);
+    move(x, y);
+}
+
+void MainWindow::showEvent(QShowEvent *event)
+{
+    QMainWindow::showEvent(event);
+
+    // WHY:
+    // XFCE / X11 下窗口装饰和可用区约束往往在 show 之后才完全稳定；
+    // 仅在构造阶段修正一次，容易出现 frame 仍为 768 高、footer 被截掉。
+    const QList<int> fitPassDelaysMs = {0, 80, 180, 320};
+    for (const int delayMs : fitPassDelaysMs)
+    {
+        QTimer::singleShot(delayMs, this, [this]() {
+            if (isVisible())
+            {
+                fitWindowToAvailableGeometry();
+            }
+        });
+    }
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    LOG_INFO("MainWindow",
+             QString("主窗口收到关闭事件: accepted=%1 visible=%2 spontaneous=%3")
+                 .arg(event && event->isAccepted() ? "true" : "false")
+                 .arg(isVisible() ? "true" : "false")
+                 .arg(event && event->spontaneous() ? "true" : "false"));
+    QMainWindow::closeEvent(event);
+}
+
 QWidget *MainWindow::currentPageWidget() const
 {
     return ui->contentStackedWidget->currentWidget();
+}
+
+void MainWindow::resetKeyboardContext()
+{
+    if (m_keyboardController)
+    {
+        m_keyboardController->hide();
+        m_keyboardController->clearCurrentTarget();
+    }
+
+    if (m_keyboardContainer)
+    {
+        m_keyboardContainer->clearActionHandlers();
+    }
+
+    if (ui && ui->btnKeyboard)
+    {
+        ui->btnKeyboard->setChecked(false);
+    }
 }
 
 /**
@@ -292,9 +428,15 @@ void MainWindow::switchToPage(PageIndex page)
         return;
     }
 
+    const int currentIndex = ui->contentStackedWidget->currentIndex();
+    if (targetIndex != currentIndex)
+    {
+        resetKeyboardContext();
+    }
+
     ui->contentStackedWidget->setCurrentIndex(targetIndex);
     updateNavButtonState();
-    applyInputMethodPolicy(page);
+    updateKeyboardButtonState();
 }
 
 /**
@@ -310,48 +452,51 @@ void MainWindow::updateNavButtonState()
     ui->btnKeys->setChecked(currentIndex == PAGE_KEYS);
     ui->btnSystem->setChecked(currentIndex == PAGE_SYSTEM);
     ui->btnService->setChecked(currentIndex == PAGE_LOG);
+    updateNavAccessState();
 }
 
-/**
- * @brief 更新用户显示信息
- * 在顶部和底部状态栏显示当前登录用户信息
- */
-void MainWindow::updateUserDisplay()
+void MainWindow::updateNavAccessState()
 {
-    const bool loggedIn = m_mainController && m_mainController->isLoggedIn();
+    applyNavAccessState(ui->btnWorkbench, PAGE_WORKBENCH);
+    applyNavAccessState(ui->btnKeys, PAGE_KEYS);
+    applyNavAccessState(ui->btnSystem, PAGE_SYSTEM);
+    applyNavAccessState(ui->btnService, PAGE_LOG);
+}
 
-    if (loggedIn)
+void MainWindow::applyNavAccessState(QPushButton *button, PageIndex page)
+{
+    if (!button)
     {
-        ui->userNameLabel->setText(m_mainController->currentUsername());
-        ui->roleLabel->setText(m_mainController->currentRole());
-        ui->logoutBtn->setEnabled(true);
-        ui->logoutBtn->setText("退出");
+        return;
+    }
+
+    const bool restricted = pageRequiresLogin(page)
+            && !(m_mainController && m_mainController->isLoggedIn());
+    button->setProperty("restricted", restricted);
+
+    if (restricted)
+    {
+        button->setToolTip(QStringLiteral("当前未登录，需登录后访问该页面"));
     }
     else
     {
-        ui->userNameLabel->setText("未登录");
-        ui->roleLabel->setText("游客");
-        ui->logoutBtn->setEnabled(true);
-        ui->logoutBtn->setText("登录");
+        button->setToolTip(QString());
     }
+
+    button->style()->unpolish(button);
+    button->style()->polish(button);
+    button->update();
 }
 
-/**
- * @brief 更新状态栏
- * 更新底部状态栏的设备状态显示
- */
-void MainWindow::updateStatusBar()
+void MainWindow::updateKeyboardButtonState()
 {
-    // 设备状态更新（后续可连接实际硬件检测逻辑）
-    // 目前显示为正常状态
-    ui->cardStatusLabel->setText("读卡器正常");
-    ui->fingerStatusLabel->setText("指纹仪正常");
-}
+    if (!ui || !ui->btnKeyboard || !ui->contentStackedWidget)
+    {
+        return;
+    }
 
-void MainWindow::applyInputMethodPolicy(PageIndex page)
-{
     QString pageKey;
-    switch (page)
+    switch (ui->contentStackedWidget->currentIndex())
     {
     case PAGE_LOGIN:
         pageKey = QStringLiteral("login");
@@ -368,24 +513,117 @@ void MainWindow::applyInputMethodPolicy(PageIndex page)
     case PAGE_LOG:
         pageKey = QStringLiteral("log");
         break;
-    case PAGE_KEYBOARD:
-        pageKey = QStringLiteral("keyboard");
+    default:
+        pageKey = QStringLiteral("unknown");
         break;
     }
 
-    // 第一阶段采用显式按钮控制：
-    // 切页时统一收起键盘，避免页面切换造成残留和布局误判。
-    InputMethodCoordinator::hideInputMethod();
-    if (m_keyboardController)
+    const bool supported = KeyboardPagePolicy::supportsCustomKeyboard(pageKey);
+    ui->btnKeyboard->setEnabled(supported);
+    if (!supported)
     {
-        m_keyboardController->hide();
+        if (pageKey == QLatin1String("keys"))
+        {
+            ui->btnKeyboard->setToolTip(QStringLiteral("当前页面暂无可输入字段，暂不需要虚拟键盘"));
+        }
+        else if (pageKey == QLatin1String("log"))
+        {
+            ui->btnKeyboard->setToolTip(QStringLiteral("服务日志页为查看页，当前不支持虚拟键盘"));
+        }
+        else
+        {
+            ui->btnKeyboard->setToolTip(QStringLiteral("当前页面暂不支持虚拟键盘"));
+        }
     }
-    ui->btnKeyboard->setChecked(false);
+    else if (pageKey == QLatin1String("workbench"))
+    {
+        ui->btnKeyboard->setToolTip(QStringLiteral("请先点击工作台中的输入框，再打开虚拟键盘"));
+    }
+    else
+    {
+        ui->btnKeyboard->setToolTip(QStringLiteral("点击打开虚拟键盘"));
+    }
+}
 
-    if (!InputMethodCoordinator::pageAllowsVirtualKeyboard(pageKey))
+/**
+ * @brief 更新用户显示信息
+ * 在顶部和底部状态栏显示当前登录用户信息
+ */
+void MainWindow::updateUserDisplay()
+{
+    const bool loggedIn = m_mainController && m_mainController->isLoggedIn();
+
+    if (loggedIn)
     {
-        return;
+        const QString username = m_mainController->currentUsername();
+        const QString role = m_mainController->currentRole();
+        ui->userNameLabel->setText(username);
+        ui->userInfoLabel->setText(QStringLiteral("当前用户: %1").arg(username));
+        ui->roleLabel->setText(QStringLiteral("角色: %1").arg(role.isEmpty() ? QStringLiteral("已登录") : role));
+        ui->logoutBtn->setEnabled(true);
+        ui->logoutBtn->setText("退出");
     }
+    else
+    {
+        ui->userNameLabel->setText("未登录");
+        ui->userInfoLabel->setText(QStringLiteral("当前用户: 游客"));
+        ui->roleLabel->setText(QStringLiteral("角色: 未登录"));
+        ui->logoutBtn->setEnabled(true);
+        ui->logoutBtn->setText("登录");
+    }
+}
+
+/**
+ * @brief 更新状态栏
+ * 更新底部状态栏的设备状态显示，默认保持壳体态。
+ */
+void MainWindow::updateStatusBar()
+{
+    applyReaderStatus(static_cast<int>(CardSerialSource::Idle), QStringLiteral("空闲"));
+    applyFingerprintStatusDisconnected();
+}
+
+void MainWindow::applyReaderStatus(int status, const QString &message)
+{
+    const QString detail = message.trimmed();
+    const CardSerialSource::ReaderStatus readerStatus =
+        static_cast<CardSerialSource::ReaderStatus>(status);
+
+    switch (readerStatus)
+    {
+    case CardSerialSource::Ready:
+        setStatusDot(ui->cardStatusDot, QStringLiteral("#2E7D32"));
+        ui->cardStatusLabel->setText(QStringLiteral("读卡器状态：%1").arg(detail.isEmpty() ? QStringLiteral("就绪") : detail));
+        break;
+    case CardSerialSource::Detecting:
+        setStatusDot(ui->cardStatusDot, QStringLiteral("#F9A825"));
+        ui->cardStatusLabel->setText(QStringLiteral("读卡器状态：%1").arg(detail.isEmpty() ? QStringLiteral("检测中") : detail));
+        break;
+    case CardSerialSource::Error:
+        setStatusDot(ui->cardStatusDot, QStringLiteral("#D84315"));
+        ui->cardStatusLabel->setText(QStringLiteral("读卡器状态：%1").arg(detail.isEmpty() ? QStringLiteral("异常") : detail));
+        break;
+    case CardSerialSource::Unconfigured:
+        setNeutralStatusDot(ui->cardStatusDot);
+        ui->cardStatusLabel->setText(QStringLiteral("读卡器状态：%1").arg(detail.isEmpty() ? QStringLiteral("未配置串口") : detail));
+        break;
+    case CardSerialSource::Idle:
+    default:
+        setNeutralStatusDot(ui->cardStatusDot);
+        ui->cardStatusLabel->setText(QStringLiteral("读卡器状态：%1").arg(detail.isEmpty() ? QStringLiteral("空闲") : detail));
+        break;
+    }
+}
+
+void MainWindow::applyFingerprintStatusDisconnected()
+{
+    setNeutralStatusDot(ui->fingerStatusDot);
+    ui->fingerStatusLabel->setText(QStringLiteral("指纹仪状态：未接入"));
+}
+
+void MainWindow::onCardReaderStatusChanged(int status, const QString &message)
+{
+    applyReaderStatus(status, message);
 }
 
 /**
@@ -398,7 +636,7 @@ bool MainWindow::checkLoginRequired(PageIndex page)
     const bool loggedIn = m_mainController && m_mainController->isLoggedIn();
 
     // 工作台和钥匙管理需要登录
-    if ((page == PAGE_WORKBENCH || page == PAGE_KEYS) && !loggedIn)
+    if (pageRequiresLogin(page) && !loggedIn)
     {
         QMessageBox::information(this, "需要登录",
                                  "请先登录才能访问此功能！");
@@ -406,6 +644,11 @@ bool MainWindow::checkLoginRequired(PageIndex page)
         return false;
     }
     return true;
+}
+
+bool MainWindow::pageRequiresLogin(PageIndex page) const
+{
+    return page == PAGE_WORKBENCH || page == PAGE_KEYS;
 }
 
 // ==================== 导航按钮槽函数实现 ====================
@@ -479,19 +722,19 @@ void MainWindow::onBtnKeyboardClicked()
         break;
     }
 
-    qInfo() << "[MainWindow] virtual keyboard button clicked, pageKey=" << pageKey;
+    qInfo() << "[MainWindow] keyboard button clicked, pageKey=" << pageKey;
 
     if (!KeyboardPagePolicy::supportsCustomKeyboard(pageKey))
     {
-        QMessageBox::information(this, "虚拟键盘",
-                                 "当前阶段仅登录页和系统设置页接入自定义键盘。");
+        QMessageBox::information(this, "键盘",
+                                 "当前页面暂不支持虚拟键盘。");
         ui->btnKeyboard->setChecked(false);
         return;
     }
 
     QWidget *page = currentPageWidget();
     const bool visible = m_keyboardController && m_keyboardController->isVisible();
-    qInfo() << "[MainWindow] virtual keyboard visible before toggle =" << visible;
+    qInfo() << "[MainWindow] keyboard visible before toggle =" << visible;
     if (visible)
     {
         if (m_keyboardController)
@@ -502,19 +745,55 @@ void MainWindow::onBtnKeyboardClicked()
         return;
     }
 
-    if (!m_keyboardController || !m_keyboardController->hasTargetOnPage(page))
+    if (m_keyboardContainer)
     {
-        QMessageBox::information(this, "虚拟键盘",
-                                 "请先点击一个可编辑输入框，再打开虚拟键盘。");
+        m_keyboardContainer->setKeyboardHeight(KeyboardSizingPolicy::keyboardHeightForPage(pageKey));
+    }
+
+    if (pageKey == QLatin1String("workbench"))
+    {
+        if (!m_workbenchPage || !m_keyboardContainer)
+        {
+            ui->btnKeyboard->setChecked(false);
+            return;
+        }
+
+        m_workbenchPage->requestKeyboardActivation(m_keyboardContainer, [this](bool ready) {
+            if (ui->contentStackedWidget->currentIndex() != PAGE_WORKBENCH)
+            {
+                return;
+            }
+
+            if (!ready)
+            {
+                QMessageBox::information(this, "键盘",
+                                         "请先点击工作台中的可编辑输入框，再打开键盘。");
+                ui->btnKeyboard->setChecked(false);
+                return;
+            }
+
+            m_keyboardContainer->showStandalone(keyboard::KeyboardMode::Normal, true);
+            ui->btnKeyboard->setChecked(true);
+        });
+        return;
+    }
+
+    if (m_keyboardController && m_keyboardController->hasTargetOnPage(page))
+    {
+        m_keyboardController->toggleOnPage(page);
+        ui->btnKeyboard->setChecked(true);
+        return;
+    }
+
+    if (!m_keyboardContainer)
+    {
         ui->btnKeyboard->setChecked(false);
         return;
     }
 
-    if (m_keyboardController)
-    {
-        m_keyboardContainer->setKeyboardHeight(KeyboardSizingPolicy::keyboardHeightForPage(pageKey));
-        m_keyboardController->toggleOnPage(page);
-    }
+    m_keyboardContainer->clearActionHandlers();
+    m_keyboardContainer->showStandalone(keyboard::KeyboardMode::Normal,
+                                        pageKey == QLatin1String("system"));
     ui->btnKeyboard->setChecked(true);
 }
 

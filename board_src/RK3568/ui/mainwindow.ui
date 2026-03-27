@@ -6,14 +6,14 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1280</width>
-    <height>720</height>
+    <width>1024</width>
+    <height>768</height>
    </rect>
   </property>
   <property name="minimumSize">
    <size>
-    <width>1280</width>
-    <height>720</height>
+    <width>1024</width>
+    <height>768</height>
    </size>
   </property>
   <property name="windowTitle">
@@ -34,9 +34,9 @@ QMainWindow {
 
 /* Logo区域标题 */
 #systemTitle {
-    color: #2C3E50;
+    color: #233229;
     font-size: 18px;
-    font-weight: normal;
+    font-weight: 700;
 }
 
 /* 导航按钮通用样式 */
@@ -44,7 +44,7 @@ QMainWindow {
     background-color: transparent;
     color: #5D6B7A;
     font-size: 14px;
-    border: none;
+    border: 1px solid transparent;
     border-radius: 6px;
     padding: 10px 20px;
 }
@@ -56,6 +56,17 @@ QMainWindow {
 #btnWorkbench:checked, #btnKeys:checked, #btnSystem:checked, #btnService:checked, #btnKeyboard:checked {
     background-color: #2E7D32;
     color: #FFFFFF;
+}
+
+#btnWorkbench[restricted=&quot;true&quot;], #btnKeys[restricted=&quot;true&quot;] {
+    color: #97A59C;
+    background-color: transparent;
+    border: 1px solid #E3EAE4;
+}
+
+#btnWorkbench[restricted=&quot;true&quot;]:hover, #btnKeys[restricted=&quot;true&quot;]:hover {
+    background-color: #F3F6F2;
+    color: #6E7D75;
 }
 
 /* 用户信息 */
@@ -81,7 +92,8 @@ QMainWindow {
 /* ========== 底部状态栏样式 ========== */
 #footerWidget {
     background-color: #FFFFFF;
-    border-top: 1px solid #E8E4DE;
+    border-top: 1px solid #D8D2C7;
+    min-height: 50px;
 }
 
 #companyLabel {
@@ -107,6 +119,48 @@ QMainWindow {
 /* ========== 内容区域样式 ========== */
 #contentStackedWidget {
     background-color: transparent;
+}
+
+QFrame#loginShellCard,
+QFrame#workbenchShellCard,
+QFrame#keyManageShellCard,
+QFrame#systemShellCard,
+QFrame#logShellCard,
+QFrame#keyboardShellCard {
+    background-color: #FFFFFF;
+    border: 1px solid #E8E4DE;
+    border-radius: 12px;
+    min-height: 160px;
+}
+
+QFrame#loginShellDock,
+QFrame#workbenchShellDock,
+QFrame#keyManageShellDock,
+QFrame#systemShellDock,
+QFrame#logShellDock,
+QFrame#keyboardShellDock {
+    background-color: #FAF8F4;
+    border: 1px dashed #D8D2C7;
+    border-radius: 10px;
+    min-height: 96px;
+}
+
+QFrame#loginShellPlaceholder,
+QFrame#loginShellAuthCard,
+QFrame#loginShellKeyboardCard,
+QFrame#workbenchShellSummaryCard,
+QFrame#workbenchShellDetailCard,
+QFrame#keyManageShellInfoCard,
+QFrame#keyManageShellActionCard,
+QFrame#systemShellParamsCard,
+QFrame#systemShellLinkCard,
+QFrame#logShellListCard,
+QFrame#logShellDetailCard {
+    background-color: #FFFFFF;
+    border: 1px solid #ECE6DC;
+    border-radius: 10px;
+    min-width: 220px;
+    min-height: 84px;
 }
    </string>
   </property>
@@ -161,7 +215,7 @@ QMainWindow {
         <widget class="QWidget" name="logoArea" native="true">
          <layout class="QHBoxLayout" name="logoLayout">
           <property name="spacing">
-           <number>16</number>
+           <number>0</number>
           </property>
           <property name="leftMargin">
            <number>0</number>
@@ -176,34 +230,9 @@ QMainWindow {
            <number>0</number>
           </property>
           <item>
-           <widget class="QLabel" name="logoIcon">
-            <property name="minimumSize">
-             <size>
-              <width>40</width>
-              <height>40</height>
-             </size>
-            </property>
-            <property name="maximumSize">
-             <size>
-              <width>40</width>
-              <height>40</height>
-             </size>
-            </property>
-            <property name="styleSheet">
-             <string notr="true">background-color: #2E7D32; border-radius: 8px; color: white; font-size: 20px;</string>
-            </property>
-            <property name="text">
-             <string>⚡</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignCenter</set>
-            </property>
-           </widget>
-          </item>
-          <item>
            <widget class="QLabel" name="systemTitle">
             <property name="text">
-             <string>数字化停送电安全管理系统</string>
+             <string>智能停送电安全管控系统</string>
             </property>
            </widget>
           </item>
@@ -247,9 +276,6 @@ QMainWindow {
              <string>工作台</string>
             </property>
             <property name="checkable">
-             <bool>true</bool>
-            </property>
-            <property name="checked">
              <bool>true</bool>
             </property>
             <property name="autoExclusive">
@@ -371,14 +397,14 @@ QMainWindow {
           <item>
            <widget class="QLabel" name="userNameLabel">
             <property name="text">
-             <string>管理员</string>
+             <string>未登录</string>
             </property>
            </widget>
           </item>
           <item>
            <widget class="QPushButton" name="logoutBtn">
             <property name="text">
-             <string>退出</string>
+             <string>登录</string>
             </property>
            </widget>
           </item>
@@ -391,14 +417,940 @@ QMainWindow {
     <item>
      <widget class="QStackedWidget" name="contentStackedWidget">
       <property name="currentIndex">
-       <number>5</number>
+       <number>0</number>
       </property>
-      <widget class="QWidget" name="loginPage"/>
-      <widget class="QWidget" name="workbenchPage"/>
-      <widget class="QWidget" name="keyManagePage"/>
-      <widget class="QWidget" name="systemPage"/>
-      <widget class="QWidget" name="logPage"/>
-      <widget class="QWidget" name="keyboardPage"/>
+      <widget class="QWidget" name="loginPage">
+       <layout class="QVBoxLayout" name="loginPageLayout">
+        <property name="spacing">
+         <number>16</number>
+        </property>
+        <property name="leftMargin">
+         <number>24</number>
+        </property>
+        <property name="topMargin">
+         <number>24</number>
+        </property>
+        <property name="rightMargin">
+         <number>24</number>
+        </property>
+        <property name="bottomMargin">
+         <number>24</number>
+        </property>
+        <item>
+         <widget class="QFrame" name="loginShellCard">
+          <property name="frameShape">
+           <enum>QFrame::StyledPanel</enum>
+          </property>
+          <property name="frameShadow">
+           <enum>QFrame::Plain</enum>
+          </property>
+          <layout class="QVBoxLayout" name="loginShellLayout">
+           <property name="spacing">
+            <number>10</number>
+           </property>
+           <property name="leftMargin">
+            <number>20</number>
+           </property>
+           <property name="topMargin">
+            <number>20</number>
+           </property>
+           <property name="rightMargin">
+            <number>20</number>
+           </property>
+           <property name="bottomMargin">
+            <number>20</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="loginShellTitle">
+             <property name="text">
+              <string>登录页壳体</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="loginShellHint">
+             <property name="text">
+              <string>这里保留混合式壳体结构，运行时由 src/app/mainwindow.cpp 替换为真实 LoginPage，Designer 侧可继续补输入框和辅助提示。</string>
+             </property>
+             <property name="wordWrap">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QFrame" name="loginShellPlaceholder">
+             <property name="frameShape">
+              <enum>QFrame::StyledPanel</enum>
+             </property>
+             <property name="frameShadow">
+              <enum>QFrame::Sunken</enum>
+             </property>
+             <layout class="QVBoxLayout" name="loginShellPlaceholderLayout">
+              <property name="spacing">
+               <number>6</number>
+              </property>
+              <property name="leftMargin">
+               <number>16</number>
+              </property>
+              <property name="topMargin">
+               <number>16</number>
+              </property>
+              <property name="rightMargin">
+               <number>16</number>
+              </property>
+              <property name="bottomMargin">
+               <number>16</number>
+              </property>
+              <item>
+               <widget class="QLabel" name="loginShellState">
+                <property name="text">
+                 <string>默认态：壳体占位，mixed</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QLabel" name="loginShellNote">
+                <property name="text">
+                 <string>后续可在 Designer 里继续补输入框、辅助提示和键盘联动结构，cpp 只负责页面替换。</string>
+                </property>
+                <property name="wordWrap">
+                 <bool>true</bool>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QFrame" name="loginShellDock">
+             <layout class="QHBoxLayout" name="loginShellDockLayout">
+              <property name="spacing">
+               <number>12</number>
+              </property>
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+              <item>
+               <widget class="QFrame" name="loginShellAuthCard">
+                <property name="frameShape">
+                 <enum>QFrame::StyledPanel</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <layout class="QVBoxLayout" name="loginShellAuthLayout">
+                 <property name="spacing">
+                  <number>6</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>14</number>
+                 </property>
+                 <item>
+                  <widget class="QLabel" name="loginShellAuthTitle">
+                   <property name="text">
+                    <string>认证输入容器</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="loginShellAuthHint">
+                   <property name="text">
+                    <string>预留账号、密码、验证码和辅助提示的静态挂点。</string>
+                   </property>
+                   <property name="wordWrap">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+              <item>
+               <widget class="QFrame" name="loginShellKeyboardCard">
+                <property name="frameShape">
+                 <enum>QFrame::StyledPanel</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <layout class="QVBoxLayout" name="loginShellKeyboardLayout">
+                 <property name="spacing">
+                  <number>6</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>14</number>
+                 </property>
+                 <item>
+                  <widget class="QLabel" name="loginShellKeyboardTitle">
+                   <property name="text">
+                    <string>键盘联动容器</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="loginShellKeyboardHint">
+                   <property name="text">
+                    <string>预留虚拟键盘入口、浮层和联动边界的静态挂点。</string>
+                   </property>
+                   <property name="wordWrap">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QWidget" name="workbenchPage">
+       <layout class="QVBoxLayout" name="workbenchPageLayout">
+        <property name="spacing">
+         <number>16</number>
+        </property>
+        <property name="leftMargin">
+         <number>24</number>
+        </property>
+        <property name="topMargin">
+         <number>24</number>
+        </property>
+        <property name="rightMargin">
+         <number>24</number>
+        </property>
+        <property name="bottomMargin">
+         <number>24</number>
+        </property>
+        <item>
+         <widget class="QFrame" name="workbenchShellCard">
+          <property name="frameShape">
+           <enum>QFrame::StyledPanel</enum>
+          </property>
+          <property name="frameShadow">
+           <enum>QFrame::Plain</enum>
+          </property>
+          <layout class="QVBoxLayout" name="workbenchShellLayout">
+           <property name="spacing">
+            <number>10</number>
+           </property>
+           <property name="leftMargin">
+            <number>20</number>
+           </property>
+           <property name="topMargin">
+            <number>20</number>
+           </property>
+           <property name="rightMargin">
+            <number>20</number>
+           </property>
+           <property name="bottomMargin">
+            <number>20</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="workbenchShellTitle">
+             <property name="text">
+              <string>工作台页壳体</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="workbenchShellHint">
+             <property name="text">
+              <string>保留工作台默认结构与占位态，运行时由真实 WorkbenchPage 接管，Designer 和代码继续按同一壳体边界维护。</string>
+             </property>
+             <property name="wordWrap">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="workbenchShellState">
+             <property name="text">
+              <string>默认态：主视图壳体，mixed</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QFrame" name="workbenchShellDock">
+             <layout class="QHBoxLayout" name="workbenchShellDockLayout">
+              <property name="spacing">
+               <number>12</number>
+              </property>
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+              <item>
+               <widget class="QFrame" name="workbenchShellSummaryCard">
+                <property name="frameShape">
+                 <enum>QFrame::StyledPanel</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <layout class="QVBoxLayout" name="workbenchShellSummaryLayout">
+                 <property name="spacing">
+                  <number>6</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>14</number>
+                 </property>
+                 <item>
+                  <widget class="QLabel" name="workbenchShellSummaryTitle">
+                   <property name="text">
+                    <string>任务总览容器</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="workbenchShellSummaryHint">
+                   <property name="text">
+                    <string>预留任务卡片、统计数字和快捷入口的静态挂点，后续可直接在 Designer 里继续细化。</string>
+                   </property>
+                   <property name="wordWrap">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+              <item>
+               <widget class="QFrame" name="workbenchShellDetailCard">
+                <property name="frameShape">
+                 <enum>QFrame::StyledPanel</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <layout class="QVBoxLayout" name="workbenchShellDetailLayout">
+                 <property name="spacing">
+                  <number>6</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>14</number>
+                 </property>
+                 <item>
+                  <widget class="QLabel" name="workbenchShellDetailTitle">
+                   <property name="text">
+                    <string>主视图预留位</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="workbenchShellDetailHint">
+                   <property name="text">
+                    <string>保留工作区与详情区的混合布局层，后续可继续细化。</string>
+                   </property>
+                   <property name="wordWrap">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QWidget" name="keyManagePage">
+       <layout class="QVBoxLayout" name="keyManagePageLayout">
+        <property name="spacing">
+         <number>16</number>
+        </property>
+        <property name="leftMargin">
+         <number>24</number>
+        </property>
+        <property name="topMargin">
+         <number>24</number>
+        </property>
+        <property name="rightMargin">
+         <number>24</number>
+        </property>
+        <property name="bottomMargin">
+         <number>24</number>
+        </property>
+        <item>
+         <widget class="QFrame" name="keyManageShellCard">
+          <property name="frameShape">
+           <enum>QFrame::StyledPanel</enum>
+          </property>
+          <property name="frameShadow">
+           <enum>QFrame::Plain</enum>
+          </property>
+          <layout class="QVBoxLayout" name="keyManageShellLayout">
+           <property name="spacing">
+            <number>10</number>
+           </property>
+           <property name="leftMargin">
+            <number>20</number>
+           </property>
+           <property name="topMargin">
+            <number>20</number>
+           </property>
+           <property name="rightMargin">
+            <number>20</number>
+           </property>
+           <property name="bottomMargin">
+            <number>20</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="keyManageShellTitle">
+             <property name="text">
+              <string>钥匙管理页壳体</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="keyManageShellHint">
+             <property name="text">
+              <string>这里保留列表、日志、默认态和占位态，方便后续继续补 Designer 结构，并与 cpp 侧的页面替换逻辑保持一致。</string>
+             </property>
+             <property name="wordWrap">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="keyManageShellState">
+             <property name="text">
+              <string>默认态：日志与任务面板占位，mixed</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QFrame" name="keyManageShellDock">
+             <layout class="QHBoxLayout" name="keyManageShellDockLayout">
+              <property name="spacing">
+               <number>12</number>
+              </property>
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+              <item>
+               <widget class="QFrame" name="keyManageShellInfoCard">
+                <property name="frameShape">
+                 <enum>QFrame::StyledPanel</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <layout class="QVBoxLayout" name="keyManageShellInfoLayout">
+                 <property name="spacing">
+                  <number>6</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>14</number>
+                 </property>
+                 <item>
+                  <widget class="QLabel" name="keyManageShellInfoTitle">
+                   <property name="text">
+                    <string>钥匙信息容器</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="keyManageShellInfoHint">
+                   <property name="text">
+                    <string>预留钥匙列表、状态摘要和基础提示的静态挂点，便于后续与真实页面继续对齐。</string>
+                   </property>
+                   <property name="wordWrap">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+              <item>
+               <widget class="QFrame" name="keyManageShellActionCard">
+                <property name="frameShape">
+                 <enum>QFrame::StyledPanel</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <layout class="QVBoxLayout" name="keyManageShellActionLayout">
+                 <property name="spacing">
+                  <number>6</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>14</number>
+                 </property>
+                 <item>
+                  <widget class="QLabel" name="keyManageShellActionTitle">
+                   <property name="text">
+                    <string>操作台容器</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="keyManageShellActionHint">
+                   <property name="text">
+                    <string>预留发放、回收和事件反馈的静态挂点，保持 Designer / 代码双维护友好。</string>
+                   </property>
+                   <property name="wordWrap">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QWidget" name="systemPage">
+       <layout class="QVBoxLayout" name="systemPageLayout">
+        <property name="spacing">
+         <number>16</number>
+        </property>
+        <property name="leftMargin">
+         <number>24</number>
+        </property>
+        <property name="topMargin">
+         <number>24</number>
+        </property>
+        <property name="rightMargin">
+         <number>24</number>
+        </property>
+        <property name="bottomMargin">
+         <number>24</number>
+        </property>
+        <item>
+         <widget class="QFrame" name="systemShellCard">
+          <property name="frameShape">
+           <enum>QFrame::StyledPanel</enum>
+          </property>
+          <property name="frameShadow">
+           <enum>QFrame::Plain</enum>
+          </property>
+          <layout class="QVBoxLayout" name="systemShellLayout">
+           <property name="spacing">
+            <number>10</number>
+           </property>
+           <property name="leftMargin">
+            <number>20</number>
+           </property>
+           <property name="topMargin">
+            <number>20</number>
+           </property>
+           <property name="rightMargin">
+            <number>20</number>
+           </property>
+           <property name="bottomMargin">
+            <number>20</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="systemShellTitle">
+             <property name="text">
+              <string>系统设置页壳体</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="systemShellHint">
+             <property name="text">
+              <string>保留配置入口的默认态与占位态，便于继续补参数项和说明文字，同时保持壳体结构稳定。</string>
+             </property>
+             <property name="wordWrap">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="systemShellState">
+             <property name="text">
+              <string>默认态：配置面板占位，mixed</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QFrame" name="systemShellDock">
+             <layout class="QHBoxLayout" name="systemShellDockLayout">
+              <property name="spacing">
+               <number>12</number>
+              </property>
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+              <item>
+               <widget class="QFrame" name="systemShellParamsCard">
+                <property name="frameShape">
+                 <enum>QFrame::StyledPanel</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <layout class="QVBoxLayout" name="systemShellParamsLayout">
+                 <property name="spacing">
+                  <number>6</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>14</number>
+                 </property>
+                 <item>
+                  <widget class="QLabel" name="systemShellParamsTitle">
+                   <property name="text">
+                    <string>参数容器</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="systemShellParamsHint">
+                   <property name="text">
+                    <string>预留配置项、分组和默认值展示的静态挂点，后续可直接补成真实表单。</string>
+                   </property>
+                   <property name="wordWrap">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+              <item>
+               <widget class="QFrame" name="systemShellLinkCard">
+                <property name="frameShape">
+                 <enum>QFrame::StyledPanel</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <layout class="QVBoxLayout" name="systemShellLinkLayout">
+                 <property name="spacing">
+                  <number>6</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>14</number>
+                 </property>
+                 <item>
+                  <widget class="QLabel" name="systemShellLinkTitle">
+                   <property name="text">
+                    <string>联动容器</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="systemShellLinkHint">
+                   <property name="text">
+                    <string>预留键盘联动、说明面板和状态回显的静态挂点，避免和运行时逻辑互相抢边界。</string>
+                   </property>
+                   <property name="wordWrap">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QWidget" name="logPage">
+       <layout class="QVBoxLayout" name="logPageLayout">
+        <property name="spacing">
+         <number>16</number>
+        </property>
+        <property name="leftMargin">
+         <number>24</number>
+        </property>
+        <property name="topMargin">
+         <number>24</number>
+        </property>
+        <property name="rightMargin">
+         <number>24</number>
+        </property>
+        <property name="bottomMargin">
+         <number>24</number>
+        </property>
+        <item>
+         <widget class="QFrame" name="logShellCard">
+          <property name="frameShape">
+           <enum>QFrame::StyledPanel</enum>
+          </property>
+          <property name="frameShadow">
+           <enum>QFrame::Plain</enum>
+          </property>
+          <layout class="QVBoxLayout" name="logShellLayout">
+           <property name="spacing">
+            <number>10</number>
+           </property>
+           <property name="leftMargin">
+            <number>20</number>
+           </property>
+           <property name="topMargin">
+            <number>20</number>
+           </property>
+           <property name="rightMargin">
+            <number>20</number>
+           </property>
+           <property name="bottomMargin">
+            <number>20</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="logShellTitle">
+             <property name="text">
+              <string>服务日志页壳体</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="logShellHint">
+             <property name="text">
+              <string>保留服务日志默认展示结构，方便后续继续补筛选、分页与详情占位，同时维持壳体稳定。</string>
+             </property>
+             <property name="wordWrap">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="logShellState">
+             <property name="text">
+              <string>默认态：日志面板占位，mixed</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QFrame" name="logShellDock">
+             <layout class="QHBoxLayout" name="logShellDockLayout">
+              <property name="spacing">
+               <number>12</number>
+              </property>
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+              <item>
+               <widget class="QFrame" name="logShellListCard">
+                <property name="frameShape">
+                 <enum>QFrame::StyledPanel</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <layout class="QVBoxLayout" name="logShellListLayout">
+                 <property name="spacing">
+                  <number>6</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>14</number>
+                 </property>
+                 <item>
+                  <widget class="QLabel" name="logShellListTitle">
+                   <property name="text">
+                    <string>日志列表容器</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="logShellListHint">
+                   <property name="text">
+                    <string>预留筛选结果、分页和摘要信息的静态挂点，便于后续继续和真实列表对齐。</string>
+                   </property>
+                   <property name="wordWrap">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+              <item>
+               <widget class="QFrame" name="logShellDetailCard">
+                <property name="frameShape">
+                 <enum>QFrame::StyledPanel</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <layout class="QVBoxLayout" name="logShellDetailLayout">
+                 <property name="spacing">
+                  <number>6</number>
+                 </property>
+                 <property name="leftMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="topMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="rightMargin">
+                  <number>14</number>
+                 </property>
+                 <property name="bottomMargin">
+                  <number>14</number>
+                 </property>
+                 <item>
+                  <widget class="QLabel" name="logShellDetailTitle">
+                   <property name="text">
+                    <string>详情容器</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="logShellDetailHint">
+                   <property name="text">
+                    <string>预留单条日志详情、展开信息和状态追踪的静态挂点，Designer 和代码可以继续双向维护。</string>
+                   </property>
+                   <property name="wordWrap">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+       </layout>
+      </widget>
      </widget>
     </item>
     <item>
@@ -406,13 +1358,13 @@ QMainWindow {
       <property name="minimumSize">
        <size>
         <width>0</width>
-        <height>48</height>
+        <height>52</height>
        </size>
       </property>
       <property name="maximumSize">
        <size>
         <width>16777215</width>
-        <height>48</height>
+        <height>52</height>
        </size>
       </property>
       <layout class="QHBoxLayout" name="footerLayout">
@@ -434,7 +1386,7 @@ QMainWindow {
        <item>
         <widget class="QLabel" name="companyLabel">
          <property name="text">
-          <string>XXX科技公司</string>
+          <string>珠海云望科技有限公司</string>
          </property>
         </widget>
        </item>
@@ -454,7 +1406,7 @@ QMainWindow {
        <item>
         <widget class="QLabel" name="timeLabel">
          <property name="text">
-          <string>当前时间: 2026-01-29 10:30:14</string>
+          <string>当前时间: --:--:--</string>
          </property>
         </widget>
        </item>
@@ -483,14 +1435,14 @@ QMainWindow {
        <item>
         <widget class="QLabel" name="userInfoLabel">
          <property name="text">
-          <string>当前用户:</string>
+          <string>当前用户: 游客</string>
          </property>
         </widget>
        </item>
        <item>
         <widget class="QLabel" name="roleLabel">
          <property name="text">
-          <string>管理员</string>
+          <string>角色: 未登录</string>
          </property>
         </widget>
        </item>
@@ -549,7 +1501,7 @@ QMainWindow {
              </size>
             </property>
             <property name="styleSheet">
-             <string notr="true">background-color: #2E7D32; border-radius: 4px;</string>
+             <string notr="true">background-color: #B0B0B0; border-radius: 4px;</string>
             </property>
             <property name="text">
              <string/>
@@ -559,7 +1511,7 @@ QMainWindow {
           <item>
            <widget class="QLabel" name="cardStatusLabel">
             <property name="text">
-             <string>读卡器正常</string>
+             <string>读卡器状态：空闲</string>
             </property>
            </widget>
           </item>
@@ -599,7 +1551,7 @@ QMainWindow {
              </size>
             </property>
             <property name="styleSheet">
-             <string notr="true">background-color: #2E7D32; border-radius: 4px;</string>
+             <string notr="true">background-color: #B0B0B0; border-radius: 4px;</string>
             </property>
             <property name="text">
              <string/>
@@ -609,7 +1561,7 @@ QMainWindow {
           <item>
            <widget class="QLabel" name="fingerStatusLabel">
             <property name="text">
-             <string>指纹仪正常</string>
+             <string>指纹仪状态：未接入</string>
             </property>
            </widget>
           </item>

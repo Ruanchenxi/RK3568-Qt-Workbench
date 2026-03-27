@@ -1,5 +1,6 @@
 <RCC>
     <qresource prefix="/branding">
-        <file>branding/yunwang_logo.svg</file>
+        <file>logo.png</file>
+        <file>chevron_down.svg</file>
     </qresource>
 </RCC>

@@ -6,7 +6,7 @@
  *
  * 主窗口负责：
  * - 顶部导航栏管理（页面切换）
- * - 底部状态栏更新（时间、用户、设备状态）
+ * - 壳体默认态与底部状态栏更新（时间、用户、设备状态）
  * - 用户登录状态管理
  * - 各子页面的协调与通信
  */
@@ -28,7 +28,10 @@ class SystemPage;
 class LogPage;
 class KeyboardContainer;
 class KeyboardController;
+class QPushButton;
 class QWidget;
+class QShowEvent;
+class QCloseEvent;
 
 namespace Ui
 {
@@ -40,7 +43,7 @@ namespace Ui
  * @brief 应用程序主窗口类
  *
  * 采用 QStackedWidget 实现多页面切换，
- * 每个功能模块对应一个独立页面。
+ * 以 .ui 静态壳体 + cpp 运行时替换的 mixed 方式承载各功能页面。
  */
 class MainWindow : public QMainWindow
 {
@@ -59,8 +62,7 @@ Q_OBJECT // 让你的类能使用 Qt 的信号槽机制。
         PAGE_WORKBENCH = 1, ///< 工作台页面
         PAGE_KEYS = 2,      ///< 钥匙管理页面
         PAGE_SYSTEM = 3,    ///< 系统设置页面
-        PAGE_LOG = 4,       ///< 服务日志页面
-        PAGE_KEYBOARD = 5   ///< 虚拟键盘页面
+        PAGE_LOG = 4        ///< 服务日志页面
     };
 
 public slots:
@@ -84,6 +86,7 @@ private slots:
     void onBtnServiceClicked();   ///< 服务日志按钮点击
     void onBtnKeyboardClicked();  ///< 虚拟键盘按钮点击
     void onLogoutBtnClicked();    ///< 退出按钮点击
+    void onCardReaderStatusChanged(int status, const QString &message); ///< 读卡器状态变化
 
     // ========== 其他槽函数 ==========
     void updateTime(); ///< 更新时间显示
@@ -97,7 +100,6 @@ private:
     KeyManagePage *m_keyManagePage; ///< 钥匙管理页面
     SystemPage *m_systemPage;       ///< 系统设置页面
     LogPage *m_logPage;             ///< 服务日志页面
-    QWidget *m_inputMethodHost;     ///< 应用内输入法宿主
     KeyboardContainer *m_keyboardContainer; ///< 自定义 QWidget 键盘
     KeyboardController *m_keyboardController; ///< 键盘控制器
     MainWindowController *m_mainController; ///< 主窗口登录态控制器
@@ -110,15 +112,26 @@ private:
     void setupPages();                       ///< 设置页面
     void setupConnections();                 ///< 设置信号槽连接
     void setupTimer();                       ///< 设置定时器
-    void setupInputMethodHost();             ///< 设置应用内键盘宿主
     void setupCustomKeyboard();              ///< 设置自定义 QWidget 键盘
+    void applyInitialWindowGeometry();       ///< 按页面 sizeHint 和可用屏幕修正启动尺寸
+    void fitWindowToAvailableGeometry();     ///< 根据窗口装饰尺寸二次修正可见区，避免板端底部状态栏被挤出
     QWidget *currentPageWidget() const;      ///< 返回当前页面控件
+    void resetKeyboardContext();             ///< 跨页时收起键盘并清空页面上下文
     void switchToPage(PageIndex page);       ///< 切换页面
     void updateNavButtonState();             ///< 更新导航按钮状态
+    void updateNavAccessState();             ///< 根据登录态更新导航可访问状态
+    void applyNavAccessState(QPushButton *button, PageIndex page); ///< 应用单个导航按钮的访问态
+    void updateKeyboardButtonState();        ///< 根据当前页面能力更新键盘按钮状态
     void updateUserDisplay();                ///< 更新用户显示信息
     void updateStatusBar();                  ///< 更新状态栏
-    void applyInputMethodPolicy(PageIndex page); ///< 应用当前页面输入法边界
+    void applyReaderStatus(int status, const QString &message); ///< 更新读卡器状态展示
+    void applyFingerprintStatusDisconnected(); ///< 当前阶段指纹仪未接入
+    bool pageRequiresLogin(PageIndex page) const; ///< 判断页面是否需要登录
     bool checkLoginRequired(PageIndex page); ///< 检查是否需要登录
+
+protected:
+    void showEvent(QShowEvent *event) override; ///< 显示后按真实窗口装饰再次修正可见区
+    void closeEvent(QCloseEvent *event) override; ///< 记录主窗口关闭链路，辅助板端排查异常退出
 };
 
 #endif // MAINWINDOW_H

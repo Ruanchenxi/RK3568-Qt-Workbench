@@ -99,6 +99,15 @@ void KeyboardController::hide()
     }
 }
 
+void KeyboardController::clearCurrentTarget()
+{
+    if (m_currentTarget)
+    {
+        m_currentTarget.clear();
+        emit targetChanged(nullptr);
+    }
+}
+
 bool KeyboardController::eventFilter(QObject *watched, QEvent *event)
 {
     if (event && event->type() == QEvent::FocusIn)

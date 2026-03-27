@@ -39,6 +39,19 @@ void LoginController::login(const QString &username, const QString &password)
     m_flow->loginByPassword(username, password, tenantId);
 }
 
+void LoginController::loginByCard(const QString &cardNo)
+{
+    QString tenantId = ConfigManager::instance()->tenantCode().trimmed();
+    if (tenantId.isEmpty()) {
+        tenantId = QStringLiteral("000000");
+    }
+
+    CardCredential credential;
+    credential.tenantId = tenantId;
+    credential.cardNo = cardNo.trimmed();
+    m_flow->loginByCard(credential);
+}
+
 void LoginController::requestAccountList()
 {
     QString tenantId = ConfigManager::instance()->tenantCode().trimmed();

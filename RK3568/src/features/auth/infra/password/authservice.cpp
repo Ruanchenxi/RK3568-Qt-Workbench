@@ -56,6 +56,29 @@ void AuthService::login(const QString &userName, const QString &password, const 
     sendLoginRequest(userName, encryptedPassword, tenantId);
 }
 
+void AuthService::loginByCard(const QString &cardNo, const QString &tenantId)
+{
+    const QString normalizedCardNo = cardNo.trimmed().toLower();
+    if (normalizedCardNo.isEmpty())
+    {
+        emit loginFailed(QStringLiteral("卡号不能为空"));
+        return;
+    }
+    if (m_loginInProgress)
+    {
+        emit loginFailed(QStringLiteral("登录请求处理中，请稍候..."));
+        return;
+    }
+
+    QString normalizedTenantId = tenantId.trimmed();
+    if (normalizedTenantId.isEmpty())
+    {
+        normalizedTenantId = QStringLiteral("000000");
+    }
+
+    sendCardLoginRequest(normalizedCardNo, normalizedTenantId);
+}
+
 void AuthService::fetchAccountList(const QString &tenantId)
 {
     if (m_accountListInProgress)
@@ -174,6 +197,11 @@ QString AuthService::getAuthorizationHeader() const
         return QString();
     }
     return QString("Bearer %1").arg(m_accessToken);
+}
+
+QNetworkAccessManager *AuthService::networkAccessManager() const
+{
+    return m_networkManager;
 }
 
 QString AuthService::encryptPassword(const QString &password) const
@@ -319,6 +347,131 @@ void AuthService::sendLoginRequest(const QString &userName, const QString &encry
 
         qDebug() << "[AuthService] 登录成功，用户:" << userName;
             emit loginSuccess(data); });
+}
+
+void AuthService::sendCardLoginRequest(const QString &cardNo, const QString &tenantId)
+{
+    QString loginUrl = ConfigManager::instance()
+            ->value("auth/cardLoginUrl", "")
+            .toString()
+            .trimmed();
+
+    if (loginUrl.isEmpty())
+    {
+        QString apiBaseUrl = ConfigManager::instance()->apiUrl().trimmed();
+        if (apiBaseUrl.isEmpty())
+        {
+            apiBaseUrl = QStringLiteral("http://localhost/api/kids-outage/third-api");
+        }
+
+        while (apiBaseUrl.endsWith('/'))
+        {
+            apiBaseUrl.chop(1);
+        }
+
+        loginUrl = apiBaseUrl + QStringLiteral("/login-by-card");
+    }
+
+    qDebug() << "[AuthService] 刷卡登录请求 URL:" << loginUrl;
+    qDebug() << "[AuthService] 卡号:" << cardNo;
+
+    QJsonObject requestBody;
+    requestBody["cardNo"] = cardNo;
+    requestBody["tenantId"] = tenantId;
+
+    const QByteArray requestData = QJsonDocument(requestBody).toJson(QJsonDocument::Compact);
+
+    QNetworkRequest request;
+    request.setUrl(QUrl(loginUrl));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setRawHeader("Authorization", "Basic cmlkZXI6cmlkZXJfc2VjcmV0");
+
+    QNetworkReply *reply = m_networkManager->post(request, requestData);
+    m_pendingLoginReply = reply;
+    m_loginInProgress = true;
+    emit loginStateChanged(true);
+
+    int timeoutMs = ConfigManager::instance()->connectionTimeout() * 1000;
+    if (timeoutMs < 3000)
+    {
+        timeoutMs = 3000;
+    }
+    QTimer::singleShot(timeoutMs, this, [this, reply]()
+                       {
+        if (m_pendingLoginReply != reply || !reply->isRunning()) {
+            return;
+        }
+        reply->setProperty("timeoutAbort", true);
+        reply->abort(); });
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, cardNo]()
+            {
+        reply->deleteLater();
+
+        if (m_pendingLoginReply != reply) {
+            return;
+        }
+
+        if (reply->error() != QNetworkReply::NoError) {
+            const bool timeoutAbort = reply->property("timeoutAbort").toBool();
+            const QString errorMsg = timeoutAbort
+                    ? QString("刷卡登录请求超时(%1秒)").arg(ConfigManager::instance()->connectionTimeout())
+                    : QString("网络错误: %1").arg(reply->errorString());
+            finishLoginRequest(reply);
+            qDebug() << "[AuthService] 刷卡登录失败:" << errorMsg;
+            emit loginFailed(errorMsg);
+            return;
+        }
+
+        const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (httpStatus < 200 || httpStatus >= 300) {
+            finishLoginRequest(reply);
+            const QString errorMsg = QString("HTTP状态异常: %1").arg(httpStatus);
+            qDebug() << "[AuthService] 刷卡登录失败:" << errorMsg;
+            emit loginFailed(errorMsg);
+            return;
+        }
+
+        const QByteArray responseData = reply->readAll();
+        const QJsonDocument responseDoc = QJsonDocument::fromJson(responseData);
+        if (responseDoc.isNull() || !responseDoc.isObject()) {
+            finishLoginRequest(reply);
+            qDebug() << "[AuthService] 刷卡登录失败: 响应数据格式错误";
+            emit loginFailed(QStringLiteral("服务器响应格式错误"));
+            return;
+        }
+
+        const QJsonObject responseObj = responseDoc.object();
+        const int code = responseObj.value("code").toInt();
+        const bool success = responseObj.value("success").toBool();
+        const QString msg = responseObj.value("msg").toString();
+
+        qDebug() << "[AuthService] 刷卡登录响应 - code:" << code << "success:" << success << "msg:" << msg;
+
+        if (!success || (code != 0 && code != 200)) {
+            const QString errorMsg = msg.isEmpty() ? QStringLiteral("刷卡登录失败") : msg;
+            finishLoginRequest(reply);
+            qDebug() << "[AuthService] 刷卡登录失败:" << errorMsg;
+            emit loginFailed(errorMsg);
+            return;
+        }
+
+        const QJsonObject data = responseObj.value("data").toObject();
+        const QString accessToken = data.value("access_token").toString();
+        const QString refreshToken = data.value("refresh_token").toString();
+
+        if (accessToken.isEmpty()) {
+            finishLoginRequest(reply);
+            qDebug() << "[AuthService] 刷卡登录失败: 未返回 access_token";
+            emit loginFailed(QStringLiteral("服务器未返回访问令牌"));
+            return;
+        }
+
+        saveToken(accessToken, refreshToken, data);
+        finishLoginRequest(reply);
+
+        qDebug() << "[AuthService] 刷卡登录成功，卡号:" << cardNo;
+        emit loginSuccess(data); });
 }
 
 void AuthService::sendAccountListRequest(const QString &tenantId)

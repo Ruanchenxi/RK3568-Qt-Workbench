@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>1280</width>
-    <height>640</height>
+    <height>668</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -15,50 +15,152 @@
   </property>
   <property name="styleSheet">
    <string notr="true">
-    QWidget#LogPage {
-      background-color: #1A1A2E;
+    #LogPage {
+      background-color: #EEF2F7;
+    }
+    #contentFrame {
+      background-color: #FFFFFF;
+      border: 1px solid #D8E0EA;
+      border-radius: 10px;
+    }
+    #pageTitle {
+      color: #1F2937;
+      font-size: 24px;
+      font-weight: bold;
+    }
+    #pageSubtitle {
+      color: #667085;
+      font-size: 13px;
+    }
+    #sectionLabel {
+      color: #344054;
+      font-size: 14px;
+      font-weight: bold;
+    }
+    #sectionHint {
+      color: #98A2B3;
+      font-size: 12px;
+    }
+    QPlainTextEdit#logDisplay {
+      background-color: #111827;
+      color: #D1FAE5;
+      border: 1px solid #1F2937;
+      border-radius: 12px;
+      padding: 16px;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 14px;
+      selection-background-color: #2563EB;
+      selection-color: #FFFFFF;
+    }
+    QPlainTextEdit#logDisplay QScrollBar:vertical {
+      background-color: #1F2937;
+      width: 10px;
+      margin: 2px 0px 2px 0px;
+    }
+    QPlainTextEdit#logDisplay QScrollBar::handle:vertical {
+      background-color: #4B5563;
+      border-radius: 5px;
+    }
+    QPlainTextEdit#logDisplay QScrollBar::handle:vertical:hover {
+      background-color: #6B7280;
     }
    </string>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <property name="spacing">
-    <number>12</number>
+    <number>0</number>
    </property>
    <property name="leftMargin">
-    <number>20</number>
+    <number>0</number>
    </property>
    <property name="topMargin">
-    <number>20</number>
+    <number>0</number>
    </property>
    <property name="rightMargin">
-    <number>20</number>
+    <number>0</number>
    </property>
    <property name="bottomMargin">
-    <number>20</number>
+    <number>0</number>
    </property>
    <item>
-    <widget class="QLabel" name="labelTitle">
-     <property name="text">
-      <string>服务启动日志</string>
+    <widget class="QFrame" name="contentFrame">
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
      </property>
-     <property name="styleSheet">
-      <string notr="true">
-       QLabel {
-         color: #E2E8F0;
-         font-size: 20px;
-         font-weight: bold;
-         padding: 10px 0px;
-       }
-      </string>
+     <property name="frameShape">
+      <enum>QFrame::NoFrame</enum>
      </property>
+     <property name="frameShadow">
+      <enum>QFrame::Plain</enum>
+     </property>
+     <layout class="QVBoxLayout" name="contentLayout">
+      <property name="spacing">
+       <number>10</number>
+      </property>
+      <property name="leftMargin">
+       <number>12</number>
+      </property>
+      <property name="topMargin">
+       <number>12</number>
+      </property>
+      <property name="rightMargin">
+       <number>12</number>
+      </property>
+      <property name="bottomMargin">
+       <number>12</number>
+      </property>
+      <item>
+       <widget class="QLabel" name="pageTitle">
+        <property name="text">
+         <string>服务日志</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPlainTextEdit" name="logDisplay">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="focusPolicy">
+         <enum>Qt::ClickFocus</enum>
+        </property>
+        <property name="verticalScrollBarPolicy">
+         <enum>Qt::ScrollBarAsNeeded</enum>
+        </property>
+        <property name="horizontalScrollBarPolicy">
+         <enum>Qt::ScrollBarAlwaysOff</enum>
+        </property>
+        <property name="tabChangesFocus">
+         <bool>false</bool>
+        </property>
+        <property name="undoRedoEnabled">
+         <bool>false</bool>
+        </property>
+        <property name="lineWrapMode">
+         <enum>QPlainTextEdit::WidgetWidth</enum>
+        </property>
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+        <property name="textInteractionFlags">
+         <set>Qt::TextSelectableByKeyboard|Qt::TextSelectableByMouse</set>
+        </property>
+        <property name="maximumBlockCount">
+         <number>5000</number>
+        </property>
+        <property name="placeholderText">
+         <string>等待服务输出日志...</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
     </widget>
-   </item>
-   <item>
-    <layout class="QVBoxLayout" name="layoutLog">
-     <property name="spacing">
-      <number>0</number>
-     </property>
-    </layout>
    </item>
   </layout>
  </widget>

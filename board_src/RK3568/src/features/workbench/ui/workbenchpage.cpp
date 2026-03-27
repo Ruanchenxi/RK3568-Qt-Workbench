@@ -4,11 +4,13 @@
  */
 
 #include "workbenchpage.h"
-#include "app/InputMethodCoordinator.h"
 #include "ui_workbenchpage.h"
+#include "features/keyboard/ui/KeyboardContainer.h"
 #include <QWebEnginePage>
 #include <QVBoxLayout>
 #include <QDebug>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QUrl>
 #include <QUrlQuery>
 
@@ -89,7 +91,6 @@ WorkbenchPage::WorkbenchPage(QWidget *parent)
       m_webViewInitialized(false)
 {
     ui->setupUi(this);
-    disableSoftKeyboard();
 }
 
 /**
@@ -98,6 +99,51 @@ WorkbenchPage::WorkbenchPage(QWidget *parent)
 WorkbenchPage::~WorkbenchPage()
 {
     delete ui;
+}
+
+void WorkbenchPage::requestKeyboardActivation(KeyboardContainer *container, std::function<void(bool)> callback)
+{
+    ensureWebViewInitialized();
+    if (!container || !m_webView || !m_webView->page())
+    {
+        if (callback)
+        {
+            callback(false);
+        }
+        return;
+    }
+
+    static const QString script = QStringLiteral(R"JS(
+(function(){
+    const el = document.activeElement;
+    if (!el) return false;
+    const tag = (el.tagName || '').toLowerCase();
+    const type = (el.type || '').toLowerCase();
+    const blocked = ['button', 'checkbox', 'radio', 'submit', 'file', 'hidden', 'image', 'reset'];
+    return ((tag === 'input' && !blocked.includes(type)) || tag === 'textarea' || el.isContentEditable) && !el.disabled && !el.readOnly;
+})();
+)JS");
+
+    m_webView->page()->runJavaScript(script, [this, container, callback](const QVariant &result) {
+        const bool ready = result.toBool();
+        if (ready)
+        {
+            container->setActionHandlers(
+                [this](const QString &text) { insertTextFromKeyboard(text); },
+                [this]() { backspaceFromKeyboard(); },
+                [this]() { commitFromKeyboard(); },
+                [this]() { clearFromKeyboard(); });
+        }
+        else
+        {
+            container->clearActionHandlers();
+        }
+
+        if (callback)
+        {
+            callback(ready);
+        }
+    });
 }
 
 /**
@@ -117,7 +163,6 @@ void WorkbenchPage::initWebView()
 {
     // 创建 QWebEngineView
     m_webView = new QWebEngineView(this);
-    InputMethodCoordinator::blockSoftKeyboardForWidgetTree(m_webView);
     m_webView->setPage(new DebugWorkbenchPage(m_webView));
 
     // 将 WebView 添加到容器中
@@ -169,11 +214,6 @@ void WorkbenchPage::initWebView()
         } });
 }
 
-void WorkbenchPage::disableSoftKeyboard()
-{
-    InputMethodCoordinator::blockSoftKeyboardForWidgetTree(this);
-}
-
 /**
  * @brief 加载工作台网页（带 token）
  */
@@ -220,4 +260,170 @@ void WorkbenchPage::showEvent(QShowEvent *event)
     if (m_controller->shouldLoadNow()) {
         loadWorkbench();
     }
+}
+
+void WorkbenchPage::insertTextFromKeyboard(const QString &text)
+{
+    if (!m_webView || !m_webView->page())
+    {
+        return;
+    }
+
+    QJsonObject payloadObject;
+    payloadObject.insert(QStringLiteral("text"), text);
+    const QString payload = QString::fromUtf8(
+        QJsonDocument(payloadObject).toJson(QJsonDocument::Compact));
+    const QString script = QStringLiteral(R"JS(
+(function(payload){
+    const el = document.activeElement;
+    if (!el) return false;
+    const tag = (el.tagName || '').toLowerCase();
+    const type = (el.type || '').toLowerCase();
+    const blocked = ['button', 'checkbox', 'radio', 'submit', 'file', 'hidden', 'image', 'reset'];
+    const isEditable = ((tag === 'input' && !blocked.includes(type)) || tag === 'textarea' || el.isContentEditable) && !el.disabled && !el.readOnly;
+    if (!isEditable) return false;
+
+    const text = payload.text || '';
+    el.focus();
+
+    if (el.isContentEditable) {
+        if (document.queryCommandSupported && document.queryCommandSupported('insertText')) {
+            document.execCommand('insertText', false, text);
+        } else {
+            const selection = window.getSelection();
+            if (selection && selection.rangeCount > 0) {
+                selection.deleteFromDocument();
+                selection.getRangeAt(0).insertNode(document.createTextNode(text));
+            } else {
+                el.textContent = (el.textContent || '') + text;
+            }
+        }
+        el.dispatchEvent(new Event('input', {bubbles:true}));
+        return true;
+    }
+
+    const value = el.value || '';
+    const start = typeof el.selectionStart === 'number' ? el.selectionStart : value.length;
+    const end = typeof el.selectionEnd === 'number' ? el.selectionEnd : start;
+    el.value = value.slice(0, start) + text + value.slice(end);
+    const pos = start + text.length;
+    if (typeof el.setSelectionRange === 'function') {
+        el.setSelectionRange(pos, pos);
+    }
+    el.dispatchEvent(new Event('input', {bubbles:true}));
+    el.dispatchEvent(new Event('change', {bubbles:true}));
+    return true;
+})(%1);
+)JS").arg(payload);
+
+    m_webView->page()->runJavaScript(script);
+}
+
+void WorkbenchPage::backspaceFromKeyboard()
+{
+    if (!m_webView || !m_webView->page())
+    {
+        return;
+    }
+
+    static const QString script = QStringLiteral(R"JS(
+(function(){
+    const el = document.activeElement;
+    if (!el) return false;
+    const tag = (el.tagName || '').toLowerCase();
+    const type = (el.type || '').toLowerCase();
+    const blocked = ['button', 'checkbox', 'radio', 'submit', 'file', 'hidden', 'image', 'reset'];
+    const isEditable = ((tag === 'input' && !blocked.includes(type)) || tag === 'textarea' || el.isContentEditable) && !el.disabled && !el.readOnly;
+    if (!isEditable) return false;
+
+    el.focus();
+    if (el.isContentEditable) {
+        document.execCommand('delete', false, null);
+        el.dispatchEvent(new Event('input', {bubbles:true}));
+        return true;
+    }
+
+    const value = el.value || '';
+    let start = typeof el.selectionStart === 'number' ? el.selectionStart : value.length;
+    let end = typeof el.selectionEnd === 'number' ? el.selectionEnd : start;
+    if (start === end && start > 0) {
+        start -= 1;
+    }
+    el.value = value.slice(0, start) + value.slice(end);
+    if (typeof el.setSelectionRange === 'function') {
+        el.setSelectionRange(start, start);
+    }
+    el.dispatchEvent(new Event('input', {bubbles:true}));
+    el.dispatchEvent(new Event('change', {bubbles:true}));
+    return true;
+})();
+)JS");
+
+    m_webView->page()->runJavaScript(script);
+}
+
+void WorkbenchPage::commitFromKeyboard()
+{
+    if (!m_webView || !m_webView->page())
+    {
+        return;
+    }
+
+    static const QString script = QStringLiteral(R"JS(
+(function(){
+    const el = document.activeElement;
+    if (!el) return false;
+    const tag = (el.tagName || '').toLowerCase();
+    if (tag === 'textarea' || el.isContentEditable) {
+        if (document.queryCommandSupported && document.queryCommandSupported('insertLineBreak')) {
+            document.execCommand('insertLineBreak', false, null);
+        } else if (document.queryCommandSupported && document.queryCommandSupported('insertText')) {
+            document.execCommand('insertText', false, '\n');
+        }
+        el.dispatchEvent(new Event('input', {bubbles:true}));
+        return true;
+    }
+    if (typeof el.blur === 'function') {
+        el.blur();
+    }
+    return true;
+})();
+)JS");
+
+    m_webView->page()->runJavaScript(script);
+}
+
+void WorkbenchPage::clearFromKeyboard()
+{
+    if (!m_webView || !m_webView->page())
+    {
+        return;
+    }
+
+    static const QString script = QStringLiteral(R"JS(
+(function(){
+    const el = document.activeElement;
+    if (!el) return false;
+    const tag = (el.tagName || '').toLowerCase();
+    const type = (el.type || '').toLowerCase();
+    const blocked = ['button', 'checkbox', 'radio', 'submit', 'file', 'hidden', 'image', 'reset'];
+    const isEditable = ((tag === 'input' && !blocked.includes(type)) || tag === 'textarea' || el.isContentEditable) && !el.disabled && !el.readOnly;
+    if (!isEditable) return false;
+
+    el.focus();
+    if (el.isContentEditable) {
+        el.textContent = '';
+    } else {
+        el.value = '';
+        if (typeof el.setSelectionRange === 'function') {
+            el.setSelectionRange(0, 0);
+        }
+    }
+    el.dispatchEvent(new Event('input', {bubbles:true}));
+    el.dispatchEvent(new Event('change', {bubbles:true}));
+    return true;
+})();
+)JS");
+
+    m_webView->page()->runJavaScript(script);
 }

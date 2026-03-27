@@ -24,6 +24,11 @@ void AuthServiceAdapter::login(const QString &userName, const QString &password,
     AuthService::instance()->login(userName, password, tenantId);
 }
 
+void AuthServiceAdapter::loginByCard(const QString &cardNo, const QString &tenantId)
+{
+    AuthService::instance()->loginByCard(cardNo, tenantId);
+}
+
 QJsonObject AuthServiceAdapter::userInfo() const
 {
     return AuthService::instance()->getUserInfo();

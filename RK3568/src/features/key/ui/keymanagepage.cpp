@@ -342,7 +342,7 @@ void KeyManagePage::onInitDevice()
 
 void KeyManagePage::onQueryBattery()
 {
-    updateStatusBar(QStringLiteral("获取电量...（待接协议命令）"));
+    m_controller->onQueryBatteryClicked();
 }
 
 void KeyManagePage::onQueryTaskCount()
@@ -353,7 +353,7 @@ void KeyManagePage::onQueryTaskCount()
 
 void KeyManagePage::onSyncDeviceTime()
 {
-    updateStatusBar(QStringLiteral("钥匙校时...（待接协议命令）"));
+    m_controller->onSyncDeviceTimeClicked();
 }
 
 // ====================================================================
@@ -697,7 +697,9 @@ QString KeyManagePage::cmdText(quint8 cmd) const
     case KeyProtocol::CmdInit:     return QStringLiteral("INIT");
     case static_cast<quint8>(KeyProtocol::CmdInit | 0x80): return QStringLiteral("INIT_MORE");
     case KeyProtocol::CmdSetCom:   return QStringLiteral("SET_COM");
+    case KeyProtocol::CmdSetTime:  return QStringLiteral("SET_TIME");
     case KeyProtocol::CmdQTask:    return QStringLiteral("Q_TASK");
+    case KeyProtocol::CmdQKeyEq:   return QStringLiteral("Q_KEYEQ");
     case KeyProtocol::CmdITaskLog: return QStringLiteral("I_TASK_LOG");
     case KeyProtocol::CmdDel:      return QStringLiteral("DEL");
     case KeyProtocol::CmdDownloadRfid:return QStringLiteral("DN_RFID");
@@ -966,6 +968,7 @@ void KeyManagePage::updateCommIndicators(const KeySessionSnapshot &snapshot)
         ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#C62828'>断开</font>"));
         ui->lblCommParams->setText(QStringLiteral("串口: -- OFF"));
         ui->lblKeyPosition->setText(QStringLiteral("在位: <font color='#EF6C00'>未插</font>"));
+        ui->lblBatteryInfo->setText(QStringLiteral("电量: --"));
         ui->lblTaskInfo->setText(QStringLiteral("任务数: --"));
         ui->lblCommStatus->setToolTip(QStringLiteral("串口未连接，当前无法与底座通讯"));
         return;
@@ -980,10 +983,15 @@ void KeyManagePage::updateCommIndicators(const KeySessionSnapshot &snapshot)
     if (!snapshot.keyPresent) {
         ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#EF6C00'>待钥匙</font>"));
         ui->lblKeyPosition->setText(QStringLiteral("在位: <font color='#EF6C00'>未插</font>"));
+        ui->lblBatteryInfo->setText(QStringLiteral("电量: --"));
         ui->lblTaskInfo->setText(QStringLiteral("任务数: --"));
         ui->lblCommStatus->setToolTip(QStringLiteral("串口已连接，底座在线，但当前未检测到钥匙在位"));
         return;
     }
+
+    ui->lblBatteryInfo->setText(snapshot.batteryPercent >= 0
+                                    ? QStringLiteral("电量: %1%").arg(snapshot.batteryPercent)
+                                    : QStringLiteral("电量: --"));
 
     if (!snapshot.keyStable) {
         ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#EF6C00'>稳定中</font>"));

@@ -15,6 +15,7 @@ public:
     ~AuthServiceAdapter() override = default;
 
     void login(const QString &userName, const QString &password, const QString &tenantId) override;
+    void loginByCard(const QString &cardNo, const QString &tenantId) override;
     QJsonObject userInfo() const override;
     QString accessToken() const override;
     QString refreshToken() const override;

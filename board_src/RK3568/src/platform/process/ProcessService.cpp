@@ -8,10 +8,12 @@
 #include "core/ConfigManager.h"
 
 #include <QCoreApplication>
+#include <QDate>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QIODevice>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QSet>
@@ -19,6 +21,207 @@
 #include <QTextCodec>
 #include <QTimer>
 #include <QUrl>
+#include <functional>
+
+namespace
+{
+QStringList collectAncestorDirs(const QString &startDir, int maxDepth)
+{
+    QStringList result;
+    QDir dir(QDir::cleanPath(startDir));
+    for (int depth = 0; depth < maxDepth && dir.exists(); ++depth)
+    {
+        const QString current = QDir::cleanPath(dir.absolutePath());
+        if (!current.isEmpty() && !result.contains(current))
+        {
+            result << current;
+        }
+        if (!dir.cdUp())
+        {
+            break;
+        }
+    }
+    return result;
+}
+
+bool dirContainsServiceArtifacts(const QString &dirPath)
+{
+    if (!QDir(dirPath).exists())
+    {
+        return false;
+    }
+
+    const QStringList artifacts = {
+        QStringLiteral("start-all.bat"),
+        QStringLiteral("start-all.sh"),
+        QStringLiteral("start.sh"),
+        QStringLiteral("service_startup.log")};
+
+    for (const QString &name : artifacts)
+    {
+        if (QFileInfo::exists(QDir(dirPath).filePath(name)))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool isOriginalOutageScript(const QString &scriptPath, const QString &workDir)
+{
+    const QString normalizedScript = QDir::cleanPath(scriptPath);
+    const QString normalizedWorkDir = QDir::cleanPath(workDir);
+    return normalizedScript == QStringLiteral("/home/linaro/outage/start.sh")
+           || (QFileInfo(normalizedScript).fileName() == QStringLiteral("start.sh")
+               && normalizedWorkDir == QStringLiteral("/home/linaro/outage"));
+}
+
+void appendExistingUniquePath(QStringList &paths, const QString &path)
+{
+    const QString normalized = QDir::cleanPath(path);
+    if (normalized.isEmpty() || paths.contains(normalized))
+    {
+        return;
+    }
+
+    if (!QFileInfo::exists(normalized))
+    {
+        return;
+    }
+
+    paths << normalized;
+}
+
+void appendLatestMatchingFile(QStringList &paths, const QString &dirPath, const QStringList &nameFilters)
+{
+    const QDir dir(dirPath);
+    if (!dir.exists())
+    {
+        return;
+    }
+
+    const QFileInfoList matches = dir.entryInfoList(nameFilters,
+                                                    QDir::Files | QDir::Readable,
+                                                    QDir::Time);
+    if (matches.isEmpty())
+    {
+        return;
+    }
+
+    appendExistingUniquePath(paths, matches.constFirst().absoluteFilePath());
+}
+
+QStringList collectOriginalOutageLogFiles()
+{
+    QStringList files;
+    const QString outageLogDir = QStringLiteral("/home/linaro/outage/target/kids/log");
+    const QString todayIso = QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd"));
+
+    appendExistingUniquePath(files, QStringLiteral("/home/linaro/outage/target/kids/log/info-%1.log").arg(todayIso));
+    appendExistingUniquePath(files, QStringLiteral("/home/linaro/outage/target/kids/log/error-%1.log").arg(todayIso));
+
+    appendLatestMatchingFile(files, outageLogDir, QStringList() << QStringLiteral("info-*.log"));
+    appendLatestMatchingFile(files, outageLogDir, QStringList() << QStringLiteral("error-*.log"));
+
+    return files;
+}
+
+QString decodeExternalLogData(const QByteArray &data)
+{
+    QTextCodec *utf8Codec = QTextCodec::codecForName("UTF-8");
+    if (utf8Codec)
+    {
+        QTextCodec::ConverterState state;
+        const QString utf8Text = utf8Codec->toUnicode(data.constData(), data.size(), &state);
+        if (state.invalidChars == 0)
+        {
+            return utf8Text;
+        }
+    }
+
+    return QString::fromLocal8Bit(data);
+}
+
+QStringList lastNonEmptyLinesFromData(const QByteArray &data, int maxLines)
+{
+    QString text = decodeExternalLogData(data);
+    text.replace("\r\n", "\n");
+    text.replace('\r', '\n');
+
+    const QStringList allLines = text.split('\n');
+    QStringList result;
+    for (int i = allLines.size() - 1; i >= 0 && result.size() < maxLines; --i)
+    {
+        const QString trimmed = allLines.at(i).trimmed();
+        if (!trimmed.isEmpty())
+        {
+            result.prepend(trimmed);
+        }
+    }
+    return result;
+}
+
+void appendHistoricalLogPreview(const QString &path, std::function<void(const QString &)> appendLog)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+    {
+        return;
+    }
+
+    const qint64 fileSize = file.size();
+    const qint64 previewBytes = 16 * 1024;
+    const qint64 startPos = qMax<qint64>(0, fileSize - previewBytes);
+    if (!file.seek(startPos))
+    {
+        file.close();
+        return;
+    }
+
+    QByteArray previewData = file.readAll();
+    file.close();
+
+    const QStringList previewLines = lastNonEmptyLinesFromData(previewData, 40);
+    if (previewLines.isEmpty())
+    {
+        return;
+    }
+
+    const QString fileName = QFileInfo(path).fileName();
+    appendLog(QString("[INFO] 载入最近日志片段: %1").arg(path));
+    for (const QString &line : previewLines)
+    {
+        appendLog(QString("[EXTLOG][%1] %2").arg(fileName, line));
+    }
+}
+
+void appendUtf8LineToFile(const QString &path, const QString &line)
+{
+    if (path.trimmed().isEmpty())
+    {
+        return;
+    }
+
+    QFile file(path);
+    QFileInfo info(file);
+    QDir dir = info.dir();
+    if (!dir.exists())
+    {
+        dir.mkpath(".");
+    }
+
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Append))
+    {
+        return;
+    }
+
+    QByteArray data = line.toUtf8();
+    data.append('\n');
+    file.write(data);
+    file.close();
+}
+}
 
 ProcessService::ProcessService(QObject *parent)
     : IProcessService(parent),
@@ -96,6 +299,38 @@ void ProcessService::appendLog(const QString &text)
     emit logGenerated(text);
 }
 
+QString ProcessService::serviceStartupLogPath() const
+{
+    QString baseDir;
+    if (m_process && !m_process->workingDirectory().trimmed().isEmpty())
+    {
+        baseDir = m_process->workingDirectory().trimmed();
+    }
+
+    if (baseDir.isEmpty())
+    {
+        baseDir = resolveServiceWorkDir();
+    }
+
+    if (baseDir.isEmpty())
+    {
+        baseDir = QCoreApplication::applicationDirPath();
+    }
+
+    return QDir::toNativeSeparators(QDir(baseDir).filePath("service_startup.log"));
+}
+
+void ProcessService::appendServiceStartupLogLine(const QString &text) const
+{
+    const QString trimmed = text.trimmed();
+    if (trimmed.isEmpty())
+    {
+        return;
+    }
+
+    appendUtf8LineToFile(serviceStartupLogPath(), trimmed);
+}
+
 void ProcessService::autoStartServices()
 {
     if (!ConfigManager::instance()->autoStart())
@@ -106,8 +341,27 @@ void ProcessService::autoStartServices()
     }
 
     const QString mode = serviceStartMode();
+    const bool forceRestartScript = ConfigManager::instance()->value("service/forceRestartScript", false).toBool();
     appendLog(QString("\n[%1] 准备自动启动服务...").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss")));
     appendLog(QString("[INFO] 启动模式: %1").arg(mode));
+
+#ifdef Q_OS_LINUX
+    const QString resolvedScriptPath = resolveServiceScriptPath();
+    const QString resolvedWorkDir = resolveServiceWorkDir();
+    if (isOriginalOutageScript(resolvedScriptPath, resolvedWorkDir))
+    {
+        appendLog("[INFO] 已匹配原产品 AdapterService/outage 启动链，按原产品方式直接执行 start.sh");
+        startServices(true);
+        return;
+    }
+#endif
+
+    if (forceRestartScript)
+    {
+        appendLog("[INFO] 已启用强制重启服务模式：本次将忽略现有服务状态，先清理端口再重新执行服务脚本");
+        startServices(true);
+        return;
+    }
 
     if (mode == "remote")
     {
@@ -137,7 +391,7 @@ void ProcessService::autoStartServices()
     startServices();
 }
 
-void ProcessService::startServices()
+void ProcessService::startServices(bool forceRestart)
 {
     if (m_startInProgress)
     {
@@ -169,15 +423,22 @@ void ProcessService::startServices()
     appendLog("[INFO] 检查端口占用情况...");
     if (!checkAndCleanPorts())
     {
-        QString detail;
-        if (checkRemoteServiceReady(&detail))
+        if (forceRestart)
         {
-            appendLog(QString("[SUCCESS] 检测到现有服务已可用，跳过本次脚本启动：%1").arg(detail));
-            startExternalLogTailing();
+            appendLog("[ERROR] 强制重启服务模式下端口清理失败，已取消本次脚本启动");
         }
         else
         {
-            appendLog(QString("[ERROR] 端口占用且服务未就绪，已取消启动以避免冲突：%1").arg(detail));
+            QString detail;
+            if (checkRemoteServiceReady(&detail))
+            {
+                appendLog(QString("[SUCCESS] 检测到现有服务已可用，跳过本次脚本启动：%1").arg(detail));
+                startExternalLogTailing();
+            }
+            else
+            {
+                appendLog(QString("[ERROR] 端口占用且服务未就绪，已取消启动以避免冲突：%1").arg(detail));
+            }
         }
         return;
     }
@@ -210,6 +471,10 @@ void ProcessService::startServices()
     appendLog(QString("[INFO] 启动脚本: %1").arg(scriptPath));
     appendLog(QString("[INFO] 工作目录: %1").arg(workDir));
     appendLog(QString("[INFO] 执行命令: %1\n").arg(scriptPath));
+    appendServiceStartupLogLine(QString("=== start-all 日志 %1 ===")
+                                    .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss")));
+    appendServiceStartupLogLine(QString("[INFO] 启动脚本: %1").arg(scriptPath));
+    appendServiceStartupLogLine(QString("[INFO] 工作目录: %1").arg(workDir));
 
     stopExternalLogTailing();
     ++m_startAttempt;
@@ -232,6 +497,7 @@ void ProcessService::onProcessStarted()
     m_startInProgress = false;
     m_startAttempt = 0;
     appendLog("[SUCCESS] 服务脚本已启动，正在执行...\n");
+    appendServiceStartupLogLine("[SUCCESS] 服务脚本已启动，正在执行...");
 }
 
 void ProcessService::onStartRetryTimeout()
@@ -262,6 +528,7 @@ void ProcessService::onProcessReadyReadOutput()
         if (!trimmed.isEmpty())
         {
             appendLog(trimmed);
+            appendServiceStartupLogLine(trimmed);
         }
     }
 }
@@ -288,6 +555,7 @@ void ProcessService::onProcessReadyReadError()
         if (!trimmed.isEmpty() && !trimmed.contains("Active code page"))
         {
             appendLog(QString("[STDERR] %1").arg(trimmed));
+            appendServiceStartupLogLine(QString("[STDERR] %1").arg(trimmed));
         }
     }
 }
@@ -301,14 +569,20 @@ void ProcessService::onProcessFinished(int exitCode, int exitStatus)
     appendLog(QString("\n[%1] 服务脚本执行完成").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss")));
     appendLog(QString("[INFO] 退出状态: %1").arg(statusText));
     appendLog(QString("[INFO] 退出代码: %1").arg(exitCode));
+    appendServiceStartupLogLine(QString("[%1] 服务脚本执行完成")
+                                    .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss")));
+    appendServiceStartupLogLine(QString("[INFO] 退出状态: %1").arg(statusText));
+    appendServiceStartupLogLine(QString("[INFO] 退出代码: %1").arg(exitCode));
 
     if (exitCode == 0)
     {
         appendLog("[SUCCESS] 所有服务启动成功！");
+        appendServiceStartupLogLine("[SUCCESS] 所有服务启动成功！");
     }
     else
     {
         appendLog(QString("[WARN] 脚本返回非零退出码: %1").arg(exitCode));
+        appendServiceStartupLogLine(QString("[WARN] 脚本返回非零退出码: %1").arg(exitCode));
     }
 
     startExternalLogTailing();
@@ -344,6 +618,7 @@ void ProcessService::onProcessError(int error)
     }
 
     appendLog(QString("[ERROR] 进程错误: %1").arg(errorMsg));
+    appendServiceStartupLogLine(QString("[ERROR] 进程错误: %1").arg(errorMsg));
     if (processError == QProcess::FailedToStart || processError == QProcess::Crashed)
     {
         scheduleStartRetry(errorMsg);
@@ -364,6 +639,7 @@ void ProcessService::killProcessByPort(int port)
     appendLog(QString("[INFO] 正在清理端口 %1...").arg(port));
 
 #ifdef Q_OS_WIN
+    const bool forceRestartScript = ConfigManager::instance()->value("service/forceRestartScript", false).toBool();
     QProcess findProcess;
     findProcess.start("cmd.exe", QStringList() << "/c" << QString("netstat -ano | findstr :%1").arg(port));
     if (!findProcess.waitForFinished(3000))
@@ -395,15 +671,26 @@ void ProcessService::killProcessByPort(int port)
         const QString processName = queryProcessNameByPid(pid);
         if (processName.isEmpty())
         {
-            appendLog(QString("[WARN] 无法识别 PID=%1 的进程名，拒绝自动终止").arg(pid));
-            continue;
+            if (!forceRestartScript)
+            {
+                appendLog(QString("[WARN] 无法识别 PID=%1 的进程名，拒绝自动终止").arg(pid));
+                continue;
+            }
+
+            appendLog(QString("[WARN] 无法识别 PID=%1 的进程名，但当前为强制重启模式，继续尝试终止该 PID").arg(pid));
         }
 
-        if (!whitelist.contains(processName.toLower()))
+        if (!processName.isEmpty() && !whitelist.contains(processName.toLower()))
         {
-            appendLog(QString("[WARN] PID=%1 进程 %2 不在白名单，拒绝自动终止")
+            if (!forceRestartScript)
+            {
+                appendLog(QString("[WARN] PID=%1 进程 %2 不在白名单，拒绝自动终止")
+                              .arg(pid, processName));
+                continue;
+            }
+
+            appendLog(QString("[WARN] PID=%1 进程 %2 不在白名单，但当前为强制重启模式，继续尝试终止")
                           .arg(pid, processName));
-            continue;
         }
 
         appendLog(QString("[INFO] 正在终止进程 PID=%1...").arg(pid));
@@ -420,22 +707,67 @@ void ProcessService::killProcessByPort(int port)
         {
             appendLog(QString("[SUCCESS] 已终止进程 PID=%1").arg(pid));
         }
+        else
+        {
+            const QString errorText = QString::fromLocal8Bit(killProcess.readAllStandardError()).trimmed();
+            if (!errorText.isEmpty())
+            {
+                appendLog(QString("[WARN] 终止 PID=%1 时返回：%2").arg(pid, errorText));
+            }
+        }
     }
 #else
     QProcess killProcess;
-    killProcess.start("/bin/sh", QStringList() << "-c" << QString("fuser -k %1/tcp").arg(port));
+    const QString cleanupCommand = QString(
+        "if command -v fuser >/dev/null 2>&1; then "
+        "  fuser -k %1/tcp; "
+        "elif command -v ss >/dev/null 2>&1; then "
+        "  pids=$(ss -ltnp '( sport = :%1 )' 2>/dev/null "
+        "    | sed -n 's/.*pid=\\([0-9][0-9]*\\).*/\\1/p' "
+        "    | sort -u | tr '\\n' ' '); "
+        "  if [ -n \"$pids\" ]; then "
+        "    kill -TERM $pids 2>/dev/null; "
+        "    sleep 1; "
+        "    kill -KILL $pids 2>/dev/null; "
+        "  else "
+        "    exit 2; "
+        "  fi; "
+        "else "
+        "  exit 127; "
+        "fi")
+        .arg(port);
+    killProcess.start("/bin/sh", QStringList() << "-c" << cleanupCommand);
     if (!killProcess.waitForFinished(3000))
     {
         killProcess.kill();
         killProcess.waitForFinished(1000);
     }
+
+    const QString stdoutText = QString::fromLocal8Bit(killProcess.readAllStandardOutput()).trimmed();
+    const QString stderrText = QString::fromLocal8Bit(killProcess.readAllStandardError()).trimmed();
     if (killProcess.exitStatus() == QProcess::NormalExit && killProcess.exitCode() == 0)
     {
         appendLog(QString("[SUCCESS] 已尝试清理端口 %1").arg(port));
     }
+    else if (killProcess.exitCode() == 127)
+    {
+        appendLog(QString("[WARN] 端口 %1 清理失败：系统未提供 fuser/ss 工具").arg(port));
+    }
+    else if (killProcess.exitCode() == 2)
+    {
+        appendLog(QString("[WARN] 端口 %1 清理失败：未找到可终止的监听进程").arg(port));
+    }
     else
     {
-        appendLog(QString("[WARN] 端口 %1 清理失败或未找到 fuser，保留原状态").arg(port));
+        const QString detail = !stderrText.isEmpty() ? stderrText : stdoutText;
+        if (!detail.isEmpty())
+        {
+            appendLog(QString("[WARN] 端口 %1 清理失败：%2").arg(port).arg(detail));
+        }
+        else
+        {
+            appendLog(QString("[WARN] 端口 %1 清理失败，保留原状态").arg(port));
+        }
     }
 #endif
 }
@@ -511,6 +843,16 @@ QStringList ProcessService::resolveKillProcessWhitelist() const
 
 bool ProcessService::checkAndCleanPorts()
 {
+#ifdef Q_OS_LINUX
+    const QString scriptPath = QDir::cleanPath(resolveServiceScriptPath());
+    const QString workDir = QDir::cleanPath(resolveServiceWorkDir());
+    if (isOriginalOutageScript(scriptPath, workDir))
+    {
+        appendLog("[INFO] 已匹配原产品 outage/start.sh，跳过前置端口治理，交由脚本自行处理 8081");
+        return true;
+    }
+#endif
+
     const QList<int> ports = resolveServicePorts();
     const bool allowAutoClean = isAutoCleanPortsEnabled();
 
@@ -603,9 +945,16 @@ QString ProcessService::resolveServiceWorkDir() const
     if (!configured.isEmpty() && QDir(configured).exists())
     {
         const QString configuredDir = QDir::cleanPath(configured);
+        const QString configuredScript = ConfigManager::instance()->value("service/scriptPath").toString().trimmed();
+        const QFileInfo configuredScriptInfo(configuredScript);
+        const bool configuredAbsoluteScriptExists =
+            configuredScriptInfo.isAbsolute() && configuredScriptInfo.exists();
+        const bool configuredScriptUnderDir =
+            !configuredScript.isEmpty() && QFileInfo::exists(QDir(configuredDir).filePath(configuredScript));
         const bool hasBat = QFileInfo::exists(QDir(configuredDir).filePath("start-all.bat"));
         const bool hasSh = QFileInfo::exists(QDir(configuredDir).filePath("start-all.sh"));
-        if (hasBat || hasSh)
+        const bool hasStartSh = QFileInfo::exists(QDir(configuredDir).filePath("start.sh"));
+        if (configuredAbsoluteScriptExists || configuredScriptUnderDir || hasBat || hasSh || hasStartSh)
         {
             return configuredDir;
         }
@@ -613,14 +962,20 @@ QString ProcessService::resolveServiceWorkDir() const
 
     const QString appDir = QCoreApplication::applicationDirPath();
     const QStringList fallbackDirs = {
+        "/home/linaro/outage",
         "D:/Desktop/YunwangProject/outage/outage",
         QDir(appDir).filePath("../outage/outage"),
         QDir(appDir).filePath("../../outage/outage")};
-    for (const QString &dir : fallbackDirs)
+
+    QStringList probeDirs = fallbackDirs;
+    probeDirs << collectAncestorDirs(appDir, 8);
+
+    for (const QString &dir : probeDirs)
     {
-        if (QDir(dir).exists())
+        const QString normalizedDir = QDir::cleanPath(dir);
+        if (dirContainsServiceArtifacts(normalizedDir))
         {
-            return QDir::cleanPath(dir);
+            return normalizedDir;
         }
     }
 
@@ -655,10 +1010,16 @@ QString ProcessService::resolveServiceScriptPath() const
     const QString appDir = QCoreApplication::applicationDirPath();
     QStringList probeDirs;
     probeDirs << workDir
+              << "/home/linaro/outage"
               << "D:/Desktop/YunwangProject/outage/outage"
               << QDir(appDir).filePath("../outage/outage")
               << QDir(appDir).filePath("../../outage/outage")
               << appDir;
+    probeDirs << collectAncestorDirs(appDir, 8);
+    if (!workDir.isEmpty())
+    {
+        probeDirs << collectAncestorDirs(workDir, 4);
+    }
 
     QStringList normalizedProbeDirs;
     for (const QString &dir : probeDirs)
@@ -674,7 +1035,7 @@ QString ProcessService::resolveServiceScriptPath() const
 #ifdef Q_OS_WIN
     candidates << "start-all.bat";
 #else
-    candidates << "start-all.sh" << "start-all.bat";
+    candidates << "start.sh" << "start-all.sh" << "start-all.bat";
 #endif
 
     for (const QString &dir : normalizedProbeDirs)
@@ -742,6 +1103,10 @@ QList<int> ProcessService::resolveRemoteRequiredPorts() const
 
 bool ProcessService::isAutoCleanPortsEnabled() const
 {
+    if (ConfigManager::instance()->value("service/forceRestartScript", false).toBool())
+    {
+        return true;
+    }
     return ConfigManager::instance()->value("service/autoCleanPorts", false).toBool();
 }
 
@@ -911,6 +1276,13 @@ void ProcessService::startExternalLogTailing()
     m_externalLogTailingStarted = true;
 
     appendLog(QString("[INFO] 已启用外部日志跟踪，文件数=%1，轮询间隔=%2ms").arg(m_externalLogFiles.size()).arg(intervalMs));
+    for (const QString &path : m_externalLogFiles)
+    {
+        appendLog(QString("[INFO] 日志文件: %1").arg(path));
+        appendHistoricalLogPreview(path, [this](const QString &line) {
+            appendLog(line);
+        });
+    }
 }
 
 void ProcessService::stopExternalLogTailing()
@@ -968,7 +1340,7 @@ void ProcessService::pollExternalLogFiles()
             continue;
         }
 
-        const QString text = QString::fromLocal8Bit(data);
+        const QString text = decodeExternalLogData(data);
         const QStringList lines = text.split("\n", QString::SkipEmptyParts);
         const QString fileName = QFileInfo(path).fileName();
         for (const QString &line : lines)
@@ -984,6 +1356,26 @@ void ProcessService::pollExternalLogFiles()
 
 QStringList ProcessService::resolveExternalLogFiles() const
 {
+    auto collectExistingUniquePaths = [](const QStringList &paths) -> QStringList {
+        QStringList result;
+        QSet<QString> seen;
+        for (const QString &path : paths)
+        {
+            const QString normalized = QDir::cleanPath(path);
+            if (normalized.isEmpty() || seen.contains(normalized))
+            {
+                continue;
+            }
+            if (!QFileInfo::exists(normalized))
+            {
+                continue;
+            }
+            seen.insert(normalized);
+            result << normalized;
+        }
+        return result;
+    };
+
     QString raw = ConfigManager::instance()->value("service/logFiles", "").toString();
     raw.replace("\r", "\n");
     raw.replace(";", "\n");
@@ -1018,9 +1410,20 @@ QStringList ProcessService::resolveExternalLogFiles() const
         }
     }
 
+    const QString resolvedWorkDir = resolveServiceWorkDir();
+    const QString resolvedScriptPath = resolveServiceScriptPath();
+    if (candidates.isEmpty() && isOriginalOutageScript(resolvedScriptPath, resolvedWorkDir))
+    {
+        const QStringList outageLogFiles = collectOriginalOutageLogFiles();
+        if (!outageLogFiles.isEmpty())
+        {
+            return collectExistingUniquePaths(outageLogFiles);
+        }
+    }
+
     if (candidates.isEmpty())
     {
-        const QString workDir = resolveServiceWorkDir();
+        const QString workDir = resolvedWorkDir;
         const QString appDir = QCoreApplication::applicationDirPath();
         QStringList fallbackCandidates;
         if (!workDir.isEmpty())
@@ -1040,21 +1443,68 @@ QStringList ProcessService::resolveExternalLogFiles() const
         }
     }
 
-    QStringList result;
-    QSet<QString> seen;
-    for (const QString &path : candidates)
+    QStringList result = collectExistingUniquePaths(candidates);
+
+    if (result.isEmpty())
     {
-        const QString normalized = QDir::cleanPath(path);
-        if (normalized.isEmpty() || seen.contains(normalized))
+        candidates.clear();
+
+        const QString todayIso = QDate::currentDate().toString("yyyy-MM-dd");
+        const QString todayMonth = QDate::currentDate().toString("yyyyMM");
+        const QString appDir = QCoreApplication::applicationDirPath();
+
+        const QStringList todayCandidates = {
+            QDir(appDir).filePath("service_startup.log"),
+            QString("/home/linaro/outage/target/kids/log/info-%1.log").arg(todayIso),
+            QString("/home/linaro/outage/target/kids/log/error-%1.log").arg(todayIso),
+            QDir(appDir).filePath(QString("log-%1.txt").arg(todayMonth)),
+            QDir(appDir).filePath("run.log"),
+            QStringLiteral("/home/linaro/run.log")};
+
+        for (const QString &path : todayCandidates)
         {
-            continue;
+            if (QFileInfo::exists(path))
+            {
+                candidates << QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath());
+            }
         }
-        if (!QFileInfo::exists(normalized))
-        {
-            continue;
-        }
-        seen.insert(normalized);
-        result << normalized;
+
+        appendLatestMatchingFile(candidates,
+                                 QStringLiteral("/home/linaro/outage/target/kids/log"),
+                                 QStringList() << QStringLiteral("info-*.log")
+                                               << QStringLiteral("error-*.log"));
+        appendLatestMatchingFile(candidates,
+                                 appDir,
+                                 QStringList() << QStringLiteral("log-*.txt")
+                                               << QStringLiteral("run*.log"));
+        appendLatestMatchingFile(candidates,
+                                 QStringLiteral("/home/linaro"),
+                                 QStringList() << QStringLiteral("log-*.txt")
+                                               << QStringLiteral("run*.log"));
+
+#ifdef Q_OS_WIN
+        appendLatestMatchingFile(candidates,
+                                 QDir(appDir).filePath("logs"),
+                                 QStringList() << QStringLiteral("service_startup.log")
+                                               << QStringLiteral("application.log")
+                                               << QStringLiteral("kids-api.log")
+                                               << QStringLiteral("backend.log"));
+        appendLatestMatchingFile(candidates,
+                                 appDir,
+                                 QStringList() << QStringLiteral("service_startup.log")
+                                               << QStringLiteral("run*.log")
+                                               << QStringLiteral("log-*.txt"));
+#else
+        appendLatestMatchingFile(candidates,
+                                 appDir,
+                                 QStringList() << QStringLiteral("log-*.txt")
+                                               << QStringLiteral("run*.log"));
+#endif
+    }
+
+    if (result.isEmpty())
+    {
+        result = collectExistingUniquePaths(candidates);
     }
 
     return result;

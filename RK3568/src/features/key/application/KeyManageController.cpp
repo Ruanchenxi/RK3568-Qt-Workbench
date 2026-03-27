@@ -66,8 +66,20 @@ KeyManageController::KeyManageController(IKeySessionService *session,
             this, &KeyManageController::handleSystemTicketsChanged);
     connect(m_ticketIngress, &TicketIngressService::httpServerLogAppended,
             this, &KeyManageController::handleHttpServerLog);
-    connect(m_ticketIngress, &TicketIngressService::jsonReceived,
-            this, &KeyManageController::handleJsonReceived);
+    m_ticketIngress->setIngressHandler(
+            [this](const QByteArray &jsonBytes,
+                   const QString &savedPath) {
+        TicketIngressService::IngressResult result;
+        QString taskId;
+        QString resultMessage;
+        result.accepted = ingestWorkbenchJson(jsonBytes, savedPath, &taskId, &resultMessage);
+        result.statusCode = result.accepted ? 200 : 400;
+        result.message = result.accepted
+                ? (resultMessage.isEmpty() ? QStringLiteral("ticket accepted") : resultMessage)
+                : (resultMessage.isEmpty() ? QStringLiteral("ticket ingest failed") : resultMessage);
+        result.taskId = taskId;
+        return result;
+    });
     connect(m_ticketReturnClient, &TicketReturnHttpClient::logAppended,
             this, &KeyManageController::handleHttpClientLog);
     connect(m_ticketReturnClient, &TicketReturnHttpClient::uploadSucceeded,
@@ -142,6 +154,36 @@ void KeyManageController::onDownloadRfidClicked()
     const int stationNo = ConfigManager::instance()->value("key/backendStationNo", 0).toInt();
     emit statusMessage(QStringLiteral("下载 RFID，正在获取后端数据..."));
     m_keyProvisioning->requestRfidPayload(stationNo);
+}
+
+void KeyManageController::onQueryBatteryClicked()
+{
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    if (!snapshot.connected) {
+        emit statusMessage(QStringLiteral("串口未连接，无法查询钥匙电量"));
+        return;
+    }
+
+    CommandRequest req;
+    req.id = CommandId::QueryBattery;
+    req.opId = nextOpId();
+    m_session->execute(req);
+    emit statusMessage(QStringLiteral("执行获取电量 (Q_KEYEQ)"));
+}
+
+void KeyManageController::onSyncDeviceTimeClicked()
+{
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    if (!snapshot.connected) {
+        emit statusMessage(QStringLiteral("串口未连接，无法执行钥匙校时"));
+        return;
+    }
+
+    CommandRequest req;
+    req.id = CommandId::SyncDeviceTime;
+    req.opId = nextOpId();
+    m_session->execute(req);
+    emit statusMessage(QStringLiteral("执行钥匙校时 (SET_TIME)"));
 }
 
 void KeyManageController::onQueryTasksClicked()
@@ -442,6 +484,38 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
     }
     case KeySessionEvent::KeyStateChanged: {
         const KeySessionSnapshot snapshot = m_session->snapshot();
+        const bool linkInterrupted = !snapshot.connected || !snapshot.keyPresent;
+        if (linkInterrupted) {
+            if (!m_activeTransferTaskId.isEmpty()) {
+                const QString reason = !snapshot.connected
+                        ? QStringLiteral("串口已断开，当前传票已中断，请重新连接后重试")
+                        : QStringLiteral("钥匙已移除，当前传票已中断，请重新放回钥匙后重试");
+                m_ticketStore->updateTransferState(m_activeTransferTaskId,
+                                                   QStringLiteral("failed"),
+                                                   reason);
+                m_activeTransferTaskId.clear();
+                emit statusMessage(reason);
+            }
+
+            if (!m_activeReturnTaskId.isEmpty() || !m_pendingReturnHandshakeTaskId.isEmpty()) {
+                const QString reason = !snapshot.connected
+                        ? QStringLiteral("串口已断开，当前回传已中断，请重新连接后重试")
+                        : QStringLiteral("钥匙已移除，当前回传已中断，请重新放回钥匙后重试");
+                failActiveReturnHandshake(reason);
+                emit statusMessage(reason);
+            }
+
+            if (!m_pendingDeletedSystemTicketId.isEmpty()) {
+                const QString taskId = m_pendingDeletedSystemTicketId;
+                m_ticketStore->updateReturnState(taskId, QStringLiteral("return-upload-success"));
+                m_pendingDeletedSystemTicketId.clear();
+                m_pendingDeletedKeyTaskRaw.clear();
+                m_pendingDeleteAllowsRetransfer = false;
+                emit statusMessage(QStringLiteral("钥匙已移除，任务 %1 的钥匙清理验证已中断；重新放回后将继续检查")
+                                       .arg(taskId));
+            }
+        }
+
         emit sessionSnapshotChanged(snapshot);
         tryAutoRefreshKeyTasksOnReady(snapshot);
         tryAutoTransferPendingTicket();
@@ -475,6 +549,16 @@ void KeyManageController::handleSystemTicketsChanged(const QList<SystemTicketDto
 
 void KeyManageController::handleJsonReceived(const QByteArray &jsonBytes, const QString &savedPath)
 {
+    QString taskId;
+    QString resultMessage;
+    ingestWorkbenchJson(jsonBytes, savedPath, &taskId, &resultMessage);
+}
+
+bool KeyManageController::ingestWorkbenchJson(const QByteArray &jsonBytes,
+                                              const QString &savedPath,
+                                              QString *taskIdOut,
+                                              QString *resultMessage)
+{
     QJsonParseError pe;
     const QJsonDocument doc = QJsonDocument::fromJson(jsonBytes, &pe);
     QString taskId;
@@ -485,40 +569,68 @@ void KeyManageController::handleJsonReceived(const QByteArray &jsonBytes, const 
                 : root;
         taskId = ticketObj.value("taskId").toString();
     }
+    if (taskIdOut) {
+        *taskIdOut = taskId;
+    }
     const SystemTicketDto oldTicket = m_ticketStore->ticketById(taskId);
 
-    QString errorMsg;
-    if (!m_ticketStore->ingestJson(jsonBytes, savedPath, &errorMsg)) {
-        emit statusMessage(QStringLiteral("系统票入池失败：%1").arg(errorMsg));
-        return;
+    QString ingestError;
+    if (!m_ticketStore->ingestJson(jsonBytes, savedPath, &ingestError)) {
+        if (resultMessage) {
+            *resultMessage = ingestError;
+        }
+        emit statusMessage(QStringLiteral("系统票入池失败：%1").arg(ingestError));
+        return false;
+    }
+    if (resultMessage) {
+        resultMessage->clear();
     }
 
     if (oldTicket.valid) {
         if (oldTicket.transferState == QLatin1String("success")) {
+            if (resultMessage) {
+                *resultMessage = QStringLiteral("ticket already transferred, duplicate ignored");
+            }
             emit statusMessage(QStringLiteral("系统票已存在且已传票到钥匙，本次重复请求已忽略"));
-            return;
+            return true;
         }
         if (oldTicket.transferState == QLatin1String("sending")) {
+            if (resultMessage) {
+                *resultMessage = QStringLiteral("ticket is already sending, duplicate ignored");
+            }
             emit statusMessage(QStringLiteral("系统票正在传票到钥匙，本次重复请求已忽略"));
-            return;
+            return true;
         }
         if (oldTicket.transferState == QLatin1String("key-cleared")) {
             if (autoTransferEnabled()) {
+                if (resultMessage) {
+                    *resultMessage = QStringLiteral("ticket accepted, key task cleared, auto retransfer scheduled");
+                }
                 emit statusMessage(QStringLiteral("系统票对应钥匙任务已删除，准备再次自动传票"));
                 tryStartTicketTransfer(taskId, true);
             } else {
+                if (resultMessage) {
+                    *resultMessage = QStringLiteral("ticket accepted, key task cleared, manual retransfer allowed");
+                }
                 emit statusMessage(QStringLiteral("系统票对应钥匙任务已删除，可手动再次传票"));
             }
-            return;
+            return true;
         }
     }
 
     if (autoTransferEnabled()) {
+        if (resultMessage) {
+            *resultMessage = QStringLiteral("ticket accepted, queued for auto transfer");
+        }
         emit statusMessage(QStringLiteral("系统票已接收并入池，准备自动传票"));
     } else {
+        if (resultMessage) {
+            *resultMessage = QStringLiteral("ticket accepted, auto transfer disabled");
+        }
         emit statusMessage(QStringLiteral("系统票已接收并入池（自动传票已关闭）"));
     }
     tryAutoTransferPendingTicket();
+    return true;
 }
 
 void KeyManageController::handleHttpServerLog(const QString &text)

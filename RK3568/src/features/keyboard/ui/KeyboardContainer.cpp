@@ -142,10 +142,7 @@ KeyboardContainer::KeyboardContainer(QWidget *parent)
         }
     });
     connect(m_pinyinEngine, &KeyboardPinyinEngine::committed, this, [this](const QString &text) {
-        if (m_target)
-        {
-            KeyboardTargetAdapter::insertText(m_target, text);
-        }
+        dispatchInsertText(text);
     });
     connect(m_pinyinEngine, &KeyboardPinyinEngine::preeditChanged, this, [this](const QString &text) {
         Q_UNUSED(text);
@@ -185,6 +182,18 @@ void KeyboardContainer::showFor(QLineEdit *target, keyboard::KeyboardMode mode, 
     }
 
     m_target = target;
+    clearActionHandlers();
+    m_pinyinEngine->reset();
+    applyMode(mode, allowUrlSwitch);
+    updateOverlayGeometry();
+    show();
+    raise();
+    emit visibilityChanged(true, keyboardHeight());
+}
+
+void KeyboardContainer::showStandalone(keyboard::KeyboardMode mode, bool allowUrlSwitch)
+{
+    m_target = nullptr;
     m_pinyinEngine->reset();
     applyMode(mode, allowUrlSwitch);
     updateOverlayGeometry();
@@ -195,6 +204,8 @@ void KeyboardContainer::showFor(QLineEdit *target, keyboard::KeyboardMode mode, 
 
 void KeyboardContainer::hideKeyboard()
 {
+    m_target = nullptr;
+    clearActionHandlers();
     hide();
     emit visibilityChanged(false, 0);
 }
@@ -207,6 +218,25 @@ bool KeyboardContainer::isKeyboardVisible() const
 int KeyboardContainer::keyboardHeight() const
 {
     return height();
+}
+
+void KeyboardContainer::setActionHandlers(std::function<void(const QString &)> insertTextHandler,
+                                          std::function<void()> backspaceHandler,
+                                          std::function<void()> commitHandler,
+                                          std::function<void()> clearHandler)
+{
+    m_insertTextHandler = insertTextHandler;
+    m_backspaceHandler = backspaceHandler;
+    m_commitHandler = commitHandler;
+    m_clearHandler = clearHandler;
+}
+
+void KeyboardContainer::clearActionHandlers()
+{
+    m_insertTextHandler = {};
+    m_backspaceHandler = {};
+    m_commitHandler = {};
+    m_clearHandler = {};
 }
 
 bool KeyboardContainer::eventFilter(QObject *watched, QEvent *event)
@@ -250,6 +280,58 @@ void KeyboardContainer::applyMode(keyboard::KeyboardMode mode, bool allowUrlSwit
     }
 }
 
+void KeyboardContainer::dispatchInsertText(const QString &text)
+{
+    if (m_target)
+    {
+        KeyboardTargetAdapter::insertText(m_target, text);
+        return;
+    }
+    if (m_insertTextHandler)
+    {
+        m_insertTextHandler(text);
+    }
+}
+
+void KeyboardContainer::dispatchBackspace()
+{
+    if (m_target)
+    {
+        KeyboardTargetAdapter::backspace(m_target);
+        return;
+    }
+    if (m_backspaceHandler)
+    {
+        m_backspaceHandler();
+    }
+}
+
+void KeyboardContainer::dispatchCommit()
+{
+    if (m_target)
+    {
+        KeyboardTargetAdapter::commit(m_target);
+        return;
+    }
+    if (m_commitHandler)
+    {
+        m_commitHandler();
+    }
+}
+
+void KeyboardContainer::dispatchClear()
+{
+    if (m_target)
+    {
+        m_target->clear();
+        return;
+    }
+    if (m_clearHandler)
+    {
+        m_clearHandler();
+    }
+}
+
 void KeyboardContainer::updateContainerHeight()
 {
     setFixedHeight(m_baseKeyboardHeight);
@@ -272,7 +354,7 @@ void KeyboardContainer::handleKey(Qt::Key key, const QString &text, Qt::Keyboard
 {
     Q_UNUSED(modifiers);
 
-    if (!m_target)
+    if (!m_target && !m_insertTextHandler && !m_backspaceHandler && !m_commitHandler && !m_clearHandler)
     {
         return;
     }
@@ -282,25 +364,25 @@ void KeyboardContainer::handleKey(Qt::Key key, const QString &text, Qt::Keyboard
     case Qt::Key_Backspace:
         if (!m_pinyinEngine->handleKey(key, text, modifiers))
         {
-            KeyboardTargetAdapter::backspace(m_target);
+            dispatchBackspace();
         }
         break;
     case Qt::Key_Return:
     case Qt::Key_Enter:
         if (!m_pinyinEngine->handleKey(key, text, modifiers))
         {
-            KeyboardTargetAdapter::commit(m_target);
+            dispatchCommit();
         }
         break;
     default:
         if (text == QString::fromLatin1(kClearSentinel))
         {
             m_pinyinEngine->reset();
-            m_target->clear();
+            dispatchClear();
         }
         else if (!m_pinyinEngine->handleKey(key, text, modifiers))
         {
-            KeyboardTargetAdapter::insertText(m_target, text);
+            dispatchInsertText(text);
         }
         break;
     }

@@ -1,97 +1,112 @@
 # RK3568 文档总入口
 
-Status: Active  
-Owner: 项目维护者（单人开发）  
-Last Updated: 2026-03-17
+Status: Active
+Owner: 项目维护者（单人开发）
+Last Updated: 2026-03-24
 
-本文件是 `docs/` 的总入口，目标是让“零历史新 Agent / 新同事”在 5 分钟内回答：
+本文件只承担两件事：
 
-1. 这个项目是做什么的。  
-2. 代码应该写在哪里、不能写在哪里。  
-3. 改动后怎么验证并保证不回退。  
+1. 明确当前主线真值文档在哪里。
+2. 告诉新接手的人应该先读什么、哪些只是历史归档。
 
-补充约定：
+## 1. 真值边界
 
 1. 当前项目唯一有效的文档真值目录是：
    - `D:\\Desktop\\QTtest\\RK3568\\RK3568\\docs`
 2. 工作区根目录下若出现 `D:\\Desktop\\QTtest\\RK3568\\docs\\...` 的零散副本或空文件：
    - 视为历史残留/异常副本
    - 不继续在那一套路径上维护内容
+3. `docs/archive/` 只保存阶段性接手材料、旧方案和专项清单：
+   - 可用于追溯
+   - 不作为当前主线真值
 
-## 1. 项目概览（10 行）
+## 2. 当前主线先读什么
 
-1. 项目定位：原产品闭环复刻 + 架构重构并行推进。  
-2. 运行目标：支持 Windows 开发验证与 RK3588 Ubuntu 部署。  
-3. 核心页面：工作台、钥匙管理、系统设置、服务日志、虚拟键盘、登录页。  
-4. 当前状态：Feature-First Lite 目录迁移已完成 4 批。  
-5. 开发策略：小步迭代，每步必须可编译、可运行、可回滚。  
-6. 验证策略：真机优先，replay 为无硬件补充验证。  
-7. UI 约束：`.ui` 文件固定在项目根 `ui/`，本阶段不迁移。  
-8. 协议约束：7E6C/CRC/重试/稳定窗语义不得随意改动。  
-9. 串口红线：`/dev/ttyS4` 仅钥匙链路，`/dev/ttyS3` 仅刷卡链路。  
-10. 共享边界：两条链路只共享 `platform/serial` 抽象，不共享协议实现类。  
+如果你是没有历史上下文的新接手者，按这个顺序读：
 
-## 2. 新 Agent 推荐阅读顺序（严格按顺序）
+1. `operations/STATUS_SNAPSHOT.md`
+   目的：先确认当前项目做到哪里、哪些链路已经落地。
+2. `operations/BOARD_PRODUCT_UI_DEPLOYMENT_PLAN_2026-03-24.md`
+   目的：先确认 RK3588 板端真实运行方式、UI 适配边界和当前部署策略。
+3. `architecture/KEY_FLOW_OVERVIEW.md`
+   目的：理解钥匙链、工作台 JSON 输入链、传票链、回传链。
+4. `architecture/KEYBOARD_MODULE_ARCHITECTURE.md`
+   目的：理解当前自定义键盘模块的主线、边界和禁区。
+5. `operations/VALIDATION_PLAYBOOK.md`
+   目的：知道每次改动后怎么做最小验证。
+6. `operations/CONFIG_REFERENCE.md`
+   目的：查关键配置项、默认值和兼容口径。
 
-### 2.1 如果你是“没有任何历史上下文的新 Agent”
+若需要继续深入，再读：
 
-先读：
+1. `PROJECT_CONTEXT.md`
+2. `architecture/CURRENT_FOLDER_LAYOUT.md`
+3. `architecture/CODEMAP.md`
+4. `architecture/DEPENDENCY_RULES.md`
+5. `serial/SERIAL_PACKET_AGENT_GUIDE.md`
+6. `serial/PROTOCOL_FRAMES_REFERENCE.md`
+7. `replay/REPLAY_SPEC.md`
+8. `COMMENTING_GUIDE.md`
 
-1. `operations/NEXT_AGENT_BRIEF.md`
-2. `operations/STATUS_SNAPSHOT.md`
-3. `operations/MIGRATION_EXECUTION_LOG.md`
+## 2.1 按问题类型怎么读
 
-这 3 份是“现在做到哪、下一步干什么”的最快入口。
+如果你是带着具体问题来的，建议直接按下面顺序读：
 
-1. `PROJECT_CONTEXT.md`  
-目的：先理解项目业务目标、平台边界、当前优先级。  
+1. 板端显示 / 登录页 / 系统设置页 / 服务日志页 / 底部状态栏：
+   - `operations/BOARD_PRODUCT_UI_DEPLOYMENT_PLAN_2026-03-24.md`
+   - `operations/STATUS_SNAPSHOT.md`
+   - `operations/VALIDATION_PLAYBOOK.md`
+   - `operations/CONFIG_REFERENCE.md`
+2. 服务启动 / `start-all` / 端口占用 / 服务日志来源：
+   - `operations/CONFIG_REFERENCE.md`
+   - `operations/BOARD_PRODUCT_UI_DEPLOYMENT_PLAN_2026-03-24.md`
+   - `operations/STATUS_SNAPSHOT.md`
+3. 钥匙协议 / 传票 / 回传 / `Q_TASK / I_TASK_LOG / UP_TASK_LOG / DEL`：
+   - `architecture/KEY_FLOW_OVERVIEW.md`
+   - `serial/PROTOCOL_FRAMES_REFERENCE.md`
+   - `serial/SERIAL_PACKET_AGENT_GUIDE.md`
+4. 自定义键盘 / 输入框 / 页面避让：
+   - `architecture/KEYBOARD_MODULE_ARCHITECTURE.md`
+   - `operations/CONFIG_REFERENCE.md`
+   - `operations/VALIDATION_PLAYBOOK.md`
 
-2. `architecture/CURRENT_FOLDER_LAYOUT.md`  
-目的：确认代码当前真实落地位置（不是目标草案）。  
+## 2.2 当前最常用的真值文档
 
-3. `architecture/CODEMAP.md`  
-目的：快速定位“改某个需求应该动哪些文件”。  
+如果只想看“最可能需要同步维护”的文档，优先关注这 4 份：
 
-4. `serial/SERIAL_PACKET_AGENT_GUIDE.md`  
-目的：零历史情况下快速上手串口报文链路与协议字段组成。  
-配套：`serial/PROTOCOL_FRAMES_REFERENCE.md`（逐字节帧拆解 / CRC 向量 / 完整时序图 / 易错对照表，改协议前必读）。  
+1. `operations/STATUS_SNAPSHOT.md`
+2. `operations/CONFIG_REFERENCE.md`
+3. `operations/BOARD_PRODUCT_UI_DEPLOYMENT_PLAN_2026-03-24.md`
+4. `PROJECT_CONTEXT.md`
 
-5. `architecture/DEPENDENCY_RULES.md`  
-目的：明确依赖红线与门禁规则，避免产生结构回退。  
+## 3. 文档目录职责
 
-6. `architecture/TARGET_FOLDER_LAYOUT.md`  
-目的：理解长期目标结构与冻结决策。  
+1. `docs/architecture/`
+   - 当前主线架构、结构边界、目录规则、代码地图。
+2. `docs/operations/`
+   - 当前状态、配置参考、验证清单、板端部署/UI 定稿策略。
+3. `docs/serial/`
+   - 串口协议、报文、链路基线和专项参考。
+4. `docs/replay/`
+   - 回放场景和无硬件验证规则。
+5. `docs/archive/`
+   - 历史 handoff、旧方案、迁移过程材料。
+   - 仅用于追溯，不用于判断当前主线。
 
-7. `architecture/KEYBOARD_MODULE_ARCHITECTURE.md`
-目的：理解当前自定义键盘模块的分层、接入范围与后续扩展方式。
+## 4. 当前工程约束
 
-8. `replay/REPLAY_SPEC.md`  
-目的：掌握无硬件回放验证方式。  
+1. 运行目标：支持 Windows 开发验证与 RK3588 Ubuntu 部署。
+2. UI 约束：`.ui` 文件固定在项目根 `ui/`。
+3. 构建体系：继续使用 `qmake + .pri`。
+4. 协议红线：`7E6C / CRC / 重试 / 稳定窗` 语义不得随意改动。
+5. 串口红线：
+   - `/dev/ttyS4` 仅钥匙链路
+   - `/dev/ttyS3` 仅刷卡链路
+6. 文档维护红线：
+   - 若代码行为已改，而文档仍记录旧口径，必须同步修正文档真值
+   - 优先更新 `operations/` 下的真值文档，不把现行规则写进 `archive/`
 
-9. `operations/STATUS_SNAPSHOT.md`  
-目的：先知道当前做到哪里、哪些链路已经落地。  
-
-10. `operations/MIGRATION_EXECUTION_LOG.md`
-目的：理解当前迁移进度、已拍板规则、下一阶段重点。  
-
-11. `operations/VALIDATION_PLAYBOOK.md`  
-目的：知道每次改动后该验证哪些功能。  
-
-12. `COMMENTING_GUIDE.md`  
-目的：保证新增代码注释质量一致。  
-
-## 3. 当前工程状态（2026-03-11）
-
-1. 迁移状态：Feature-First Lite 目录迁移已完成，传票主链已并入主程序。  
-2. 传票状态：`工作台 JSON -> 本地 HTTP 接收 -> 系统票入池 -> 手动/自动传票` 主链已落地。  
-3. 回传状态：单帧回传主链已落地并通过本地程序真机零回归验证。  
-4. 初始化 / RFID：手工 `INIT(0x02)` 与手工 `DN_RFID(0x1A)` 已接入主程序，并通过真机 ACK 验证。  
-5. 当前重点：继续收送电样本、真实多帧回传真机样本，以及本地自定义键盘主线收口。  
-6. 构建体系：继续使用 `qmake + .pri`，暂不迁移 CMake。  
-7. 架构门禁：使用 `tools/arch_guard.ps1 -Phase 3`。  
-8. 串口体系：真机 `QtSerialTransport` 与回放 `ReplaySerialTransport` 可切换。  
-
-## 4. 每次改动后的最小验证清单
+## 5. 每次改动后的最小验证
 
 在项目根目录 `RK3568/` 下执行：
 
@@ -101,49 +116,35 @@ Last Updated: 2026-03-17
 
 至少完成以下确认：
 
-1. 门禁输出 `No violations.`。  
-2. 工程可编译通过（Debug 至少一次）。  
-3. 主路径手工验证可通过：登录、钥匙管理、系统设置、服务日志、工作台。  
+1. 门禁输出 `No violations.`
+2. 工程可编译通过（Debug 至少一次）
+3. 主路径手工验证可通过：
+   - 登录
+   - 工作台
+   - 钥匙管理
+   - 系统设置
+   - 服务日志
 
 若改动涉及串口协议或会话流程，额外执行：
 
-1. 真机链路验证（可用时）。  
-2. replay 场景验证（半包/粘包/超时至少 1 个）。  
+1. 真机链路验证（可用时）
+2. replay 场景验证（半包/粘包/超时至少 1 个）
 
-## 5. 文档分类与用途
+## 6. 如何处理旧文档
 
-1. `docs/architecture/`：架构结构、依赖红线、迁移记录、代码地图。  
-2. `docs/serial/`：串口报文专用开发手册（协议组成、链路改动与验收）。  
-   - `SERIAL_PACKET_AGENT_GUIDE.md`：链路架构、状态机、改动流程、常见误区。  
-   - `PROTOCOL_FRAMES_REFERENCE.md`：逐字节帧格式、各命令完整拆解、CRC 向量、拆包伪代码、常量速查。  
-   - `TICKET_PROTOCOL_GUIDE.md`：传票 JSON / payload / frame(s) / ACK 续发专用手册。  
-   - `RETURN_PROTOCOL_BASELINE.md`：回传链路当前实测基线（Q_TASK / I_TASK_LOG / UP_TASK_LOG / HTTP 回传）。
-3. `docs/replay/`：回放规范、脚本格式、无硬件验证流程。  
-4. `docs/operations/`：当前状态、配置参考、验证清单。  
-   - `STATUS_SNAPSHOT.md`：当前项目做到哪里。  
-   - `CONFIG_REFERENCE.md`：关键配置项与默认值。  
-   - `VALIDATION_PLAYBOOK.md`：主路径 / 传票 / 真机 / replay 验证清单。  
-   - `RETURN_GATE_COMPANY_CHECKLIST_2026-03-16.md`：回公司后验证“多任务全部完成门禁”和多任务自动回传收口的专项清单。  
-   - `MIGRATION_EXECUTION_LOG.md`：当前移植进度、业务规则与下一步执行顺序。  
-   - `NEXT_AGENT_BRIEF.md`：给无历史新 agent 的直接接手说明。  
-   - `PRO_REVIEW_BRIEF_2026-03-12.md`：给 `pro` 做代码审查 / 业务逻辑 bug 排查 / RK3588 板端联调收口的集中简报。  
-5. `docs/` 根目录：项目背景、注释规范、dead code 治理、总入口。  
+1. 新增主线规则或修改现行规则：
+   - 更新当前真值文档
+   - 不要把新内容继续写进 `docs/archive/`
+2. 阶段性交接、专项清单、旧方案：
+   - 进入 `docs/archive/`
+3. 若改动了规则文档，需同步检查：
+   - `tools/arch_guard.ps1`
 
-## 6. 历史与治理文档说明
+## 7. 当前入口结论
 
-1. `architecture/MIGRATION_BATCH_PLAN.md`  
-状态：Done（历史记录），用于回顾迁移过程与回滚定位。  
+如果你现在只想知道“先看哪一份”，答案是：
 
-2. `DEAD_CODE.md`  
-状态：治理文档，记录停用模块、原因与恢复步骤。  
-
-3. `COMMENTING_GUIDE.md`  
-状态：长期生效，所有新增/改动文件都需要遵循。  
-
-## 7. 新增文档必须满足的规则
-
-1. 放在正确分类目录（architecture/serial/replay/root）。  
-2. 文档头至少包含 `Status`、`Owner`、`Last Updated`。  
-3. 明确“适用范围”和“不适用范围”。  
-4. 若是高频文档，必须在本文件中加入入口链接。  
-5. 若改动了规则文档，需同步检查 `arch_guard.ps1` 是否也需要更新。  
+1. 改代码前先看 `operations/STATUS_SNAPSHOT.md`
+2. 涉及板端 / UI / 服务日志时再看 `operations/BOARD_PRODUCT_UI_DEPLOYMENT_PLAN_2026-03-24.md`
+3. 涉及配置或服务启动时看 `operations/CONFIG_REFERENCE.md`
+4. 改完后按 `operations/VALIDATION_PLAYBOOK.md` 做最小验证

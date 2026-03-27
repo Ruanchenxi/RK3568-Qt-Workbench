@@ -1,13 +1,13 @@
 /**
  * @file logpage.h
- * @brief 服务日志页面（仅负责日志渲染与交互）
+ * @brief 服务日志页面（静态骨架在 .ui，动态逻辑在 .cpp）
  * @author RK3568 项目组
  * @date 2026-02-10
  *
  * 设计说明：
- * 1. 该类仅负责日志显示，不再直接治理 QProcess/端口。
- * 2. 进程启动与端口检查下沉到 IProcessService 实现，页面层保持轻量。
- * 3. 页面只订阅 logGenerated 信号并渲染文本，避免 UI 与平台命令耦合。
+ * 1. .ui 负责页面骨架和样式，代码只做生命周期与日志缓冲。
+ * 2. 页面会根据配置决定是否在构造阶段立即启动日志控制器。
+ * 3. 页面在 showEvent 中触发 start / flush，保证显示时状态同步。
  */
 
 #ifndef LOGPAGE_H
@@ -18,8 +18,6 @@
 #include <QStringList>
 
 class QShowEvent;
-
-class QPlainTextEdit;
 class LogController;
 
 namespace Ui
@@ -30,6 +28,7 @@ namespace Ui
 /**
  * @class LogPage
  * @brief 服务日志页面（View）
+ * @details 页面只承接 .ui 里的静态骨架，运行时负责按配置启动日志控制器并刷新隐藏期间缓冲的日志。
  */
 class LogPage : public QWidget
 {
@@ -46,16 +45,14 @@ private slots:
     void onServiceLogGenerated(const QString &text);
 
 private:
+    bool shouldStartControllerOnConstruction() const;
     void ensureStarted();
-    void flushPendingLogs();
-    void initServiceLog();
-    void appendLog(const QString &text);
+    void flushBufferedLogs();
+    void appendOrBufferLog(const QString &text);
 
     Ui::LogPage *ui;
-    QPlainTextEdit *m_logDisplay;
     LogController *m_controller;
     bool m_started;
-    bool m_visibleOnce;
     QStringList m_pendingLogs;
 };
 

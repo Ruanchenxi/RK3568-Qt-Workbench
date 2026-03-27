@@ -193,6 +193,7 @@ KeySessionSnapshot KeySessionService::snapshot() const
     s.lastBusinessSuccessMs = m_client->lastBusinessSuccessMs();
     s.lastProtocolFailureMs = m_client->lastProtocolFailureMs();
     s.recoveryWindowActive = m_client->recoveryWindowActive();
+    s.batteryPercent = m_client->batteryPercent();
     s.portName = m_client->currentPortName();
     s.verifiedPortName = m_client->hasVerifiedPort() ? m_client->verifiedPortName() : QString();
     return s;
@@ -210,6 +211,12 @@ void KeySessionService::execute(const CommandRequest &request)
         break;
     case CommandId::InitKey:
         m_client->sendInitPayload(request.payload);
+        break;
+    case CommandId::QueryBattery:
+        m_client->queryBattery();
+        break;
+    case CommandId::SyncDeviceTime:
+        m_client->syncDeviceTime();
         break;
     case CommandId::QueryTasks:
         m_client->queryTasksAll();
