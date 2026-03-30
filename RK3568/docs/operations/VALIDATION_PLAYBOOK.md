@@ -2,7 +2,7 @@
 
 Status: Active  
 Owner: 项目维护者  
-Last Updated: 2026-03-16  
+Last Updated: 2026-03-30  
 适用范围：主程序各链路验证步骤。  
 不适用范围：不替代协议字段文档。  
 
@@ -417,3 +417,57 @@ Last Updated: 2026-03-16
 4. 跨页切换验证：
    - 任一页面打开键盘后切到其他页面，键盘必须自动收起
    - 顶部键盘按钮状态必须同步复位
+
+## 16. 2026-03-30 钥匙回传稳定性专项验证
+
+### 16.1 自动传票 accepted 后半链
+
+1. 工作台触发一条新系统票进入主程序。
+2. 预期：
+   - 可看到 `ingestWorkbenchJson begin`
+   - 可看到 `TicketStore ingestJson`
+   - 可看到 `tryAutoTransferPendingTicket selected`
+3. 若首次自动传票失败，最低预期：
+   - 先落到 `sending -> failed`
+4. 若命中 `当前有命令在途` 或后续对账 / ready 自动恢复路径，进一步可见：
+   - `failed -> auto-pending`
+   - 后续再次自动进入 `sending -> success`
+5. 当前样本里已经观察到上述 `failed -> auto-pending -> success` 链路，但不应把它写成所有失败场景的统一保证。
+
+### 16.2 删除验证中断专项
+
+1. 让任务正常走到：
+   - `return-upload-success -> return-delete-verifying`
+2. 在删除验证阶段把钥匙拿走。
+3. 预期：
+   - 不应直接进入最终失败
+   - 应继续停留在删除验证语义内，等待重新放回后继续对账
+4. 最终预期：
+   - `return-delete-verifying -> return-delete-success`
+
+### 16.3 多次快进快出压力专项
+
+1. 在同一任务回传过程中，连续多次执行“拿走 -> 放回 -> 再拿走 -> 再放回”。
+2. 最后一次保持稳定放回，不再扰动。
+3. 预期：
+   - 可多次看到 `return-handshake -> return-interrupted-retryable`
+   - 也可多次看到 `return-interrupted-retryable -> return-handshake`
+   - 最终仍应重新推进到：
+     - `return-log-requesting`
+     - `return-uploading`
+     - `return-delete-verifying`
+     - `return-delete-success`
+
+### 16.4 工作台白屏恢复专项
+
+1. 若能复现工作台白屏，不要立即重启程序。
+2. 先切到其他页面，再切回工作台页。
+3. 预期：
+   - 若命中渲染进程终止恢复路径，页面应能在当前进程内恢复
+4. 若仍白屏，应保留：
+   - 当时截图
+   - `tail -n 300 run.log`
+   - 是否出现 `renderProcessTerminated` 或恢复相关日志
+5. 当前要明确区分：
+   - “渲染进程终止后恢复”属于已加代码路径
+   - “纯白屏但未触发 `renderProcessTerminated`”当前仍未单独验收

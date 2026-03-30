@@ -90,6 +90,10 @@ private slots:
     void handleReturnUploadFailed(const QString &taskId, const QString &reason);
 
 private:
+    bool isCurrentKeySession(int sessionId) const;
+    void openNewKeySession();
+    void invalidateCurrentKeySession(const QString &reason = QString());
+    void scheduleAutoTransferRetry(const QString &reason = QString());
     bool ingestWorkbenchJson(const QByteArray &jsonBytes,
                              const QString &savedPath,
                              QString *taskId = nullptr,
@@ -133,6 +137,13 @@ private:
     QString m_pendingDeletedSystemTicketId;
     QByteArray m_pendingDeletedKeyTaskRaw;
     bool m_pendingDeleteAllowsRetransfer = false;
+    int m_keySessionId = 0;
+    int m_keySessionSeed = 0;
+    int m_activeTransferSessionId = 0;
+    int m_activeReturnSessionId = 0;
+    int m_pendingDeleteSessionId = 0;
+    int m_autoQuerySessionId = 0;
+    bool m_autoTransferRetryScheduled = false;
     QList<KeyTaskDto> m_lastKeyTasks;
     bool m_lastReadyState = false;
     QStringList m_httpClientLogLines;

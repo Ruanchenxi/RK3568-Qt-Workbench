@@ -2,7 +2,7 @@
 
 Status: Active
 Owner: 项目维护者（单人开发）
-Last Updated: 2026-03-24
+Last Updated: 2026-03-30
 
 本文件只承担两件事：
 
@@ -63,6 +63,7 @@ Last Updated: 2026-03-24
    - `operations/STATUS_SNAPSHOT.md`
 3. 钥匙协议 / 传票 / 回传 / `Q_TASK / I_TASK_LOG / UP_TASK_LOG / DEL`：
    - `architecture/KEY_FLOW_OVERVIEW.md`
+   - `operations/KEY_RETURN_STABILITY_STATUS_2026-03-30.md`
    - `serial/PROTOCOL_FRAMES_REFERENCE.md`
    - `serial/SERIAL_PACKET_AGENT_GUIDE.md`
 4. 自定义键盘 / 输入框 / 页面避让：

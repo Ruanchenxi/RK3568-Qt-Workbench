@@ -48,6 +48,23 @@ QString extractPositionFromTaskName(const QString &ticketNo, const QString &task
     }
     return taskName;
 }
+
+bool isReturnInFlightState(const QString &state)
+{
+    return state == QLatin1String("return-requesting-log")
+            || state == QLatin1String("return-handshake")
+            || state == QLatin1String("return-log-requesting")
+            || state == QLatin1String("return-log-receiving")
+            || state == QLatin1String("return-uploading");
+}
+
+bool isReturnCleanupState(const QString &state)
+{
+    return state == QLatin1String("return-upload-success")
+            || state == QLatin1String("return-delete-pending")
+            || state == QLatin1String("return-delete-verifying")
+            || state == QLatin1String("return-delete-success");
+}
 }
 
 // ====================================================================
@@ -767,16 +784,19 @@ void KeyManagePage::updateSelectedSystemTicketCard(const SystemTicketDto &ticket
     }
 
     QString stateColor = "#C62828";
-    if (ticket.returnState == QLatin1String("return-requesting-log")
-            || ticket.returnState == QLatin1String("return-uploading")) {
+    if (isReturnInFlightState(ticket.returnState)) {
         stateColor = "#1565C0";
-    } else if (ticket.returnState == QLatin1String("return-upload-success")
-               || ticket.returnState == QLatin1String("return-delete-pending")) {
+    } else if (isReturnCleanupState(ticket.returnState)) {
         stateColor = "#EF6C00";
     } else if (ticket.returnState == QLatin1String("return-delete-success")) {
         stateColor = "#2E7D32";
     } else if (ticket.returnState == QLatin1String("return-success")) {
         stateColor = "#2E7D32";
+    } else if (ticket.returnState == QLatin1String("return-interrupted-retryable")) {
+        stateColor = "#EF6C00";
+    } else if (ticket.returnState == QLatin1String("manual-required")
+               || ticket.returnState == QLatin1String("upload_uncertain")) {
+        stateColor = "#C62828";
     } else if (ticket.returnState == QLatin1String("return-failed")) {
         stateColor = "#C62828";
     } else if (ticket.transferState == QLatin1String("received")) {
@@ -806,20 +826,21 @@ void KeyManagePage::updateSelectedSystemTicketCard(const SystemTicketDto &ticket
     const bool canManualReturn = ticket.transferState == QLatin1String("success")
             && allKeyTasksCompleted()
             && ticket.returnState != QLatin1String("return-success")
-            && ticket.returnState != QLatin1String("return-requesting-log")
-            && ticket.returnState != QLatin1String("return-uploading")
-            && ticket.returnState != QLatin1String("return-upload-success")
-            && ticket.returnState != QLatin1String("return-delete-pending")
+            && !isReturnInFlightState(ticket.returnState)
+            && !isReturnCleanupState(ticket.returnState)
             && ticket.returnState != QLatin1String("return-delete-success");
     ui->btnReturnTicket->setEnabled(canManualReturn);
 
     if (ticket.returnState == QLatin1String("return-failed")) {
         ui->lblReturnHint->setText(QStringLiteral("自动回传失败，可先读取钥匙票列表，再手动点击“回传(重试)”"));
-    } else if (ticket.returnState == QLatin1String("return-requesting-log")
-               || ticket.returnState == QLatin1String("return-uploading")) {
+    } else if (ticket.returnState == QLatin1String("return-interrupted-retryable")) {
+        ui->lblReturnHint->setText(QStringLiteral("当前回传链已中断，等待钥匙重新放稳后自动恢复；必要时也可手动重试"));
+    } else if (ticket.returnState == QLatin1String("manual-required")
+               || ticket.returnState == QLatin1String("upload_uncertain")) {
+        ui->lblReturnHint->setText(QStringLiteral("当前回传结果需要人工确认，请先查看 HTTP 客户端报文与钥匙状态再决定下一步"));
+    } else if (isReturnInFlightState(ticket.returnState)) {
         ui->lblReturnHint->setText(QStringLiteral("回传进行中，请等待当前回传链完成"));
-    } else if (ticket.returnState == QLatin1String("return-upload-success")
-               || ticket.returnState == QLatin1String("return-delete-pending")
+    } else if (isReturnCleanupState(ticket.returnState)
                || ticket.returnState == QLatin1String("return-delete-success")) {
         ui->lblReturnHint->setText(QStringLiteral("该任务已进入回传成功后的清理阶段，不再允许重复手动回传"));
     } else if (ticket.transferState == QLatin1String("success") && !allKeyTasksCompleted()) {
@@ -1087,16 +1108,30 @@ QString KeyManagePage::ticketStateText(const QString &state)
 {
     if (state == QLatin1String("return-requesting-log"))
         return QStringLiteral("钥匙已完成，正在读取回传日志");
+    if (state == QLatin1String("return-handshake"))
+        return QStringLiteral("回传前握手中");
+    if (state == QLatin1String("return-log-requesting"))
+        return QStringLiteral("正在向钥匙请求回传日志");
+    if (state == QLatin1String("return-log-receiving"))
+        return QStringLiteral("正在接收钥匙回传日志");
     if (state == QLatin1String("return-uploading"))
         return QStringLiteral("日志已读取，正在回传到服务端");
     if (state == QLatin1String("return-upload-success"))
         return QStringLiteral("已上传回服务端");
     if (state == QLatin1String("return-delete-pending"))
         return QStringLiteral("服务端已收，正在清理钥匙任务");
+    if (state == QLatin1String("return-delete-verifying"))
+        return QStringLiteral("正在对账确认钥匙任务是否已删除");
     if (state == QLatin1String("return-delete-success"))
         return QStringLiteral("已完成回传并清理钥匙任务");
     if (state == QLatin1String("return-success"))
         return QStringLiteral("已回传到系统，并准备清理钥匙任务");
+    if (state == QLatin1String("return-interrupted-retryable"))
+        return QStringLiteral("回传中断，可在钥匙重新就绪后自动恢复");
+    if (state == QLatin1String("manual-required"))
+        return QStringLiteral("回传需人工确认，请查看 HTTP 客户端报文");
+    if (state == QLatin1String("upload_uncertain"))
+        return QStringLiteral("回传结果不确定，请人工确认是否已上传");
     if (state == QLatin1String("return-failed"))
         return QStringLiteral("回传失败，请查看HTTP客户端报文");
     if (state == QLatin1String("received"))
@@ -1119,6 +1154,15 @@ QString KeyManagePage::ticketStateDescription(const SystemTicketDto &ticket)
     if (ticket.returnState == QLatin1String("return-requesting-log")) {
         return QStringLiteral("钥匙任务已完成，主程序正在读取回传日志");
     }
+    if (ticket.returnState == QLatin1String("return-handshake")) {
+        return QStringLiteral("主程序正在为回传重新建立钥匙通讯握手");
+    }
+    if (ticket.returnState == QLatin1String("return-log-requesting")) {
+        return QStringLiteral("回传握手已完成，主程序正在向钥匙请求任务回传日志");
+    }
+    if (ticket.returnState == QLatin1String("return-log-receiving")) {
+        return QStringLiteral("主程序已开始接收钥匙回传日志，正在等待日志帧全部到齐");
+    }
     if (ticket.returnState == QLatin1String("return-uploading")) {
         return QStringLiteral("主程序已读取钥匙日志，正在回传到服务端");
     }
@@ -1128,11 +1172,26 @@ QString KeyManagePage::ticketStateDescription(const SystemTicketDto &ticket)
     if (ticket.returnState == QLatin1String("return-delete-pending")) {
         return QStringLiteral("服务端已确认回传，主程序正在继续清理钥匙中的已完成任务");
     }
+    if (ticket.returnState == QLatin1String("return-delete-verifying")) {
+        return QStringLiteral("主程序正在通过后续 Q_TASK 对账，确认钥匙中的任务是否已经删除");
+    }
     if (ticket.returnState == QLatin1String("return-delete-success")) {
         return QStringLiteral("主程序已完成回传上传，并已清理钥匙中的已完成任务");
     }
     if (ticket.returnState == QLatin1String("return-success")) {
         return QStringLiteral("主程序已完成回传上传，钥匙任务将进入清理流程");
+    }
+    if (ticket.returnState == QLatin1String("return-interrupted-retryable")) {
+        return QStringLiteral("回传链在握手、日志请求或日志接收阶段被中断；钥匙重新就绪后应可自动继续");
+    }
+    if (ticket.returnState == QLatin1String("manual-required")) {
+        if (!ticket.returnError.trimmed().isEmpty()) {
+            return QStringLiteral("当前回传需要人工确认：%1").arg(ticket.returnError);
+        }
+        return QStringLiteral("当前回传需要人工确认，请先查看 HTTP 客户端报文与钥匙状态");
+    }
+    if (ticket.returnState == QLatin1String("upload_uncertain")) {
+        return QStringLiteral("主程序无法确认服务端是否已收到本次回传，请人工确认后再决定是否重试");
     }
     if (ticket.returnState == QLatin1String("return-failed")) {
         if (!ticket.returnError.trimmed().isEmpty()) {

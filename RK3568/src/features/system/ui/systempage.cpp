@@ -511,7 +511,8 @@ void SystemPage::onSaveClicked()
         loadSettings();
         QMessageBox::information(this, QStringLiteral("保存并应用"),
                                  QStringLiteral("配置已保存并应用到当前页面。\n\n"
-                                                "首页地址、接口地址、站号和租户编码会用于后续请求；\n"
+                                                "首页地址、接口地址、租户编码会用于后续请求；\n"
+                                                "站号会同时影响 DEL 协议地址以及 INIT/RFID 后端取数范围；\n"
                                                 "串口相关建议重新进入页面或重启程序后完全生效。"));
     }
     else

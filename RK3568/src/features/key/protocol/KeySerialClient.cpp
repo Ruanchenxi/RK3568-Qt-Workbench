@@ -629,7 +629,7 @@ void KeySerialClient::deleteTask(const QByteArray &taskId16)
  */
 void KeySerialClient::setStationId(quint16 id)
 {
-    m_stationId = (id > 0) ? id : 1;  // 防御：站号不允许为 0
+    m_stationId = id;
     log(QString("[CONF] stationId 更新为 %1（DEL Addr2: %2 00）")
             .arg(m_stationId)
             .arg(m_stationId & 0xFF, 2, 16, QChar('0')));

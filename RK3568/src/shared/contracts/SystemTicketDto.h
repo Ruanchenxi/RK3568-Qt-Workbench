@@ -22,6 +22,7 @@ struct SystemTicketDto
     QString lastError;
     QString returnState;
     QString returnError;
+    QString stateDetail;
     QString jsonPath;
     QDateTime receivedAt;
     bool valid = false;

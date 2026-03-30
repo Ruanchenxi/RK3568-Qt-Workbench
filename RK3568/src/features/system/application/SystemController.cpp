@@ -19,6 +19,13 @@
 
 namespace
 {
+int parseBusinessStationNo(const QString &text, int fallback = 0)
+{
+    bool ok = false;
+    const int value = text.trimmed().toInt(&ok);
+    return (ok && value >= 0) ? value : fallback;
+}
+
 QString firstNonEmptyValue(const QJsonObject &obj, const char *const *keys, int count)
 {
     for (int index = 0; index < count; ++index)
@@ -105,6 +112,9 @@ void SystemController::saveSettings(const SystemSettingsDto &settings) const
     config->setHomeUrl(settings.homeUrl);
     config->setApiUrl(settings.apiUrl);
     config->setStationId(settings.stationId);
+    // Keep legacy provisioning config in sync while system/stationId becomes the single UI truth.
+    config->setValue(QStringLiteral("key/backendStationNo"),
+                     parseBusinessStationNo(settings.stationId, 0));
     config->setTenantCode(settings.tenantCode);
     config->setKeySerialPort(settings.keySerialPort);
     config->setCardSerialPort(settings.cardSerialPort);

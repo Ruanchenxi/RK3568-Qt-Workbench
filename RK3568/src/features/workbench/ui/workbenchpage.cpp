@@ -11,6 +11,7 @@
 #include <QDebug>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
 
@@ -88,7 +89,10 @@ WorkbenchPage::WorkbenchPage(QWidget *parent)
       ui(new Ui::WorkbenchPage),
       m_webView(nullptr),
       m_controller(new WorkbenchController(nullptr, this)),
-      m_webViewInitialized(false)
+      m_webViewInitialized(false),
+      m_renderProcessTerminated(false),
+      m_reloadScheduled(false)
+      , m_recreatePageOnReload(false)
 {
     ui->setupUi(this);
 }
@@ -163,7 +167,7 @@ void WorkbenchPage::initWebView()
 {
     // 创建 QWebEngineView
     m_webView = new QWebEngineView(this);
-    m_webView->setPage(new DebugWorkbenchPage(m_webView));
+    attachDebugPage(false);
 
     // 将 WebView 添加到容器中
     QVBoxLayout *layout = new QVBoxLayout(ui->webViewContainer);
@@ -205,6 +209,10 @@ void WorkbenchPage::initWebView()
 
     connect(m_webView, &QWebEngineView::loadFinished, this, [=](bool ok)
             {
+        if (ok) {
+            m_renderProcessTerminated = false;
+            m_reloadScheduled = false;
+        }
         if (workbenchWebDebugEnabled()) {
             if (ok) {
                 qDebug() << "[WorkbenchPage] 网页加载成功, finalUrl=" << maskedUrl(m_webView->url());
@@ -212,6 +220,32 @@ void WorkbenchPage::initWebView()
                 qWarning() << "[WorkbenchPage] 网页加载失败, finalUrl=" << maskedUrl(m_webView->url());
             }
         } });
+
+}
+
+void WorkbenchPage::attachDebugPage(bool recreate)
+{
+    if (!m_webView) {
+        return;
+    }
+
+    if (recreate && m_webView->page()) {
+        qWarning() << "[WorkbenchPage] 重建工作台 WebEngine page";
+        m_webView->page()->deleteLater();
+    }
+
+    auto *page = new DebugWorkbenchPage(m_webView);
+    m_webView->setPage(page);
+    connect(page, &QWebEnginePage::renderProcessTerminated, this,
+            [this](QWebEnginePage::RenderProcessTerminationStatus terminationStatus, int exitCode)
+            {
+        m_renderProcessTerminated = true;
+        m_recreatePageOnReload = true;
+        qWarning() << "[WorkbenchPage] 工作台渲染进程终止:"
+                   << "status=" << terminationStatus
+                   << "exitCode=" << exitCode
+                   << "currentUrl=" << maskedUrl(m_webView ? m_webView->url() : QUrl());
+        scheduleWorkbenchReload(); });
 }
 
 /**
@@ -257,9 +291,53 @@ void WorkbenchPage::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
     ensureWebViewInitialized();
+    if (m_renderProcessTerminated) {
+        qWarning() << "[WorkbenchPage] 页面重新显示时检测到渲染异常，准备重新加载工作台";
+        scheduleWorkbenchReload();
+        return;
+    }
     if (m_controller->shouldLoadNow()) {
         loadWorkbench();
+        return;
     }
+
+    if (m_webView) {
+        m_webView->show();
+        m_webView->update();
+    }
+}
+
+void WorkbenchPage::scheduleWorkbenchReload()
+{
+    if (!m_webView || m_reloadScheduled) {
+        return;
+    }
+
+    if (m_reloadCooldownTimer.isValid() && m_reloadCooldownTimer.elapsed() < 1200) {
+        qWarning() << "[WorkbenchPage] 工作台恢复重载已在冷却中，跳过本次重复触发";
+        return;
+    }
+
+    m_reloadScheduled = true;
+    QTimer::singleShot(300, this, [this]() {
+        m_reloadScheduled = false;
+        if (!m_webView) {
+            return;
+        }
+
+        if (!isVisible()) {
+            qWarning() << "[WorkbenchPage] 工作台当前不可见，延迟到下次显示时再恢复";
+            return;
+        }
+
+        m_reloadCooldownTimer.restart();
+        if (m_recreatePageOnReload) {
+            attachDebugPage(true);
+            m_recreatePageOnReload = false;
+        }
+        qWarning() << "[WorkbenchPage] 尝试重新加载工作台，以恢复白屏/渲染异常";
+        loadWorkbench();
+    });
 }
 
 void WorkbenchPage::insertTextFromKeyboard(const QString &text)

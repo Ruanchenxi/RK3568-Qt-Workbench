@@ -1,6 +1,7 @@
 #include "features/key/application/TicketStore.h"
 
 #include <QDateTime>
+#include <QDebug>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
@@ -89,6 +90,14 @@ bool TicketStore::ingestJson(const QByteArray &jsonBytes,
         m_tickets.prepend(dto);
 
     m_rawJsonByTaskId.insert(dto.taskId, jsonBytes);
+    qInfo().noquote()
+            << QStringLiteral("[TicketStore] ingestJson taskId=%1 replaced=%2 transferState=%3 returnState=%4 count=%5 jsonPath=%6")
+                  .arg(dto.taskId,
+                       replaced ? QStringLiteral("true") : QStringLiteral("false"),
+                       dto.transferState,
+                       dto.returnState,
+                       QString::number(m_tickets.size()),
+                       dto.jsonPath);
     emit ticketsChanged(m_tickets);
     return true;
 }
@@ -99,8 +108,19 @@ bool TicketStore::updateTransferState(const QString &taskId,
 {
     for (int i = 0; i < m_tickets.size(); ++i) {
         if (m_tickets[i].taskId == taskId) {
+            const QString oldState = m_tickets[i].transferState;
+            const QString oldError = m_tickets[i].lastError;
+            if (oldState == state && oldError == lastError) {
+                return true;
+            }
             m_tickets[i].transferState = state;
             m_tickets[i].lastError = lastError;
+            qInfo().noquote()
+                    << QStringLiteral("[TicketStore] updateTransferState taskId=%1 %2 -> %3 error=%4")
+                          .arg(taskId,
+                               oldState,
+                               state,
+                               lastError.isEmpty() ? QStringLiteral("<none>") : lastError);
             emit ticketsChanged(m_tickets);
             return true;
         }
@@ -127,8 +147,19 @@ bool TicketStore::updateReturnState(const QString &taskId,
 {
     for (int i = 0; i < m_tickets.size(); ++i) {
         if (m_tickets[i].taskId == taskId) {
+            const QString oldState = m_tickets[i].returnState;
+            const QString oldError = m_tickets[i].returnError;
+            if (oldState == state && oldError == returnError) {
+                return true;
+            }
             m_tickets[i].returnState = state;
             m_tickets[i].returnError = returnError;
+            qInfo().noquote()
+                    << QStringLiteral("[TicketStore] updateReturnState taskId=%1 %2 -> %3 error=%4")
+                          .arg(taskId,
+                               oldState,
+                               state,
+                               returnError.isEmpty() ? QStringLiteral("<none>") : returnError);
             emit ticketsChanged(m_tickets);
             return true;
         }

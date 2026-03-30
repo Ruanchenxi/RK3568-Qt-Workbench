@@ -14,6 +14,7 @@
 #define WORKBENCHPAGE_H
 
 #include <functional>
+#include <QElapsedTimer>
 #include <QWidget>
 #include <QWebEngineView>
 #include <QShowEvent>
@@ -47,10 +48,16 @@ private:
     QWebEngineView *m_webView; // WebEngine 视图
     WorkbenchController *m_controller;
     bool m_webViewInitialized;
+    bool m_renderProcessTerminated;
+    bool m_reloadScheduled;
+    bool m_recreatePageOnReload;
+    QElapsedTimer m_reloadCooldownTimer;
 
     void ensureWebViewInitialized();
     void initWebView();   // 初始化 WebView
+    void attachDebugPage(bool recreate); // 安装/重建 WebEngine Page
     void loadWorkbench(); // 加载工作台网页（带 token，通过中转页面）
+    void scheduleWorkbenchReload(); // 渲染进程异常后的延迟恢复
     void insertTextFromKeyboard(const QString &text);
     void backspaceFromKeyboard();
     void commitFromKeyboard();

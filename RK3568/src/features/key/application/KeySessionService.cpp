@@ -33,7 +33,7 @@
 /**
  * @brief 将配置中的 stationId 字符串转为协议层 quint16
  * @param s 原始配置字符串（如 "001"、"1"、"2"）
- * @return 正整数解析结果；空/非正整数/解析失败一律回退为 1
+ * @return 非负整数解析结果；空/负数/解析失败一律回退为 1，0 作为“全站模式”保留合法语义
  *
  * 失败策略：静默回退 1，不抛出异常、不产生额外日志。
  * 原因：站号异常时让 DEL 仍能发出合法帧、由运维排查配置问题，
@@ -44,7 +44,7 @@ static quint16 parseStationId(const QString &s)
 {
     bool ok = false;
     const int v = s.trimmed().toInt(&ok);
-    return (ok && v > 0) ? static_cast<quint16>(v) : 1;
+    return (ok && v >= 0) ? static_cast<quint16>(v) : 1;
 }
 
 KeySessionService::KeySessionService(QObject *parent)
