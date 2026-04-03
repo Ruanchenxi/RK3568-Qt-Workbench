@@ -42,12 +42,14 @@ struct CommandRequest
 
 struct KeySessionSnapshot
 {
+    int bridgeEpoch = 0;
     bool connected = false;
     bool keyPresent = false;
     bool keyStable = false;
     bool sessionReady = false;
     bool protocolHealthy = false;
     bool protocolConfirmedOnce = false;
+    bool commandInFlight = false;
     qint64 lastBusinessSuccessMs = 0;
     qint64 lastProtocolFailureMs = 0;
     bool recoveryWindowActive = false;
@@ -86,6 +88,8 @@ public:
 
     virtual bool connectPort(const QString &portName, int baud) = 0;
     virtual void disconnectPort() = 0;
+    virtual void setPortSwitchInProgress(bool inProgress) = 0;
+    virtual void clearVerifiedPort() = 0;
     virtual KeySessionSnapshot snapshot() const = 0;
     virtual void execute(const CommandRequest &request) = 0;
     virtual void transferTicket(const TicketTransferRequest &request) = 0;

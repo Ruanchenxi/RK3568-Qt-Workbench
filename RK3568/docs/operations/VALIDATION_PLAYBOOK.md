@@ -2,6 +2,206 @@
 
 Status: Active  
 Owner: 项目维护者  
+Last Updated: 2026-04-03  
+适用范围：主程序各链路验证步骤。  
+不适用范围：不替代协议字段文档。  
+
+## 1. 每次改动后的最低验证
+
+1. 执行：
+   ```powershell
+   .\tools\arch_guard.ps1 -Phase 3
+   ```
+2. Qt Creator 中至少完成一次 Debug 编译。  
+3. 主路径打开无崩溃：
+   - 登录
+   - 工作台
+   - 钥匙管理
+   - 系统设置
+   - 服务日志
+
+## 2. 钥匙旧链路零回归
+
+至少回归：
+
+1. `初始化`
+2. `获取任务数 (Q_TASK)`
+3. `删除票 (DEL)`
+4. 串口报文页日志追加
+
+## 3. 工作台 JSON 输入链验证
+
+检查点：
+
+1. `HTTP服务端报文` 页能看到：
+   - `[HTTP-INGRESS] listening ...`
+   - `OPTIONS ... -> 200 OK`
+   - `POST /ywticket/WebApi/transTicket`
+2. `logs/http_ticket_*.json` 有新文件。  
+3. `系统票数据` 表新增记录。  
+4. 错路径请求应返回 `404`；错方法应返回 `405`；非法请求应返回 `400`。  
+5. 只有业务真正入池成功时，HTTP 才应返回：
+   - `success=true`
+
+## 4. 传票手动链验证
+
+### 无硬件阶段
+
+1. 选中系统票后点“传票”，不弹本地 JSON 文件选择框。  
+2. 若串口未连接，应提示：
+   - `串口未连接，无法发送传票`
+3. 若串口已连接但钥匙未就绪，应提示：
+   - `钥匙未就绪，无法发送传票`
+4. 系统票状态不应莫名其妙变成 `success`。  
+
+### 真机阶段
+
+1. 关键顺序应能看到：
+   - `SET_COM`
+   - `ACK for SET_COM`
+   - `TICKET frame ...`
+2. 单帧样本可发送。  
+3. 多帧样本可续发。  
+4. `串口报文` 页能看到发送、ACK 和失败原因。  
+5. 极端场景：点击传票后立即拔钥匙，预期：
+   - 票不进入钥匙
+   - 本地状态标 `failed`
+   - 不记 `success`
+   - 后续重新放回后允许再次传票
+
+## 5. 自动传票验证
+
+前提：`ticket/autoTransferEnabled=true`
+
+1. 新 JSON 入池后，系统票状态从 `received` 到 `auto-pending` 或直接 `sending`。  
+2. 自动传票不会绕过：
+   - `connected`
+   - `keyPresent`
+   - `keyStable`
+   - `sessionReady`
+3. 自动传票失败时，状态应回写为 `failed`，并附带错误原因。  
+4. 若 `Q_TASK` 已确认钥匙中存在该任务，而本地系统票仍停在 `sending/auto-pending/failed`，则系统票应自动被纠正为 `success`。  
+5. 若再次放下钥匙后，`Q_TASK` 成功确认钥匙中无任务，而系统票仍卡在 `sending/failed`，则应被回退为 `auto-pending` 并自动再次尝试传票。  
+6. `cancel-accepted / cancel-pending / cancel-executing` 状态下不应继续自动补传。  
+
+## 6. 按任务单号独立回传验证
+
+1. 准备 A/B 两条任务：
+   - A 已完成
+   - B 未完成
+2. 预期：
+   - A 可回传
+   - B 不阻塞 A
+   - B 继续留在钥匙中
+3. 手工回传验证：
+   - 只看当前选中任务是否完成
+   - 不再要求整把钥匙全部完成
+4. 自动回传验证：
+   - 从 `Q_TASK.status=0x02` 的任务中选择一条目标任务
+   - 同一时刻只允许一条回传链在途
+5. 删除验证：
+   - 只有 `Q_TASK` 明确确认目标任务已不存在时，才进入 `return-delete-success`
+6. 上传失败边界：
+   - 若 HTTP 回传失败，当前应进入 `manual-required`，不自动越过人工确认边界
+
+## 7. 持久化与恢复验证
+
+1. 正常传票后检查：
+   - `logs/ticket_store.json` 已生成
+2. 重启程序后检查：
+   - 启动日志出现 `loadFromDisk`
+   - 票池可恢复显示
+3. 已完成票清理：
+   - `return-delete-success / cancel-done` 按 7 天策略清理
+4. 孤儿恢复（专项样本）：
+   - 本地无票，但钥匙中仍有任务
+   - `cancelTicket` 触发时应先建 `orphan-recovery` 记录再继续流程
+   - `TasksUpdated` 对账时，本地无票的钥匙任务也应能补建最小记录
+
+## 8. 工作台撤销链验证（cancelTicket）
+
+### 8.1 HTTP 入口验证
+
+1. 工作台点击撤销后，应命中：
+   - `POST /ywticket/WebApi/cancelTicket`
+2. 预期返回 JSON 至少包含：
+   - `success`
+   - `status`
+   - `msg`
+   - `taskId`
+3. 错路径 / 错方法 / 坏请求仍分别返回：
+   - `404`
+   - `405`
+   - `400`
+
+### 8.2 未下发到钥匙的直接撤销
+
+1. 准备一条仍处于：
+   - `received`
+   - `auto-pending`
+   且当前 `Q_TASK` 明确未读到该任务的系统票
+2. 发起撤销
+3. 预期：
+   - 不发 `DEL`
+   - 活跃系统票直接移除
+   - HTTP 返回 `任务已取消`
+
+### 8.3 已在回传清理链中的撤销
+
+1. 准备一条处于：
+   - `return-upload-success`
+   - `return-delete-pending`
+   - `return-delete-verifying`
+   之一的系统票
+2. 发起撤销
+3. 预期：
+   - 不新起撤销删除链
+   - 返回 `任务已在清理中，无需重复撤销`
+
+### 8.4 已完成闭环的撤销
+
+1. 准备一条处于：
+   - `return-delete-success`
+   - `return-success`
+   - `key-cleared`
+   之一的系统票
+2. 发起撤销
+3. 预期：
+   - 不再发 `DEL`
+   - 返回 `任务已完成，无需撤销`
+
+### 8.5 已进钥匙的受理与删除验证
+
+1. 准备一条已确认在钥匙中的系统票
+2. 发起撤销
+3. 预期：
+   - 先进入 `cancel-accepted/cancel-pending`
+   - 再执行：
+     - `Q_TASK`
+     - `DEL`
+     - `Q_TASK`
+   - 最终活跃系统票移除
+
+### 8.6 稳定性与恢复验证
+
+1. 传票中发起撤销
+2. 回传中发起撤销
+3. 删除验证中发起撤销
+4. 拔钥匙后再重新放回
+5. 程序重启后检查：
+   - `logs/cancel_ticket_journal.json`
+   - 待撤销任务是否仍可继续收口
+
+## 9. 当前专项样本仍待补齐
+
+1. TicketStore 重启恢复完整样本  
+2. orphan recovery 真机样本  
+3. 自动独立回传真机样本  
+4. `cancel-pending -> cancel-executing -> cancel-done` 完整样本  
+
+
+Status: Active  
+Owner: 项目维护者  
 Last Updated: 2026-03-30  
 适用范围：主程序各链路验证步骤。  
 不适用范围：不替代协议字段文档。  
@@ -160,15 +360,18 @@ Last Updated: 2026-03-30
    - 若 HTTP 回传成功，但后续 `Q_TASK` 仍发现该已完成任务存在，则应进入 `return-delete-pending`，并自动继续 `DEL` 清理
    - 只有 `Q_TASK` 明确确认任务已不存在时，才进入 `return-delete-success`
 4. 多任务场景新增门禁（2026-03-13 晚）：
-   - 自动回传和手工回传都必须等钥匙中的相关任务**全部完成**后才允许开始
-   - 若钥匙里仍有任意未完成任务，则当前应统一表现为：
+   - 自动回传和手工回传当前都改为“按任务单号独立回传”
+   - 若 A 任务已完成、B 任务未完成，则 A 允许回传，B 继续保留在钥匙中执行
+   - 手工 `回传` 按钮应只看“当前选中任务是否已完成 + 当前是否已有其他回传链在途”
+   - 若当前选中任务未完成，则当前应表现为：
      - 不进入 `I_TASK_LOG`
      - 不发起 HTTP 回传
      - 不执行 `DEL`
-     - 手工 `回传` 按钮应禁用或提示不可回传
-     - 页面提示“暂不回传，请全部任务完成后再放回钥匙”
-   - 真机专项清单参考：
-     - `docs/operations/RETURN_GATE_COMPANY_CHECKLIST_2026-03-16.md`
+     - 手工 `回传` 按钮应禁用或提示当前任务未完成
+   - 自动回传仍必须严格串行：
+     - 同一时刻只允许一条回传链在途
+     - A 进入 `return-delete-verifying` 时，B 即使也已完成，也要等 A 收口后再继续
+   - 当前真机专项样本以 `docs/operations/STATUS_SNAPSHOT.md` 和当前板端日志为准，不再把 `RETURN_GATE_COMPANY_CHECKLIST_2026-03-16.md` 作为主验证入口
 
 ## 9. 初始化 / 下载 RFID 手工链验证
 
@@ -471,3 +674,110 @@ Last Updated: 2026-03-30
 5. 当前要明确区分：
    - “渲染进程终止后恢复”属于已加代码路径
    - “纯白屏但未触发 `renderProcessTerminated`”当前仍未单独验收
+## 17. 钥匙/读卡串口配置重启生效验证（档 1）
+
+1. 在系统设置页修改 `钥匙串口`，点击“保存配置”。
+2. 预期：
+   - 配置保存成功
+   - 页面提示：`配置已保存，重启程序后生效`
+   - 当前运行中的钥匙链不应被立即打断
+3. 若当前存在以下业务链：
+   - accepted 后自动传票
+   - `auto-pending`
+   - `return-interrupted-retryable`
+   - `return-delete-verifying`
+   - INIT
+   - 下载 RFID
+   预期：
+   - 仍允许保存配置
+   - 但应提示“请在当前任务完成后重启程序生效”
+4. 在不重启程序的情况下，继续执行当前串口相关业务。
+5. 预期：
+   - 仍继续使用旧运行串口
+   - 不应因为保存配置而中途切到新串口
+6. 重启程序后，预期：
+   - 新配置串口生效
+   - 旧运行口不再继续承载新业务
+7. `读卡串口` 按同样规则验证：
+   - 保存配置后不立即切换
+   - 重启程序后才生效
+8. 回归主链：
+   - accepted -> auto transfer
+   - `auto-pending`
+   - `return-interrupted-retryable`
+   - `return-delete-verifying -> return-delete-success`
+   - 快进快出恢复链
+
+## 18. 工作台撤销链验证（cancelTicket）
+
+### 18.1 HTTP 入口验证
+
+1. 工作台点击撤销后，应命中：
+   - `POST /ywticket/WebApi/cancelTicket`
+2. 预期返回 JSON 至少包含：
+   - `success`
+   - `status`
+   - `msg`
+   - `taskId`
+3. 错路径 / 错方法 / 坏请求仍分别返回：
+   - `404`
+   - `405`
+   - `400`
+
+### 18.2 未下发到钥匙的直接撤销
+
+1. 准备一条仍处于：
+   - `received`
+   - `auto-pending`
+   且当前 `Q_TASK` 明确未读到该任务的系统票
+2. 发起撤销
+3. 预期：
+   - 不发 `DEL`
+   - 活跃系统票直接移除
+   - HTTP 返回 `任务已取消`
+
+### 18.3 已在回传清理链中的撤销
+
+1. 准备一条处于：
+   - `return-upload-success`
+   - `return-delete-pending`
+   - `return-delete-verifying`
+   之一的系统票
+2. 发起撤销
+3. 预期：
+   - 不新起撤销删除链
+   - 返回 `任务已在清理中，无需重复撤销`
+
+### 18.4 已完成闭环的撤销
+
+1. 准备一条处于：
+   - `return-delete-success`
+   - `return-success`
+   - `key-cleared`
+   之一的系统票
+2. 发起撤销
+3. 预期：
+   - 不再发 `DEL`
+   - 返回 `任务已完成，无需撤销`
+
+### 18.5 已进钥匙的受理与删除验证
+
+1. 准备一条已确认在钥匙中的系统票
+2. 发起撤销
+3. 预期：
+   - 先进入 `cancel-accepted/cancel-pending`
+   - 再执行：
+     - `Q_TASK`
+     - `DEL`
+     - `Q_TASK`
+   - 最终活跃系统票移除
+
+### 18.6 稳定性验证
+
+1. 传票中发起撤销
+2. 回传中发起撤销
+3. 删除验证中发起撤销
+4. 拔钥匙后再重新放回
+5. 程序重启后检查：
+   - `logs/cancel_ticket_journal.json`
+   - 待撤销任务是否仍可继续收口

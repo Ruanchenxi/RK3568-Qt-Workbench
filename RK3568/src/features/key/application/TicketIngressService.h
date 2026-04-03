@@ -25,14 +25,17 @@ public:
         QString taskId;
     };
 
+    using PersistBodyFn = std::function<QString()>;
     using IngressHandler = std::function<IngressResult(const QByteArray &jsonBytes,
-                                                       const QString &savedPath)>;
+                                                       const PersistBodyFn &persistBody)>;
+    using CancelHandler = std::function<IngressResult(const QString &taskId)>;
 
     explicit TicketIngressService(QObject *parent = nullptr);
 
     bool start();
     QString lastError() const { return m_lastError; }
     void setIngressHandler(IngressHandler handler);
+    void setCancelHandler(CancelHandler handler);
 
 signals:
     void httpServerLogAppended(const QString &text);
@@ -50,9 +53,9 @@ private:
                       const QByteArray &body);
     void sendCorsPreflightResponse(QTcpSocket *socket);
     QByteArray buildJsonResponseBody(bool success,
-                                     int code,
                                      const QString &message,
-                                     const QString &taskId = QString()) const;
+                                     const QString &taskId = QString(),
+                                     int statusCode = 200) const;
     QString saveBodyToFile(const QByteArray &body) const;
 
     QTcpServer *m_server;
@@ -61,7 +64,9 @@ private:
     QString m_listenHost;
     quint16 m_listenPort = 0;
     QString m_listenPath;
+    QString m_cancelPath;
     IngressHandler m_ingressHandler;
+    CancelHandler m_cancelHandler;
 };
 
 #endif // TICKETINGRESSSERVICE_H

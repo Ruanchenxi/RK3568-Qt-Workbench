@@ -22,6 +22,12 @@ struct SystemTicketDto
     QString lastError;
     QString returnState;
     QString returnError;
+    QString cancelState;    // none | cancel-accepted | cancel-pending | cancel-executing | cancel-done | cancel-failed
+    QString residentSlotId;
+    QString residentKeyId;
+    QDateTime cancelRequestedAt;
+    QString cancelSource;
+    bool wasInKey = false;
     QString stateDetail;
     QString jsonPath;
     QDateTime receivedAt;

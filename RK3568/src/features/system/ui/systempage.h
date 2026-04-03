@@ -17,7 +17,6 @@
 
 class QLineEdit;
 class CardSerialSource;
-
 namespace Ui
 {
     class SystemPage;
@@ -68,7 +67,9 @@ private:
     void resetIdentityViewForSessionChange();
     void updateCollectButtonState();
     void updateIdentityPermissionState();
+    void updateSerialPermissionState();
     bool currentUserCanManageIdentityMedia() const;
+    bool currentUserCanManageSerialPorts() const;
     int selectedUserRow() const;
     QString displayNameForUser(const SystemIdentityUserDto &user) const;
 
@@ -82,6 +83,7 @@ private:
     bool m_keyboardAdjustedScroll;
     bool m_userListLoaded;
     bool m_canManageIdentityMedia;
+    bool m_canManageSerialPorts;
     bool m_identityReadOnlyPromptShown;
     bool m_clearingCard;
     bool m_collectingCard;

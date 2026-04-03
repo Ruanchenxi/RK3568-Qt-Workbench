@@ -188,6 +188,9 @@ public:
     bool connectPort(const QString &portName, int baud = 115200);
     void disconnectPort();
     bool isConnected() const;
+    bool hasInFlightCommand() const;
+    void setPortSwitchInProgress(bool inProgress);
+    void clearVerifiedPort();
 
     void queryTasksAll();
     void queryBattery();

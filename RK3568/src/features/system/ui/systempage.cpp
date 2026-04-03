@@ -19,6 +19,7 @@
 #include <QLineEdit>
 #include <QComboBox>
 #include <QListView>
+#include <QLabel>
 #include <QStyle>
 
 namespace {
@@ -42,6 +43,7 @@ SystemPage::SystemPage(QWidget *parent) : QWidget(parent),
                                           m_keyboardAdjustedScroll(false),
                                           m_userListLoaded(false),
                                           m_canManageIdentityMedia(false),
+                                          m_canManageSerialPorts(false),
                                           m_identityReadOnlyPromptShown(false),
                                           m_clearingCard(false),
                                           m_collectingCard(false)
@@ -134,7 +136,7 @@ SystemPage::SystemPage(QWidget *parent) : QWidget(parent),
 
     if (ui->saveBtn)
     {
-        ui->saveBtn->setText(QStringLiteral("保存并应用"));
+        ui->saveBtn->setText(QStringLiteral("保存配置"));
         ui->saveBtn->setCursor(Qt::PointingHandCursor);
         ui->saveBtn->setMinimumHeight(46);
         ui->saveBtn->setMinimumWidth(156);
@@ -186,6 +188,13 @@ SystemPage::SystemPage(QWidget *parent) : QWidget(parent),
 
     configureUserTable();
     updateIdentityPermissionState();
+    updateSerialPermissionState();
+    if (ui->serialFixedHintLabel)
+    {
+        ui->serialFixedHintLabel->setWordWrap(true);
+        ui->serialFixedHintLabel->setText(
+            QStringLiteral("钥匙串口和读卡串口的配置只会保存到配置文件。表单里显示的新串口只是已保存配置，当前运行中的串口不会立即切换，需在业务空闲后重启程序加载新配置。"));
+    }
 
     // 连接信号槽
     setupConnections();
@@ -214,7 +223,6 @@ void SystemPage::setupConnections()
     // 刷新和保存按钮
     connect(ui->refreshBtn, &QPushButton::clicked, this, &SystemPage::onRefreshClicked);
     connect(ui->saveBtn, &QPushButton::clicked, this, &SystemPage::onSaveClicked);
-
     // 用户身份采集相关
     connect(ui->userTable, &QTableWidget::itemSelectionChanged, this, &SystemPage::onUserTableSelectionChanged);
     connect(ui->deleteCardBtn, &QPushButton::clicked, this, &SystemPage::onDeleteCardClicked);
@@ -232,10 +240,12 @@ void SystemPage::setupConnections()
     connect(AuthService::instance(), &AuthService::loginSuccess, this, [this](const QJsonObject &) {
         resetIdentityViewForSessionChange();
         updateIdentityPermissionState();
+        updateSerialPermissionState();
     });
     connect(AuthService::instance(), &AuthService::loggedOut, this, [this]() {
         resetIdentityViewForSessionChange();
         updateIdentityPermissionState();
+        updateSerialPermissionState();
     });
 }
 
@@ -291,9 +301,9 @@ void SystemPage::updateTabStyles()
     {
         ui->saveBtn->setVisible(basicActive);
         ui->saveBtn->setEnabled(basicActive);
-        ui->saveBtn->setText(QStringLiteral("保存并应用"));
+        ui->saveBtn->setText(QStringLiteral("保存配置"));
         ui->saveBtn->setToolTip(basicActive
-                                    ? QStringLiteral("保存当前配置，并将表单刷新到最新状态")
+                                    ? QStringLiteral("保存当前配置。钥匙串口和读卡串口会在下次重启程序时加载新配置")
                                     : QString());
         if (basicActive)
         {
@@ -509,11 +519,12 @@ void SystemPage::onSaveClicked()
     {
         saveSettings();
         loadSettings();
-        QMessageBox::information(this, QStringLiteral("保存并应用"),
-                                 QStringLiteral("配置已保存并应用到当前页面。\n\n"
+        QMessageBox::information(this, QStringLiteral("保存配置"),
+                                 QStringLiteral("配置已保存。\n\n"
                                                 "首页地址、接口地址、租户编码会用于后续请求；\n"
                                                 "站号会同时影响 DEL 协议地址以及 INIT/RFID 后端取数范围；\n"
-                                                "串口相关建议重新进入页面或重启程序后完全生效。"));
+                                                "本页表单会立即显示新串口配置，但当前运行中的串口连接保持不变；\n"
+                                                "请在当前任务完成后重启程序，再统一加载新的钥匙串口和读卡串口配置。"));
     }
     else
     {
@@ -582,6 +593,8 @@ void SystemPage::loadSettings()
         }
     }
 
+    updateSerialPermissionState();
+
 }
 
 /**
@@ -598,6 +611,13 @@ void SystemPage::saveSettings()
     dto.cardSerialPort = ui->cardSerialCombo->currentText();
     dto.baudRate = kFixedBaudRate;
     dto.dataBits = kFixedDataBits;
+
+    if (!m_canManageSerialPorts)
+    {
+        const SystemSettingsDto current = m_controller->loadSettings();
+        dto.keySerialPort = current.keySerialPort;
+        dto.cardSerialPort = current.cardSerialPort;
+    }
 
     m_controller->saveSettings(dto);
 }
@@ -949,6 +969,35 @@ void SystemPage::updateIdentityPermissionState()
     updateCollectButtonState();
 }
 
+void SystemPage::updateSerialPermissionState()
+{
+    m_canManageSerialPorts = currentUserCanManageSerialPorts();
+    const QString baseHint = QStringLiteral("钥匙串口和读卡串口的配置只会保存到配置文件。表单里显示的新串口只是已保存配置，当前运行中的串口不会立即切换，需在业务空闲后重启程序加载新配置。");
+
+    auto applySerialPermission = [this](QComboBox *combo, const QString &editableTip) {
+        if (!combo)
+        {
+            return;
+        }
+
+        combo->setEnabled(m_canManageSerialPorts);
+        combo->setCursor(m_canManageSerialPorts ? Qt::PointingHandCursor : Qt::ArrowCursor);
+        combo->setToolTip(m_canManageSerialPorts
+                              ? editableTip
+                              : QStringLiteral("仅管理员可修改串口配置"));
+    };
+
+    applySerialPermission(ui ? ui->keySerialCombo : nullptr, QStringLiteral("点击选择钥匙串口"));
+    applySerialPermission(ui ? ui->cardSerialCombo : nullptr, QStringLiteral("点击选择读卡串口"));
+
+    if (ui && ui->serialFixedHintLabel)
+    {
+        ui->serialFixedHintLabel->setText(m_canManageSerialPorts
+                                              ? baseHint
+                                              : baseHint + QStringLiteral("\n当前账号仅可查看串口配置，只有管理员可修改钥匙串口和读卡串口。"));
+    }
+}
+
 bool SystemPage::currentUserCanManageIdentityMedia() const
 {
     const QJsonObject userInfo = AuthService::instance()->getUserInfo();
@@ -972,6 +1021,11 @@ bool SystemPage::currentUserCanManageIdentityMedia() const
     }
 
     return false;
+}
+
+bool SystemPage::currentUserCanManageSerialPorts() const
+{
+    return currentUserCanManageIdentityMedia();
 }
 
 void SystemPage::onKeyboardVisibilityChanged(bool visible, int height)

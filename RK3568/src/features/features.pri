@@ -30,6 +30,7 @@ SOURCES += \
     $$PWD/key/ui/keymanagepage.cpp \
     $$PWD/key/application/KeySessionService.cpp \
     $$PWD/key/application/KeyManageController.cpp \
+    $$PWD/key/application/TicketCancelCoordinator.cpp \
     $$PWD/key/application/SerialLogManager.cpp \
     $$PWD/key/application/KeyProvisioningService.cpp \
     $$PWD/key/application/TicketReturnHttpClient.cpp \
@@ -78,6 +79,7 @@ HEADERS += \
     $$PWD/key/ui/keymanagepage.h \
     $$PWD/key/application/KeySessionService.h \
     $$PWD/key/application/KeyManageController.h \
+    $$PWD/key/application/TicketCancelCoordinator.h \
     $$PWD/key/application/SerialLogManager.h \
     $$PWD/key/application/KeyProvisioningService.h \
     $$PWD/key/application/TicketReturnHttpClient.h \

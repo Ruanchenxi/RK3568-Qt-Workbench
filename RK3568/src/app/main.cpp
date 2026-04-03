@@ -57,9 +57,16 @@ int main(int argc, char *argv[]) // C++ 标准入口函数
     configureLinuxBoardGraphics();
 #endif
 
+    // 板端实体屏主要依赖 direct touch；显式开启“未处理触摸合成为鼠标”
+    // 可以让普通 QWidget/QPushButton 在 xcb/X11 下继续按点击语义工作。
+    QCoreApplication::setAttribute(Qt::AA_SynthesizeMouseForUnhandledTouchEvents, true);
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
 
     QApplication a(argc, argv); // 创建应用对象，负责管理应用级资源和主事件循环
+
+    qInfo().noquote()
+            << "[input-touch]"
+            << "AA_SynthesizeMouseForUnhandledTouchEvents=true";
 
     QObject::connect(&a, &QGuiApplication::lastWindowClosed, []() {
         qInfo() << "[app-lifecycle] lastWindowClosed emitted";

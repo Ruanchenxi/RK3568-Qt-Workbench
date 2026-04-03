@@ -375,6 +375,35 @@ bool KeySerialClient::isConnected() const
     return m_serial->isOpen();
 }
 
+bool KeySerialClient::hasInFlightCommand() const
+{
+    return m_inFlight;
+}
+
+void KeySerialClient::setPortSwitchInProgress(bool inProgress)
+{
+    setProperty("portSwitchInProgress", inProgress);
+    if (inProgress) {
+        emitLog(LogDir::EVENT, 0, 0,
+                QStringLiteral("受控串口切换开始，已抑制 verified port 自动重连"));
+    } else {
+        emitLog(LogDir::EVENT, 0, 0,
+                QStringLiteral("受控串口切换结束，恢复普通串口恢复策略"));
+    }
+}
+
+void KeySerialClient::clearVerifiedPort()
+{
+    const bool hadVerifiedPort = m_hasVerifiedPort || !m_verifiedPortName.isEmpty();
+    m_verifiedPortName.clear();
+    m_hasVerifiedPort = false;
+    m_reopenRetryCount = 0;
+    if (hadVerifiedPort) {
+        emitLog(LogDir::EVENT, 0, 0,
+                QStringLiteral("已清空 verified port，后续不会再优先回到旧串口"));
+    }
+}
+
 // ============================================================
 // 公共接口：查询 / 删除
 // ============================================================
@@ -2434,6 +2463,12 @@ bool KeySerialClient::isHardSerialError(int errorCode) const
  */
 void KeySerialClient::tryReopenVerifiedPort(const QString &reason)
 {
+    if (property("portSwitchInProgress").toBool()) {
+        emitLog(LogDir::EVENT, 0, 0,
+                QStringLiteral("受控串口切换中，跳过 verified port 自动重连：%1").arg(reason));
+        return;
+    }
+
     if (m_reopenInProgress) {
         return;
     }
@@ -2538,6 +2573,11 @@ void KeySerialClient::onSerialError(int errorCode, const QString &errorMessage)
     }
     emit connectedChanged(false);
     emit keyStableChanged(false);
+    if (property("portSwitchInProgress").toBool()) {
+        emitLog(LogDir::EVENT, 0, 0,
+                QStringLiteral("受控串口切换中收到硬错误，已停止旧口且不再尝试自动重连：%1").arg(err));
+        return;
+    }
     tryReopenVerifiedPort(err);
 }
 

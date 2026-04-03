@@ -2,90 +2,104 @@
 
 Status: Active
 Owner: 项目维护者（单人开发）
-Last Updated: 2026-03-30
+Last Updated: 2026-04-03
 
-本文件只承担两件事：
+本文件只承担三件事：
 
 1. 明确当前主线真值文档在哪里。
-2. 告诉新接手的人应该先读什么、哪些只是历史归档。
+2. 告诉新接手的人应该先读什么。
+3. 明确哪些只是历史归档或阶段材料。
 
 ## 1. 真值边界
 
 1. 当前项目唯一有效的文档真值目录是：
-   - `D:\\Desktop\\QTtest\\RK3568\\RK3568\\docs`
-2. 工作区根目录下若出现 `D:\\Desktop\\QTtest\\RK3568\\docs\\...` 的零散副本或空文件：
+   - `D:\Desktop\QTtest\RK3568\RK3568\docs`
+2. 工作区根目录下若出现 `D:\Desktop\QTtest\RK3568\docs\...` 的零散副本或空文件：
    - 视为历史残留/异常副本
    - 不继续在那一套路径上维护内容
-3. `docs/archive/` 只保存阶段性接手材料、旧方案和专项清单：
-   - 可用于追溯
-   - 不作为当前主线真值
+3. `docs/archive/` 只保存：
+   - 阶段性交接材料
+   - 旧方案
+   - 专项清单
+   - incident / brief / execution log
+   - 只用于追溯，不作为当前主线真值
+4. `docs/operations/` 下若文件名明显带日期、brief、handoff、checklist、execution log、incident：
+   - 默认按阶段材料看待
+   - 除非本 README 明确列为当前真值，否则不应当成主入口
 
 ## 2. 当前主线先读什么
 
 如果你是没有历史上下文的新接手者，按这个顺序读：
 
-1. `operations/STATUS_SNAPSHOT.md`
-   目的：先确认当前项目做到哪里、哪些链路已经落地。
-2. `operations/BOARD_PRODUCT_UI_DEPLOYMENT_PLAN_2026-03-24.md`
-   目的：先确认 RK3588 板端真实运行方式、UI 适配边界和当前部署策略。
-3. `architecture/KEY_FLOW_OVERVIEW.md`
-   目的：理解钥匙链、工作台 JSON 输入链、传票链、回传链。
-4. `architecture/KEYBOARD_MODULE_ARCHITECTURE.md`
-   目的：理解当前自定义键盘模块的主线、边界和禁区。
+1. `AGENT_QUICKSTART.md`
+   - 目的：用最短路径建立当前项目主线认知，避免先读到历史材料。
+2. `PROJECT_CONTEXT.md`
+   - 目的：先理解项目背景、目标、运行平台、边界和维护约束。
+3. `operations/STATUS_SNAPSHOT.md`
+   - 目的：先确认当前项目做到哪里、哪些链路已经落地、哪些还待专项样本。
+4. `architecture/KEY_FLOW_OVERVIEW.md`
+   - 目的：理解钥匙链、工作台 JSON 输入链、传票链、回传链、撤销链、持久化与恢复。
 5. `operations/VALIDATION_PLAYBOOK.md`
-   目的：知道每次改动后怎么做最小验证。
+   - 目的：知道每次改动后怎么做最小验证。
 6. `operations/CONFIG_REFERENCE.md`
-   目的：查关键配置项、默认值和兼容口径。
+   - 目的：查关键配置项、默认值和兼容口径。
+7. `serial/PROTOCOL_FRAMES_REFERENCE.md`
+   - 目的：看串口协议真值和报文规则。
 
 若需要继续深入，再读：
 
-1. `PROJECT_CONTEXT.md`
-2. `architecture/CURRENT_FOLDER_LAYOUT.md`
-3. `architecture/CODEMAP.md`
-4. `architecture/DEPENDENCY_RULES.md`
+1. `architecture/CURRENT_FOLDER_LAYOUT.md`
+2. `architecture/CODEMAP.md`
+3. `architecture/DEPENDENCY_RULES.md`
+4. `replay/REPLAY_SPEC.md`
 5. `serial/SERIAL_PACKET_AGENT_GUIDE.md`
-6. `serial/PROTOCOL_FRAMES_REFERENCE.md`
-7. `replay/REPLAY_SPEC.md`
-8. `COMMENTING_GUIDE.md`
+6. `COMMENTING_GUIDE.md`
 
-## 2.1 按问题类型怎么读
+## 3. 按问题类型怎么读
 
-如果你是带着具体问题来的，建议直接按下面顺序读：
-
-1. 板端显示 / 登录页 / 系统设置页 / 服务日志页 / 底部状态栏：
-   - `operations/BOARD_PRODUCT_UI_DEPLOYMENT_PLAN_2026-03-24.md`
+1. transTicket / cancelTicket / return / 持久化 / orphan recovery：
    - `operations/STATUS_SNAPSHOT.md`
-   - `operations/VALIDATION_PLAYBOOK.md`
-   - `operations/CONFIG_REFERENCE.md`
-2. 服务启动 / `start-all` / 端口占用 / 服务日志来源：
-   - `operations/CONFIG_REFERENCE.md`
-   - `operations/BOARD_PRODUCT_UI_DEPLOYMENT_PLAN_2026-03-24.md`
-   - `operations/STATUS_SNAPSHOT.md`
-3. 钥匙协议 / 传票 / 回传 / `Q_TASK / I_TASK_LOG / UP_TASK_LOG / DEL`：
    - `architecture/KEY_FLOW_OVERVIEW.md`
-   - `operations/KEY_RETURN_STABILITY_STATUS_2026-03-30.md`
+   - `operations/VALIDATION_PLAYBOOK.md`
+2. 板端运行 / UI 约束 / 现状边界：
+   - `PROJECT_CONTEXT.md`
+   - `operations/STATUS_SNAPSHOT.md`
+   - 必要时参考专题文档（非默认主入口）
+3. 串口协议 / `SET_COM / Q_TASK / I_TASK_LOG / UP_TASK_LOG / DEL`：
    - `serial/PROTOCOL_FRAMES_REFERENCE.md`
    - `serial/SERIAL_PACKET_AGENT_GUIDE.md`
-4. 自定义键盘 / 输入框 / 页面避让：
-   - `architecture/KEYBOARD_MODULE_ARCHITECTURE.md`
+   - `architecture/KEY_FLOW_OVERVIEW.md`
+4. 配置 / 环境 / 运行开关：
    - `operations/CONFIG_REFERENCE.md`
+5. 回放与无硬件验证：
+   - `replay/REPLAY_SPEC.md`
    - `operations/VALIDATION_PLAYBOOK.md`
 
-## 2.2 当前最常用的真值文档
+## 4. 当前真值文档最小集合
 
-如果只想看“最可能需要同步维护”的文档，优先关注这 4 份：
+当前建议长期维护的真值文档只有这些：
 
-1. `operations/STATUS_SNAPSHOT.md`
-2. `operations/CONFIG_REFERENCE.md`
-3. `operations/BOARD_PRODUCT_UI_DEPLOYMENT_PLAN_2026-03-24.md`
-4. `PROJECT_CONTEXT.md`
+1. `README.md`
+2. `AGENT_QUICKSTART.md`
+3. `PROJECT_CONTEXT.md`
+4. `architecture/KEY_FLOW_OVERVIEW.md`
+5. `operations/STATUS_SNAPSHOT.md`
+6. `operations/VALIDATION_PLAYBOOK.md`
+7. `operations/CONFIG_REFERENCE.md`
+8. `serial/PROTOCOL_FRAMES_REFERENCE.md`
+9. `replay/REPLAY_SPEC.md`
 
-## 3. 文档目录职责
+其它文档默认视为：
+- 辅助参考
+- 专题说明
+- 或历史材料
+
+## 5. 文档目录职责
 
 1. `docs/architecture/`
    - 当前主线架构、结构边界、目录规则、代码地图。
 2. `docs/operations/`
-   - 当前状态、配置参考、验证清单、板端部署/UI 定稿策略。
+   - 当前状态、配置参考、验证清单、少量仍需保留的专题说明。
 3. `docs/serial/`
    - 串口协议、报文、链路基线和专项参考。
 4. `docs/replay/`
@@ -94,7 +108,17 @@ Last Updated: 2026-03-30
    - 历史 handoff、旧方案、迁移过程材料。
    - 仅用于追溯，不用于判断当前主线。
 
-## 4. 当前工程约束
+## 5.1 当前仍保留在 operations/ 的专题文档
+
+以下文档当前仍保留在 `docs/operations/`，但它们属于专题参考或时点记录，不是默认主阅读入口：
+
+1. `operations/BOARD_PRODUCT_UI_DEPLOYMENT_PLAN_2026-03-24.md`
+2. `operations/KEY_RETURN_STABILITY_STATUS_2026-03-30.md`
+3. `operations/TOUCH_INPUT_INCIDENT_2026-03-31.md`
+
+这些文件可用于追溯专题问题，但若与当前真值文档冲突，以当前真值文档为准。
+
+## 6. 当前工程约束
 
 1. 运行目标：支持 Windows 开发验证与 RK3588 Ubuntu 部署。
 2. UI 约束：`.ui` 文件固定在项目根 `ui/`。
@@ -105,9 +129,10 @@ Last Updated: 2026-03-30
    - `/dev/ttyS3` 仅刷卡链路
 6. 文档维护红线：
    - 若代码行为已改，而文档仍记录旧口径，必须同步修正文档真值
-   - 优先更新 `operations/` 下的真值文档，不把现行规则写进 `archive/`
+   - 优先更新当前真值文档，不把现行规则继续散写到 dated brief / handoff / checklist 中
 
-## 5. 每次改动后的最小验证
+
+## 7. 每次改动后的最小验证
 
 在项目根目录 `RK3568/` 下执行：
 
@@ -131,21 +156,44 @@ Last Updated: 2026-03-30
 1. 真机链路验证（可用时）
 2. replay 场景验证（半包/粘包/超时至少 1 个）
 
-## 6. 如何处理旧文档
+## 8. 如何处理旧文档
 
 1. 新增主线规则或修改现行规则：
    - 更新当前真值文档
    - 不要把新内容继续写进 `docs/archive/`
 2. 阶段性交接、专项清单、旧方案：
    - 进入 `docs/archive/`
-3. 若改动了规则文档，需同步检查：
-   - `tools/arch_guard.ps1`
+3. dated brief / handoff / checklist / incident / execution log：
+   - 默认不作为主阅读入口
+   - 若仍留在 `docs/operations/`，也应明确标记为历史材料或待归档
 
-## 7. 当前入口结论
+## 8.1 文档新增与维护规则
+
+1. 若内容描述的是**当前仍生效的实现、规则、状态机、配置、验证步骤**：
+   - 优先更新已有真值文档
+   - 不要新建 dated 文档重复描述同一主题
+2. 若内容描述的是**某一轮专项排查、某一天的结论、一次事故、一次交接、一次审查**：
+   - 默认进入 `docs/archive/`
+   - 不应直接放进主阅读链
+3. `docs/operations/` 允许新增的内容应尽量限于：
+   - 当前状态快照
+   - 当前验证手册
+   - 当前配置参考
+   - 少量仍有长期价值的专题参考
+4. 若某份专题文档仍保留在 `docs/operations/`：
+   - 必须显式标注它是 `Topical Reference` 或 `Historical Reference`
+   - 并在文首说明“不是主阅读入口”
+5. 若代码行为已经变化：
+   - 先改真值文档
+   - 再决定是否保留历史材料
+6. 任何新 agent / 新维护者的默认阅读路径，应始终能被 `README.md` 覆盖，不依赖 dated handoff 才能上手
+
+## 9. 当前入口结论
 
 如果你现在只想知道“先看哪一份”，答案是：
 
-1. 改代码前先看 `operations/STATUS_SNAPSHOT.md`
-2. 涉及板端 / UI / 服务日志时再看 `operations/BOARD_PRODUCT_UI_DEPLOYMENT_PLAN_2026-03-24.md`
-3. 涉及配置或服务启动时看 `operations/CONFIG_REFERENCE.md`
-4. 改完后按 `operations/VALIDATION_PLAYBOOK.md` 做最小验证
+1. 改代码前先看 `AGENT_QUICKSTART.md`
+2. 再看 `PROJECT_CONTEXT.md`
+3. 再看 `operations/STATUS_SNAPSHOT.md`
+4. 再看 `architecture/KEY_FLOW_OVERVIEW.md`
+5. 改完后按 `operations/VALIDATION_PLAYBOOK.md` 做最小验证

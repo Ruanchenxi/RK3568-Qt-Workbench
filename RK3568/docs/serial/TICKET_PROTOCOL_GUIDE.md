@@ -99,7 +99,7 @@ Last Updated: 2026-03-09
    - 系统票会进入 `key-cleared`
    - 此时允许再次手动传票
    - 再次从工作台触发“钥匙传票”时，也允许重新进入自动传票链  
-3. 工作台撤销后的系统票生命周期规则已拍板，但当前故意延后，不在传票协议层实现  
+3. 工作台撤销后的系统票生命周期规则当前已由 `cancelTicket` 主链实现；协议层文档不重复展开业务状态机细节，相关真值请看 `docs/architecture/KEY_FLOW_OVERVIEW.md` 与 `docs/operations/STATUS_SNAPSHOT.md`  
 
 ## 7. 当前已验证样本（来自测试工具）
 

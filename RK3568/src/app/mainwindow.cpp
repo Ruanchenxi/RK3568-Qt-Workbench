@@ -187,6 +187,7 @@ void MainWindow::setupPages()
         delete m_logPage;
         m_logPage = nullptr;
     }
+
 }
 
 /**

@@ -20,15 +20,19 @@ public:
 
     bool connectPort(const QString &portName, int baud) override;
     void disconnectPort() override;
+    void setPortSwitchInProgress(bool inProgress) override;
+    void clearVerifiedPort() override;
     KeySessionSnapshot snapshot() const override;
     void execute(const CommandRequest &request) override;
     void transferTicket(const TicketTransferRequest &request) override;
 
 private:
     QVariantList toTaskVariantList(const QList<KeyTaskInfo> &tasks) const;
+    void stampEvent(KeySessionEvent &event) const;
     void emitStateChanged();
 
     KeySerialClient *m_client;
+    int m_bridgeEpoch = 0;
 };
 
 #endif // KEYSESSIONSERVICE_H

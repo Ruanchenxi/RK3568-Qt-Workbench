@@ -110,6 +110,7 @@ KeySessionService::KeySessionService(QObject *parent)
         event.kind = KeySessionEvent::TasksUpdated;
         event.data.insert("count", tasks.size());
         event.data.insert("tasks", toTaskVariantList(tasks));
+        stampEvent(event);
         emit eventOccurred(event);
         emitStateChanged();
     });
@@ -117,6 +118,7 @@ KeySessionService::KeySessionService(QObject *parent)
         KeySessionEvent event;
         event.kind = KeySessionEvent::TaskLogReady;
         event.data = payload;
+        stampEvent(event);
         emit eventOccurred(event);
         emitStateChanged();
     });
@@ -124,6 +126,7 @@ KeySessionService::KeySessionService(QObject *parent)
         KeySessionEvent event;
         event.kind = KeySessionEvent::Ack;
         event.data.insert("ackedCmd", static_cast<int>(ackedCmd));
+        stampEvent(event);
         emit eventOccurred(event);
         emitStateChanged();
     });
@@ -132,6 +135,7 @@ KeySessionService::KeySessionService(QObject *parent)
         event.kind = KeySessionEvent::Nak;
         event.data.insert("origCmd", static_cast<int>(origCmd));
         event.data.insert("errCode", static_cast<int>(errCode));
+        stampEvent(event);
         emit eventOccurred(event);
         emitStateChanged();
     });
@@ -139,6 +143,7 @@ KeySessionService::KeySessionService(QObject *parent)
         KeySessionEvent event;
         event.kind = KeySessionEvent::Timeout;
         event.data.insert("what", what);
+        stampEvent(event);
         emit eventOccurred(event);
         emitStateChanged();
     });
@@ -146,6 +151,7 @@ KeySessionService::KeySessionService(QObject *parent)
         KeySessionEvent event;
         event.kind = KeySessionEvent::Notice;
         event.data.insert("what", what);
+        stampEvent(event);
         emit eventOccurred(event);
     });
     connect(m_client, &KeySerialClient::ticketTransferProgress, this,
@@ -155,17 +161,20 @@ KeySessionService::KeySessionService(QObject *parent)
         event.data.insert("frameIndex", frameIndex);
         event.data.insert("totalFrames", totalFrames);
         event.data.insert("cmd", static_cast<int>(cmd));
+        stampEvent(event);
         emit eventOccurred(event);
     });
     connect(m_client, &KeySerialClient::ticketTransferFinished, this, [this]() {
         KeySessionEvent event;
         event.kind = KeySessionEvent::TicketTransferFinished;
+        stampEvent(event);
         emit eventOccurred(event);
     });
     connect(m_client, &KeySerialClient::ticketTransferFailed, this, [this](const QString &reason) {
         KeySessionEvent event;
         event.kind = KeySessionEvent::TicketTransferFailed;
         event.data.insert("what", reason);
+        stampEvent(event);
         emit eventOccurred(event);
     });
     connect(m_client, &KeySerialClient::logItemEmitted, this, &KeySessionService::logItemEmitted);
@@ -173,23 +182,37 @@ KeySessionService::KeySessionService(QObject *parent)
 
 bool KeySessionService::connectPort(const QString &portName, int baud)
 {
+    ++m_bridgeEpoch;
     return m_client->connectPort(portName, baud);
 }
 
 void KeySessionService::disconnectPort()
 {
+    ++m_bridgeEpoch;
     m_client->disconnectPort();
+}
+
+void KeySessionService::setPortSwitchInProgress(bool inProgress)
+{
+    m_client->setPortSwitchInProgress(inProgress);
+}
+
+void KeySessionService::clearVerifiedPort()
+{
+    m_client->clearVerifiedPort();
 }
 
 KeySessionSnapshot KeySessionService::snapshot() const
 {
     KeySessionSnapshot s;
+    s.bridgeEpoch = m_bridgeEpoch;
     s.connected = m_client->isConnected();
     s.keyPresent = m_client->isKeyPresent();
     s.keyStable = m_client->isKeyStable();
     s.sessionReady = m_client->isSessionReady();
     s.protocolHealthy = m_client->isProtocolHealthy();
     s.protocolConfirmedOnce = m_client->hasProtocolConfirmedOnce();
+    s.commandInFlight = m_client->hasInFlightCommand();
     s.lastBusinessSuccessMs = m_client->lastBusinessSuccessMs();
     s.lastProtocolFailureMs = m_client->lastProtocolFailureMs();
     s.recoveryWindowActive = m_client->recoveryWindowActive();
@@ -290,6 +313,12 @@ QVariantList KeySessionService::toTaskVariantList(const QList<KeyTaskInfo> &task
     return list;
 }
 
+void KeySessionService::stampEvent(KeySessionEvent &event) const
+{
+    event.data.insert(QStringLiteral("bridgeEpoch"), m_bridgeEpoch);
+    event.data.insert(QStringLiteral("portName"), m_client->currentPortName());
+}
+
 void KeySessionService::emitStateChanged()
 {
     const KeySessionSnapshot s = snapshot();
@@ -306,5 +335,6 @@ void KeySessionService::emitStateChanged()
     event.data.insert("lastProtocolFailureMs", s.lastProtocolFailureMs);
     event.data.insert("recoveryWindowActive", s.recoveryWindowActive);
     event.data.insert("portName", s.portName);
+    event.data.insert("bridgeEpoch", s.bridgeEpoch);
     emit eventOccurred(event);
 }

@@ -541,7 +541,7 @@ QPushButton#saveBtn:disabled {
 }</string>
            </property>
            <property name="text">
-            <string>保存并应用</string>
+            <string>保存配置</string>
            </property>
           </widget>
          </item>
