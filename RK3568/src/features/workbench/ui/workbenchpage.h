@@ -40,6 +40,9 @@ public:
     ~WorkbenchPage();
     void requestKeyboardActivation(KeyboardContainer *container, std::function<void(bool)> callback);
 
+public slots:
+    void reloadWorkbench();
+
 protected:
     void showEvent(QShowEvent *event) override; // 页面显示时按需加载（首次或令牌变化）
 
@@ -51,6 +54,7 @@ private:
     bool m_renderProcessTerminated;
     bool m_reloadScheduled;
     bool m_recreatePageOnReload;
+    bool m_pendingBusinessReload;
     QElapsedTimer m_reloadCooldownTimer;
 
     void ensureWebViewInitialized();

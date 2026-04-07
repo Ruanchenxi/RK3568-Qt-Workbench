@@ -1717,6 +1717,7 @@ void KeyManageController::finalizePendingReturnDelete(const QList<KeyTaskDto> &t
                                                  QStringLiteral("return-delete-success"));
                 emit statusMessage(QStringLiteral("回传完成，钥匙任务已清理：%1")
                                        .arg(m_pendingDeletedSystemTicketId));
+                emit workbenchRefreshRequested();
             } else {
                 emit statusMessage(QStringLiteral("钥匙任务已删除"));
             }
@@ -1937,6 +1938,7 @@ void KeyManageController::finalizePendingCancelDelete(const QList<KeyTaskDto> &t
             m_ticketCancelCoordinator->recordDoneWithoutTicket(taskId, QStringLiteral("任务已取消"));
         }
         emit statusMessage(QStringLiteral("撤销任务已完成，钥匙侧任务已清理：%1").arg(taskId));
+        emit workbenchRefreshRequested();
         m_pendingCancelSystemTicketId.clear();
         m_pendingCancelKeyTaskRaw.clear();
         m_pendingCancelSessionId = 0;

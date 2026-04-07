@@ -82,6 +82,7 @@ signals:
     void logRowAppended(const LogItem &item);
     void logTableRefreshRequested();
     void logsCleared();
+    void workbenchRefreshRequested();
 
 private slots:
     void handleSessionEvent(const KeySessionEvent &event);

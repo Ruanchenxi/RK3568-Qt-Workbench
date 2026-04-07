@@ -28,6 +28,7 @@ class SystemPage;
 class LogPage;
 class KeyboardContainer;
 class KeyboardController;
+class ProcessService;
 class QPushButton;
 class QWidget;
 class QShowEvent;
@@ -102,6 +103,7 @@ private:
     LogPage *m_logPage;             ///< 服务日志页面
     KeyboardContainer *m_keyboardContainer; ///< 自定义 QWidget 键盘
     KeyboardController *m_keyboardController; ///< 键盘控制器
+    ProcessService *m_processService; ///< 共享服务治理器，应用启动阶段即触发后台治理
     MainWindowController *m_mainController; ///< 主窗口登录态控制器
 
     // ========== 状态变量 ==========
@@ -132,6 +134,7 @@ private:
 protected:
     void showEvent(QShowEvent *event) override; ///< 显示后按真实窗口装饰再次修正可见区
     void closeEvent(QCloseEvent *event) override; ///< 记录主窗口关闭链路，辅助板端排查异常退出
+    bool event(QEvent *event) override; ///< 触摸事件诊断日志，仅观察不拦截，用于偶发触摸失效问题复现取证
 };
 
 #endif // MAINWINDOW_H

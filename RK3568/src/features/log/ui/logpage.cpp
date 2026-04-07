@@ -7,7 +7,7 @@
 #include "ui_logpage.h"
 
 #include "features/log/application/LogController.h"
-#include "core/ConfigManager.h"
+#include "shared/contracts/IProcessService.h"
 
 #include <QShowEvent>
 #include <QPlainTextEdit>
@@ -28,11 +28,10 @@ void scrollToEnd(QPlainTextEdit *logDisplay)
 }
 }
 
-LogPage::LogPage(QWidget *parent)
+LogPage::LogPage(IProcessService *processService, QWidget *parent)
     : QWidget(parent),
       ui(new Ui::LogPage),
-      m_controller(new LogController(nullptr, this)),
-      m_started(false)
+      m_controller(new LogController(processService, this))
 {
     ui->setupUi(this);
     ui->logDisplay->setLineWrapMode(QPlainTextEdit::WidgetWidth);
@@ -40,52 +39,17 @@ LogPage::LogPage(QWidget *parent)
 
     connect(m_controller, &LogController::logGenerated,
             this, &LogPage::onServiceLogGenerated);
-
-    if (shouldStartControllerOnConstruction()) {
-        ensureStarted();
-    }
 }
 
 LogPage::~LogPage()
 {
-    if (m_controller && m_started)
-    {
-        m_controller->stop();
-    }
     delete ui;
 }
 
 void LogPage::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
-    ensureStarted();
     flushBufferedLogs();
-}
-
-bool LogPage::shouldStartControllerOnConstruction() const
-{
-    bool startImmediately = true;
-#ifdef Q_OS_LINUX
-    const QString startMode = ConfigManager::instance()
-            ->value("service/startMode", QStringLiteral("remote"))
-            .toString()
-            .trimmed()
-            .toLower();
-    if (startMode == QLatin1String("remote")) {
-        startImmediately = false;
-    }
-#endif
-    return startImmediately;
-}
-
-void LogPage::ensureStarted()
-{
-    if (m_started || !m_controller) {
-        return;
-    }
-
-    m_controller->start();
-    m_started = true;
 }
 
 void LogPage::flushBufferedLogs()

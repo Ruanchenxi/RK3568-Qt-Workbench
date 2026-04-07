@@ -97,12 +97,12 @@ LoginPage::LoginPage(QWidget *parent) : QWidget(parent),
 
     setLoginInProgress(false);
     setAccountListLoading(false);
-    setServiceReady(false, QStringLiteral("服务启动中，请稍候..."));
+    setServiceReady(false, QStringLiteral("后台服务启动中，请稍候..."));
     updateAccountRowHighlight();
 
     if (ui->accountLoginDescLabel)
     {
-        ui->accountLoginDescLabel->setText(QStringLiteral("服务启动中，请稍候..."));
+        ui->accountLoginDescLabel->setText(QStringLiteral("后台服务启动中，请稍候..."));
     }
     if (ui->loginFootHint)
     {
@@ -564,7 +564,7 @@ void LoginPage::setServiceReady(bool ready, const QString &message)
     {
         ui->loginFootHint->setText(m_serviceReady
             ? QStringLiteral("支持刷卡直接登录；若无响应，请重新贴卡后再试。")
-            : QStringLiteral("服务启动完成前，暂不开放账号密码登录和刷卡登录。"));
+            : QStringLiteral("后台服务启动完成前，暂不开放账号密码登录和刷卡登录。"));
     }
 
     if (m_cardSource)
@@ -664,8 +664,8 @@ void LoginPage::startServiceReadyProbe()
             const bool timedOut = reply->property("probeTimedOut").toBool();
             setServiceReady(false,
                             timedOut
-                                ? QStringLiteral("服务启动中，请稍候...")
-                                : QStringLiteral("服务启动中，请稍候... 当前账号列表探测未就绪：%1")
+                                ? QStringLiteral("后台服务启动中，请稍候...")
+                                : QStringLiteral("后台服务启动中，请稍候... 当前账号列表探测未就绪：%1")
                                       .arg(reply->errorString()));
             reply->deleteLater();
             return;
@@ -676,7 +676,7 @@ void LoginPage::startServiceReadyProbe()
             const QString bodyText = QString::fromUtf8(responseData).trimmed();
             setServiceReady(false,
                             bodyText.isEmpty()
-                                ? QStringLiteral("服务启动中，请稍候... 当前探测状态 HTTP %1").arg(httpStatus)
+                                ? QStringLiteral("后台服务启动中，请稍候... 当前探测状态 HTTP %1").arg(httpStatus)
                                 : bodyText);
             reply->deleteLater();
             return;

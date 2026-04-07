@@ -93,6 +93,7 @@ WorkbenchPage::WorkbenchPage(QWidget *parent)
       m_renderProcessTerminated(false),
       m_reloadScheduled(false)
       , m_recreatePageOnReload(false)
+      , m_pendingBusinessReload(false)
 {
     ui->setupUi(this);
 }
@@ -296,6 +297,12 @@ void WorkbenchPage::showEvent(QShowEvent *event)
         scheduleWorkbenchReload();
         return;
     }
+    if (m_pendingBusinessReload) {
+        m_pendingBusinessReload = false;
+        loadWorkbench();
+        return;
+    }
+
     if (m_controller->shouldLoadNow()) {
         loadWorkbench();
         return;
@@ -304,6 +311,15 @@ void WorkbenchPage::showEvent(QShowEvent *event)
     if (m_webView) {
         m_webView->show();
         m_webView->update();
+    }
+}
+
+void WorkbenchPage::reloadWorkbench()
+{
+    if (isVisible()) {
+        loadWorkbench();
+    } else {
+        m_pendingBusinessReload = true;
     }
 }
 

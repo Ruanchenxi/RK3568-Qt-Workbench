@@ -268,6 +268,20 @@ QComboBox {
     min-height: 28px;
 }
 
+QComboBox:disabled, QComboBox[readOnlyMuted=&quot;true&quot;] {
+    background-color: #FAFAFA;
+    color: #9AA4AF;
+    border: 1px solid #E8E4DE;
+}
+
+QComboBox:disabled::drop-down, QComboBox[readOnlyMuted=&quot;true&quot;]::drop-down {
+    background: transparent;
+}
+
+QComboBox:disabled QAbstractItemView, QComboBox[readOnlyMuted=&quot;true&quot;] QAbstractItemView {
+    color: #9AA4AF;
+}
+
 QLineEdit:focus, QComboBox:focus {
     border-color: #2E7D32;
 }
@@ -355,6 +369,16 @@ QComboBox QAbstractItemView::item:selected {
     border: 1px solid #E8E4DE;
     border-radius: 10px;
     padding: 14px 18px;
+}
+
+#field5Label[readOnlyMuted=&quot;true&quot;], #field6Label[readOnlyMuted=&quot;true&quot;] {
+    color: #AAB4AE;
+}
+
+#serialFixedHintLabel[readOnlyMuted=&quot;true&quot;] {
+    color: #9AA4AF;
+    background-color: #FAFAFA;
+    border: 1px solid #E8E4DE;
 }
 
 /* 分隔线 */

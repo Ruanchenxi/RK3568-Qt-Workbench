@@ -94,6 +94,9 @@ private slots:
     void onSystemTicketSelectionChanged();
     void onKeyTicketSelectionChanged();
 
+signals:
+    void workbenchRefreshNeeded();
+
 private:
     void initUi();
     void initConnections();

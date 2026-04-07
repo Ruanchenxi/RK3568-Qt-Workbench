@@ -11,6 +11,82 @@
 #include <QCryptographicHash>
 #include <QDebug>
 
+namespace
+{
+QString extractResponseMessage(const QByteArray &responseData)
+{
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(responseData, &parseError);
+    if (doc.isNull() || !doc.isObject())
+    {
+        return QString();
+    }
+
+    const QJsonObject obj = doc.object();
+    const QString msg = obj.value(QStringLiteral("msg")).toString().trimmed();
+    if (!msg.isEmpty())
+    {
+        return msg;
+    }
+
+    const QJsonObject dataObj = obj.value(QStringLiteral("data")).toObject();
+    return dataObj.value(QStringLiteral("msg")).toString().trimmed();
+}
+
+QString normalizePasswordLoginMessage(const QString &rawMessage)
+{
+    const QString message = rawMessage.trimmed();
+    const QString lower = message.toLower();
+
+    if (message.isEmpty()
+        || message.contains(QStringLiteral("密码"))
+        || message.contains(QStringLiteral("账号"))
+        || message.contains(QStringLiteral("用户"))
+        || lower.contains(QStringLiteral("password"))
+        || lower.contains(QStringLiteral("bad credentials"))
+        || lower.contains(QStringLiteral("bad request"))
+        || lower.contains(QStringLiteral("username")))
+    {
+        return QStringLiteral("账号或密码错误，请重新输入");
+    }
+
+    return message;
+}
+
+QString normalizeCardLoginMessage(const QString &rawMessage)
+{
+    const QString message = rawMessage.trimmed();
+    const QString lower = message.toLower();
+
+    if (message.isEmpty()
+        || message.contains(QStringLiteral("卡"))
+        || message.contains(QStringLiteral("账号"))
+        || message.contains(QStringLiteral("用户"))
+        || lower.contains(QStringLiteral("card"))
+        || lower.contains(QStringLiteral("bad credentials"))
+        || lower.contains(QStringLiteral("bad request")))
+    {
+        return QStringLiteral("刷卡登录失败，请确认卡号或联系管理员");
+    }
+
+    return message;
+}
+
+QString serviceUnavailableMessage(bool cardLogin)
+{
+    return cardLogin
+        ? QStringLiteral("刷卡登录服务不可用，请稍后重试")
+        : QStringLiteral("登录服务不可用，请稍后重试");
+}
+
+QString requestTimeoutMessage(bool cardLogin, int timeoutSeconds)
+{
+    return cardLogin
+        ? QStringLiteral("刷卡登录请求超时(%1秒)，请稍后重试").arg(timeoutSeconds)
+        : QStringLiteral("登录请求超时(%1秒)，请稍后重试").arg(timeoutSeconds);
+}
+}
+
 AuthService *AuthService::m_instance = nullptr;
 
 AuthService::AuthService(QObject *parent)
@@ -284,8 +360,20 @@ void AuthService::sendLoginRequest(const QString &userName, const QString &encry
         // 检查网络错误
         if (reply->error() != QNetworkReply::NoError) {
             const bool timeoutAbort = reply->property("timeoutAbort").toBool();
-            QString errorMsg = timeoutAbort ? QString("登录请求超时(%1秒)").arg(ConfigManager::instance()->connectionTimeout())
-                                            : QString("网络错误: %1").arg(reply->errorString());
+            const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            const QByteArray responseData = reply->readAll();
+            QString errorMsg;
+
+            if (timeoutAbort) {
+                errorMsg = requestTimeoutMessage(false, ConfigManager::instance()->connectionTimeout());
+            } else if (httpStatus == 400 || httpStatus == 401 || httpStatus == 403) {
+                errorMsg = normalizePasswordLoginMessage(extractResponseMessage(responseData));
+            } else if (httpStatus >= 500) {
+                errorMsg = QStringLiteral("登录服务异常，请稍后重试");
+            } else {
+                errorMsg = serviceUnavailableMessage(false);
+            }
+
             finishLoginRequest(reply);
             qDebug() << "[AuthService] 登录失败:" << errorMsg;
             emit loginFailed(errorMsg);
@@ -295,8 +383,10 @@ void AuthService::sendLoginRequest(const QString &userName, const QString &encry
         // 检查 HTTP 状态码，避免将网关错误页当作正常 JSON 解析。
         const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (httpStatus < 200 || httpStatus >= 300) {
+            const QString errorMsg = (httpStatus == 400 || httpStatus == 401 || httpStatus == 403)
+                    ? normalizePasswordLoginMessage(extractResponseMessage(reply->readAll()))
+                    : QStringLiteral("登录服务异常，请稍后重试");
             finishLoginRequest(reply);
-            const QString errorMsg = QString("HTTP状态异常: %1").arg(httpStatus);
             qDebug() << "[AuthService] 登录失败:" << errorMsg;
             emit loginFailed(errorMsg);
             return;
@@ -414,9 +504,20 @@ void AuthService::sendCardLoginRequest(const QString &cardNo, const QString &ten
 
         if (reply->error() != QNetworkReply::NoError) {
             const bool timeoutAbort = reply->property("timeoutAbort").toBool();
-            const QString errorMsg = timeoutAbort
-                    ? QString("刷卡登录请求超时(%1秒)").arg(ConfigManager::instance()->connectionTimeout())
-                    : QString("网络错误: %1").arg(reply->errorString());
+            const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            const QByteArray responseData = reply->readAll();
+            QString errorMsg;
+
+            if (timeoutAbort) {
+                errorMsg = requestTimeoutMessage(true, ConfigManager::instance()->connectionTimeout());
+            } else if (httpStatus == 400 || httpStatus == 401 || httpStatus == 403) {
+                errorMsg = normalizeCardLoginMessage(extractResponseMessage(responseData));
+            } else if (httpStatus >= 500) {
+                errorMsg = QStringLiteral("刷卡登录服务异常，请稍后重试");
+            } else {
+                errorMsg = serviceUnavailableMessage(true);
+            }
+
             finishLoginRequest(reply);
             qDebug() << "[AuthService] 刷卡登录失败:" << errorMsg;
             emit loginFailed(errorMsg);
@@ -425,8 +526,10 @@ void AuthService::sendCardLoginRequest(const QString &cardNo, const QString &ten
 
         const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (httpStatus < 200 || httpStatus >= 300) {
+            const QString errorMsg = (httpStatus == 400 || httpStatus == 401 || httpStatus == 403)
+                    ? normalizeCardLoginMessage(extractResponseMessage(reply->readAll()))
+                    : QStringLiteral("刷卡登录服务异常，请稍后重试");
             finishLoginRequest(reply);
-            const QString errorMsg = QString("HTTP状态异常: %1").arg(httpStatus);
             qDebug() << "[AuthService] 刷卡登录失败:" << errorMsg;
             emit loginFailed(errorMsg);
             return;

@@ -338,6 +338,9 @@ void KeyManagePage::initController()
         }
     });
 
+    connect(m_controller, &KeyManageController::workbenchRefreshRequested,
+            this, &KeyManagePage::workbenchRefreshNeeded);
+
     m_controller->start();
 }
 

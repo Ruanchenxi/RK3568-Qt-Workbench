@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QIcon>
 
 namespace
 {
@@ -63,6 +64,11 @@ int main(int argc, char *argv[]) // C++ 标准入口函数
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
 
     QApplication a(argc, argv); // 创建应用对象，负责管理应用级资源和主事件循环
+    const QIcon appIcon(QStringLiteral(":/branding/window_icon.png"));
+    if (!appIcon.isNull())
+    {
+        a.setWindowIcon(appIcon);
+    }
 
     qInfo().noquote()
             << "[input-touch]"
@@ -76,6 +82,10 @@ int main(int argc, char *argv[]) // C++ 标准入口函数
     });
 
     MainWindow w; // 创建主窗口
+    if (!appIcon.isNull())
+    {
+        w.setWindowIcon(appIcon);
+    }
     w.show();     // 显示主窗口到屏幕上
 
     return a.exec(); // 进入事件循环，程序在这里等待用户操作

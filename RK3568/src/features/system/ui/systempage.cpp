@@ -982,19 +982,42 @@ void SystemPage::updateSerialPermissionState()
 
         combo->setEnabled(m_canManageSerialPorts);
         combo->setCursor(m_canManageSerialPorts ? Qt::PointingHandCursor : Qt::ArrowCursor);
+        combo->setProperty("readOnlyMuted", !m_canManageSerialPorts);
         combo->setToolTip(m_canManageSerialPorts
                               ? editableTip
                               : QStringLiteral("仅管理员可修改串口配置"));
+        combo->style()->unpolish(combo);
+        combo->style()->polish(combo);
+        combo->update();
     };
 
     applySerialPermission(ui ? ui->keySerialCombo : nullptr, QStringLiteral("点击选择钥匙串口"));
     applySerialPermission(ui ? ui->cardSerialCombo : nullptr, QStringLiteral("点击选择读卡串口"));
 
+    auto applyMutedLabel = [this](QLabel *label) {
+        if (!label)
+        {
+            return;
+        }
+
+        label->setProperty("readOnlyMuted", !m_canManageSerialPorts);
+        label->style()->unpolish(label);
+        label->style()->polish(label);
+        label->update();
+    };
+
+    applyMutedLabel(ui ? ui->field5Label : nullptr);
+    applyMutedLabel(ui ? ui->field6Label : nullptr);
+
     if (ui && ui->serialFixedHintLabel)
     {
+        ui->serialFixedHintLabel->setProperty("readOnlyMuted", !m_canManageSerialPorts);
         ui->serialFixedHintLabel->setText(m_canManageSerialPorts
                                               ? baseHint
                                               : baseHint + QStringLiteral("\n当前账号仅可查看串口配置，只有管理员可修改钥匙串口和读卡串口。"));
+        ui->serialFixedHintLabel->style()->unpolish(ui->serialFixedHintLabel);
+        ui->serialFixedHintLabel->style()->polish(ui->serialFixedHintLabel);
+        ui->serialFixedHintLabel->update();
     }
 }
 

@@ -19,10 +19,12 @@
 #include "features/log/ui/logpage.h"
 #include "core/ConfigManager.h"
 #include "platform/logging/LogService.h"
+#include "platform/process/ProcessService.h"
 #include <QGuiApplication>
 #include <QPushButton>
 #include <QScreen>
 #include <QCloseEvent>
+#include <QEvent>
 #include <QShowEvent>
 #include <QStyle>
 
@@ -62,6 +64,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
                                           m_logPage(nullptr),
                                           m_keyboardContainer(nullptr),
                                           m_keyboardController(nullptr),
+                                          m_processService(new ProcessService(this)),
                                           m_mainController(new MainWindowController(nullptr, this)),
                                           m_timeTimer(nullptr)
 {
@@ -75,6 +78,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
 
     // 创建登录页面并添加到QStackedWidget，保持 .ui 壳体与真实页面 mixed 替换。
     setupPages();
+    if (m_processService)
+    {
+        m_processService->startAuto();
+    }
     setupCustomKeyboard();
     applyInitialWindowGeometry();
     
@@ -167,6 +174,12 @@ void MainWindow::setupPages()
         m_keyManagePage = nullptr;
     }
 
+    // 回传/撤销完成后刷新工作台
+    if (m_keyManagePage && m_workbenchPage) {
+        connect(m_keyManagePage, &KeyManagePage::workbenchRefreshNeeded,
+                m_workbenchPage, &WorkbenchPage::reloadWorkbench);
+    }
+
     // ========== 创建系统设置页面 ==========
     m_systemPage = new SystemPage(this);
     if (!replacePlaceholderPage(ui->systemPage, m_systemPage, "systemPage"))
@@ -181,7 +194,7 @@ void MainWindow::setupPages()
     }
 
     // ========== 创建服务日志页面 ==========
-    m_logPage = new LogPage(this);
+    m_logPage = new LogPage(m_processService, this);
     if (!replacePlaceholderPage(ui->logPage, m_logPage, "logPage"))
     {
         delete m_logPage;
@@ -381,6 +394,35 @@ void MainWindow::closeEvent(QCloseEvent *event)
     QMainWindow::closeEvent(event);
 }
 
+/**
+ * @brief 触摸事件诊断钩子（只观察不拦截）
+ *
+ * 目的：2026-03 板端偶发触摸失效事件无法稳定复现。本钩子在 MainWindow 级别
+ * 捕获 QTouchEvent 和 QMouseEvent 到达记录，以便下次偶发时通过日志判断：
+ *   1. Qt 层是否收到了 TouchBegin/TouchEnd —— 若完全无日志，说明 xcb/XI2 链路断了
+ *   2. 合成出的鼠标事件是否到达 —— 若只有 Touch 无 Mouse，说明合成失败
+ *   3. 是否存在悬挂 TouchBegin 无 TouchEnd 的情况 —— 说明序列异常
+ *
+ * 本钩子不修改事件、不拦截、不调用 accept/ignore，严格透传给基类处理。
+ */
+bool MainWindow::event(QEvent *event)
+{
+    if (event) {
+        switch (event->type()) {
+        case QEvent::TouchBegin:
+        case QEvent::TouchUpdate:
+        case QEvent::TouchEnd:
+        case QEvent::TouchCancel:
+            LOG_DEBUG("input-touch",
+                      QString("MainWindow 收到触摸事件 type=%1").arg(static_cast<int>(event->type())));
+            break;
+        default:
+            break;
+        }
+    }
+    return QMainWindow::event(event);
+}
+
 QWidget *MainWindow::currentPageWidget() const
 {
     return ui->contentStackedWidget->currentWidget();
@@ -557,18 +599,16 @@ void MainWindow::updateUserDisplay()
     if (loggedIn)
     {
         const QString username = m_mainController->currentUsername();
-        const QString role = m_mainController->currentRole();
-        ui->userNameLabel->setText(username);
-        ui->userInfoLabel->setText(QStringLiteral("当前用户: %1").arg(username));
-        ui->roleLabel->setText(QStringLiteral("角色: %1").arg(role.isEmpty() ? QStringLiteral("已登录") : role));
+        const QString displayName = username.isEmpty() ? QStringLiteral("--") : username;
+        ui->userNameLabel->setText(displayName);
+        ui->userInfoLabel->setText(QStringLiteral("用户：%1").arg(displayName));
         ui->logoutBtn->setEnabled(true);
         ui->logoutBtn->setText("退出");
     }
     else
     {
         ui->userNameLabel->setText("未登录");
-        ui->userInfoLabel->setText(QStringLiteral("当前用户: 游客"));
-        ui->roleLabel->setText(QStringLiteral("角色: 未登录"));
+        ui->userInfoLabel->setText(QStringLiteral("用户：未登录"));
         ui->logoutBtn->setEnabled(true);
         ui->logoutBtn->setText("登录");
     }
@@ -580,7 +620,7 @@ void MainWindow::updateUserDisplay()
  */
 void MainWindow::updateStatusBar()
 {
-    applyReaderStatus(static_cast<int>(CardSerialSource::Idle), QStringLiteral("空闲"));
+    applyReaderStatus(static_cast<int>(CardSerialSource::Idle), QString());
     applyFingerprintStatusDisconnected();
 }
 
@@ -590,28 +630,41 @@ void MainWindow::applyReaderStatus(int status, const QString &message)
     const CardSerialSource::ReaderStatus readerStatus =
         static_cast<CardSerialSource::ReaderStatus>(status);
 
+    if (ui->cardStatusWidget)
+    {
+        ui->cardStatusWidget->setToolTip(detail);
+    }
+    if (ui->cardStatusLabel)
+    {
+        ui->cardStatusLabel->setToolTip(detail);
+    }
+    if (ui->cardStatusDot)
+    {
+        ui->cardStatusDot->setToolTip(detail);
+    }
+
     switch (readerStatus)
     {
     case CardSerialSource::Ready:
         setStatusDot(ui->cardStatusDot, QStringLiteral("#2E7D32"));
-        ui->cardStatusLabel->setText(QStringLiteral("读卡器状态：%1").arg(detail.isEmpty() ? QStringLiteral("就绪") : detail));
+        ui->cardStatusLabel->setText(QStringLiteral("刷卡登录：可用"));
         break;
     case CardSerialSource::Detecting:
         setStatusDot(ui->cardStatusDot, QStringLiteral("#F9A825"));
-        ui->cardStatusLabel->setText(QStringLiteral("读卡器状态：%1").arg(detail.isEmpty() ? QStringLiteral("检测中") : detail));
+        ui->cardStatusLabel->setText(QStringLiteral("刷卡登录：检测中"));
         break;
     case CardSerialSource::Error:
         setStatusDot(ui->cardStatusDot, QStringLiteral("#D84315"));
-        ui->cardStatusLabel->setText(QStringLiteral("读卡器状态：%1").arg(detail.isEmpty() ? QStringLiteral("异常") : detail));
+        ui->cardStatusLabel->setText(QStringLiteral("刷卡登录：异常"));
         break;
     case CardSerialSource::Unconfigured:
         setNeutralStatusDot(ui->cardStatusDot);
-        ui->cardStatusLabel->setText(QStringLiteral("读卡器状态：%1").arg(detail.isEmpty() ? QStringLiteral("未配置串口") : detail));
+        ui->cardStatusLabel->setText(QStringLiteral("刷卡登录：不可用"));
         break;
     case CardSerialSource::Idle:
     default:
         setNeutralStatusDot(ui->cardStatusDot);
-        ui->cardStatusLabel->setText(QStringLiteral("读卡器状态：%1").arg(detail.isEmpty() ? QStringLiteral("空闲") : detail));
+        ui->cardStatusLabel->setText(QStringLiteral("刷卡登录：不可用"));
         break;
     }
 }
