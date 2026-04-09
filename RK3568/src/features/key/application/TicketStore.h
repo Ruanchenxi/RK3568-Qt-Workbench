@@ -29,6 +29,8 @@ public:
     bool updateTransferState(const QString &taskId,
                              const QString &state,
                              const QString &lastError = QString());
+    bool updateTransferTriggerSource(const QString &taskId,
+                                     const QString &source);
     bool markKeyTaskDeleted(const QString &taskId);
     bool updateReturnState(const QString &taskId,
                            const QString &state,

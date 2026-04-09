@@ -127,6 +127,7 @@ private:
     void populateSystemTicketTable(const QList<SystemTicketDto> &tickets);
     void updateSelectedSystemTicketCard(const SystemTicketDto &ticket);
     void populateKeyTicketTable(const QList<KeyTaskDto> &tasks);
+    void updateAdminButtons();
 
     void updateStatusBar(const QString &message);
 
@@ -134,6 +135,7 @@ private:
     KeyManageController *m_controller;
     bool m_expertMode;
     bool m_showHex;
+    bool m_isAdmin = false;
     QTimer *m_uiFlushTimer;
     QList<LogItem> m_pendingSerialLogs;
     QList<KeyTaskDto> m_latestKeyTasks;

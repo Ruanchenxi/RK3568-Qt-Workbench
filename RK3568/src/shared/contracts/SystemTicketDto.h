@@ -18,6 +18,7 @@ struct SystemTicketDto
     QString createTime;
     QString planTime;
     QString source;
+    QString transferTriggerSource;
     QString transferState;
     QString lastError;
     QString returnState;

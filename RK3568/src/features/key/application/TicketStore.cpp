@@ -47,6 +47,7 @@ static QJsonObject dtoToJson(const SystemTicketDto &dto)
     obj.insert(QStringLiteral("createTime"), dto.createTime);
     obj.insert(QStringLiteral("planTime"), dto.planTime);
     obj.insert(QStringLiteral("source"), dto.source);
+    obj.insert(QStringLiteral("transferTriggerSource"), dto.transferTriggerSource);
     obj.insert(QStringLiteral("transferState"), dto.transferState);
     obj.insert(QStringLiteral("lastError"), dto.lastError);
     obj.insert(QStringLiteral("returnState"), dto.returnState);
@@ -80,6 +81,7 @@ static SystemTicketDto dtoFromJson(const QJsonObject &obj)
     dto.createTime = obj.value(QStringLiteral("createTime")).toString().trimmed();
     dto.planTime = obj.value(QStringLiteral("planTime")).toString().trimmed();
     dto.source = obj.value(QStringLiteral("source")).toString().trimmed();
+    dto.transferTriggerSource = obj.value(QStringLiteral("transferTriggerSource")).toString().trimmed();
     dto.transferState = obj.value(QStringLiteral("transferState")).toString().trimmed();
     dto.lastError = obj.value(QStringLiteral("lastError")).toString().trimmed();
     dto.returnState = obj.value(QStringLiteral("returnState")).toString().trimmed();
@@ -213,8 +215,10 @@ bool TicketStore::ingestOrphanTicket(const QString &taskId, const QString &resid
     dto.ticketNo = taskId;
     dto.taskName = QStringLiteral("orphan-%1").arg(taskId);
     dto.source = QStringLiteral("orphan-recovery");
-    dto.transferState = QStringLiteral("success");
-    dto.returnState = QStringLiteral("idle");
+    dto.transferTriggerSource = QStringLiteral("orphan");
+    dto.transferState = QStringLiteral("orphan-recovered");
+    dto.returnState = QStringLiteral("manual-required");
+    dto.returnError = QStringLiteral("发现钥匙中的未知任务，请人工确认来源后再处理");
     dto.cancelState = QStringLiteral("none");
     dto.residentSlotId = residentSlotId;
     dto.wasInKey = true;
@@ -258,6 +262,7 @@ bool TicketStore::buildDto(const QByteArray &jsonBytes,
     dto.planTime = ticketObj.value("planTime").toString();
     dto.ticketNo = buildTicketNo(dto.taskName);
     dto.source = QStringLiteral("workbench-http");
+    dto.transferTriggerSource = QStringLiteral("manual");
     dto.transferState = QStringLiteral("received");
     dto.lastError.clear();
     dto.returnState = QStringLiteral("idle");
@@ -302,6 +307,7 @@ bool TicketStore::ingestJson(const QByteArray &jsonBytes,
             }
             // 保留已有的发送状态，避免同一 taskId 被新的 HTTP JSON 覆盖成 received。
             dto.transferState = m_tickets[i].transferState;
+            dto.transferTriggerSource = m_tickets[i].transferTriggerSource;
             dto.lastError = m_tickets[i].lastError;
             dto.returnState = m_tickets[i].returnState;
             dto.returnError = m_tickets[i].returnError;
@@ -353,6 +359,30 @@ bool TicketStore::updateTransferState(const QString &taskId,
                                oldState,
                                state,
                                lastError.isEmpty() ? QStringLiteral("<none>") : lastError);
+            saveToDisk();
+            emit ticketsChanged(m_tickets);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool TicketStore::updateTransferTriggerSource(const QString &taskId, const QString &source)
+{
+    const QString normalized = source.trimmed();
+    if (normalized.isEmpty()) {
+        return false;
+    }
+
+    for (int i = 0; i < m_tickets.size(); ++i) {
+        if (m_tickets[i].taskId == taskId) {
+            if (m_tickets[i].transferTriggerSource == normalized) {
+                return true;
+            }
+            m_tickets[i].transferTriggerSource = normalized;
+            qInfo().noquote()
+                    << QStringLiteral("[TicketStore] updateTransferTriggerSource taskId=%1 source=%2")
+                          .arg(taskId, normalized);
             saveToDisk();
             emit ticketsChanged(m_tickets);
             return true;

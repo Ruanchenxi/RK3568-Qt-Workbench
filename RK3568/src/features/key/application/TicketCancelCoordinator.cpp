@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
@@ -183,15 +184,26 @@ void TicketCancelCoordinator::loadRecords()
         return;
     }
 
+    int expired = 0;
     const QJsonArray array = doc.array();
     for (const QJsonValue &value : array) {
         if (!value.isObject()) {
             continue;
         }
         const CancelRecord record = fromJsonObject(value.toObject());
-        if (record.valid) {
-            m_records.insert(record.taskId, record);
+        if (!record.valid) {
+            continue;
         }
+        if (record.cancelState == QLatin1String("cancel-done")
+                && record.cancelRequestedAt.isValid()
+                && record.cancelRequestedAt.daysTo(QDateTime::currentDateTime()) > 7) {
+            ++expired;
+            continue;
+        }
+        m_records.insert(record.taskId, record);
+    }
+    if (expired > 0) {
+        saveRecords();
     }
 }
 

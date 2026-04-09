@@ -19,11 +19,13 @@
 #include <QHideEvent>
 #include <QHeaderView>
 #include <QPalette>
+#include <QSignalBlocker>
 #include <QShowEvent>
 #include <QStringList>
 #include <QTableWidgetItem>
 #include <QTimer>
 
+#include "core/AppContext.h"
 #include "core/ConfigManager.h"
 #include "platform/logging/LogService.h"
 
@@ -301,6 +303,18 @@ void KeyManagePage::initConnections()
     connect(ui->btnClearHttpClient, &QPushButton::clicked, this, &KeyManagePage::onClearHttpClient);
     connect(ui->btnClearHttpServer, &QPushButton::clicked, this, &KeyManagePage::onClearHttpServer);
     connect(m_uiFlushTimer, &QTimer::timeout, this, &KeyManagePage::flushPendingUiRefreshes);
+
+    connect(AppContext::instance(), &AppContext::userLoggedIn, this, [this](const UserInfo &user) {
+        m_isAdmin = user.role.contains(QStringLiteral("admin"), Qt::CaseInsensitive);
+        updateAdminButtons();
+    });
+    connect(AppContext::instance(), &AppContext::userLoggedOut, this, [this]() {
+        m_isAdmin = false;
+        updateAdminButtons();
+    });
+    // 初始化：页面构造时若已登录则读取当前角色
+    m_isAdmin = AppContext::instance()->currentUser().role.contains(
+            QStringLiteral("admin"), Qt::CaseInsensitive);
 }
 
 void KeyManagePage::initController()
@@ -627,6 +641,40 @@ void KeyManagePage::onKeyTicketSelectionChanged()
 {
     const int row = ui->keyTicketTable->currentRow();
     m_controller->onKeyTaskSelected(row);
+
+    if (row < 0 || row >= m_latestKeyTasks.size()) {
+        return;
+    }
+
+    const QString selectedTaskId = rawTaskIdToDecimalString(m_latestKeyTasks.at(row).taskId);
+    if (selectedTaskId.isEmpty()) {
+        return;
+    }
+
+    int matchedSystemRow = -1;
+    for (int i = 0; i < ui->systemTicketTable->rowCount(); ++i) {
+        QTableWidgetItem *noItem = ui->systemTicketTable->item(i, 0);
+        if (!noItem) {
+            continue;
+        }
+        if (noItem->data(Qt::UserRole).toString() == selectedTaskId) {
+            matchedSystemRow = i;
+            break;
+        }
+    }
+
+    if (matchedSystemRow < 0) {
+        return;
+    }
+
+    if (ui->systemTicketTable->currentRow() == matchedSystemRow) {
+        m_controller->onSystemTicketSelected(matchedSystemRow);
+        return;
+    }
+
+    const QSignalBlocker blocker(ui->systemTicketTable);
+    ui->systemTicketTable->selectRow(matchedSystemRow);
+    m_controller->onSystemTicketSelected(matchedSystemRow);
 }
 
 // ====================================================================
@@ -844,31 +892,30 @@ void KeyManagePage::updateSelectedSystemTicketCard(const SystemTicketDto &ticket
     const bool hasSelectedKeyTask = findKeyTaskStatusForTicket(ticket.taskId, &keyTaskStatus);
     QString manualReturnBlockedReason;
     const bool canManualReturn = m_controller->canStartManualReturn(ticket.taskId, &manualReturnBlockedReason);
-    ui->btnReturnTicket->setEnabled(canManualReturn);
+    ui->btnReturnTicket->setEnabled(canManualReturn && m_isAdmin);
 
-    if (ticket.returnState == QLatin1String("return-failed")) {
-        ui->lblReturnHint->setText(QStringLiteral("自动回传失败，可先读取钥匙票列表，再手动点击“回传(重试)”"));
-    } else if (ticket.returnState == QLatin1String("return-interrupted-retryable")) {
-        ui->lblReturnHint->setText(QStringLiteral("当前回传链已中断，等待钥匙重新放稳后自动恢复；必要时也可手动重试"));
-    } else if (ticket.returnState == QLatin1String("manual-required")
-               || ticket.returnState == QLatin1String("upload_uncertain")) {
-        ui->lblReturnHint->setText(QStringLiteral("当前回传结果需要人工确认，请先查看 HTTP 客户端报文与钥匙状态再决定下一步"));
-    } else if (isReturnInFlightState(ticket.returnState)) {
-        ui->lblReturnHint->setText(QStringLiteral("回传进行中，请等待当前回传链完成"));
-    } else if (isReturnCleanupState(ticket.returnState)
-               || ticket.returnState == QLatin1String("return-delete-success")) {
-        ui->lblReturnHint->setText(QStringLiteral("该任务已进入回传成功后的清理阶段，不再允许重复手动回传"));
-    } else if (ticket.transferState == QLatin1String("success") && !hasSelectedKeyTask) {
-        ui->lblReturnHint->setText(QStringLiteral("当前未在钥匙票列表中定位到该任务，请先读取钥匙票列表后再确认是否回传"));
-    } else if (ticket.transferState == QLatin1String("success") && keyTaskStatus != 0x02) {
-        ui->lblReturnHint->setText(QStringLiteral("当前选中任务在钥匙中尚未完成，完成后可独立回传；其他任务不影响本任务回传"));
-    } else if (canManualReturn) {
-        ui->lblReturnHint->setText(QStringLiteral("该任务已完成，可独立手动回传；若自动链未触发，可先读取钥匙票列表再执行"));
-    } else if (ticket.transferState == QLatin1String("success") && !manualReturnBlockedReason.trimmed().isEmpty()) {
-        ui->lblReturnHint->setText(manualReturnBlockedReason);
-    } else {
-        ui->lblReturnHint->setText(QStringLiteral("回传按任务独立触发；当前任务完成后可自动或手动回传；接口未配置时不会上传"));
+    if (ticket.returnState == QLatin1String("return-delete-failed")) {
+        if (!ticket.returnError.trimmed().isEmpty()) {
+            ui->lblReturnHint->setText(QStringLiteral("钥匙删除验证失败：%1").arg(ticket.returnError));
+        } else {
+            ui->lblReturnHint->setText(QStringLiteral("钥匙删除验证失败，请先确认钥匙状态后再决定是否手动重试"));
+        }
+        return;
     }
+    if (ticket.transferState == QLatin1String("success") && keyTaskStatus != 0x02) {
+        ui->lblReturnHint->setText(QStringLiteral("当前选中任务在钥匙中尚未完成，完成后才允许回传"));
+        return;
+    }
+    if (canManualReturn) {
+        ui->lblReturnHint->setText(QStringLiteral("当前选中任务已完成，可执行手动回传；其他未完成任务不影响本任务回传"));
+        return;
+    }
+    if (ticket.transferState == QLatin1String("success") && !manualReturnBlockedReason.trimmed().isEmpty()) {
+        ui->lblReturnHint->setText(manualReturnBlockedReason);
+        return;
+    }
+
+    ui->lblReturnHint->setText(QStringLiteral("手动回传仅要求当前选中任务完成；接口未配置时不会上传"));
 }
 
 void KeyManagePage::populateKeyTicketTable(const QList<KeyTaskDto> &tasks)
@@ -1146,6 +1193,8 @@ QString KeyManagePage::ticketStateText(const QString &state)
         return QStringLiteral("正在对账确认钥匙任务是否已删除");
     if (state == QLatin1String("return-delete-success"))
         return QStringLiteral("已完成回传并清理钥匙任务");
+    if (state == QLatin1String("return-delete-failed"))
+        return QStringLiteral("钥匙删除验证失败，需人工处理");
     if (state == QLatin1String("return-success"))
         return QStringLiteral("已回传到系统，并准备清理钥匙任务");
     if (state == QLatin1String("return-interrupted-retryable"))
@@ -1160,6 +1209,8 @@ QString KeyManagePage::ticketStateText(const QString &state)
         return QStringLiteral("主程序已接收，尚未开始传票");
     if (state == QLatin1String("auto-pending"))
         return QStringLiteral("等待自动传票（钥匙/握手未就绪）");
+    if (state == QLatin1String("orphan-recovered"))
+        return QStringLiteral("发现钥匙中的未知任务，待人工确认");
     if (state == QLatin1String("sending"))
         return QStringLiteral("正在传票到钥匙");
     if (state == QLatin1String("success"))
@@ -1200,6 +1251,12 @@ QString KeyManagePage::ticketStateDescription(const SystemTicketDto &ticket)
     if (ticket.returnState == QLatin1String("return-delete-success")) {
         return QStringLiteral("主程序已完成回传上传，并已清理钥匙中的已完成任务");
     }
+    if (ticket.returnState == QLatin1String("return-delete-failed")) {
+        if (!ticket.returnError.trimmed().isEmpty()) {
+            return QStringLiteral("钥匙删除验证失败：%1").arg(ticket.returnError);
+        }
+        return QStringLiteral("钥匙删除验证失败，需人工处理或稍后手动重试");
+    }
     if (ticket.returnState == QLatin1String("return-success")) {
         return QStringLiteral("主程序已完成回传上传，钥匙任务将进入清理流程");
     }
@@ -1227,6 +1284,9 @@ QString KeyManagePage::ticketStateDescription(const SystemTicketDto &ticket)
     if (ticket.transferState == QLatin1String("auto-pending")) {
         return QStringLiteral("主程序已接收JSON，等待串口连接和钥匙就绪后自动传票");
     }
+    if (ticket.transferState == QLatin1String("orphan-recovered")) {
+        return QStringLiteral("该任务来自钥匙侧孤儿恢复，当前不会自动回传或自动删除，请先人工确认来源");
+    }
     if (ticket.transferState == QLatin1String("sending")) {
         return QStringLiteral("主程序已开始向钥匙发送传票");
     }
@@ -1248,6 +1308,17 @@ QString KeyManagePage::ticketStateDescription(const SystemTicketDto &ticket)
 QString KeyManagePage::ticketPositionText(const QString &ticketNo, const QString &taskName)
 {
     return extractPositionFromTaskName(ticketNo, taskName);
+}
+
+void KeyManagePage::updateAdminButtons()
+{
+    ui->btnTransferTicket->setEnabled(m_isAdmin);
+    ui->btnDeleteTicket->setEnabled(m_isAdmin);
+    // btnReturnTicket 的可用性由 updateSelectedSystemTicketCard 综合判断（需同时满足 canManualReturn && m_isAdmin）
+    // 这里只处理非管理员时强制置灰；管理员时交给票据选中逻辑决定
+    if (!m_isAdmin) {
+        ui->btnReturnTicket->setEnabled(false);
+    }
 }
 
 void KeyManagePage::updateStatusBar(const QString &message)

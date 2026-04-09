@@ -392,7 +392,7 @@ QFrame#logShellDetailCard {
     <item>
      <widget class="QStackedWidget" name="contentStackedWidget">
       <property name="currentIndex">
-       <number>0</number>
+       <number>1</number>
       </property>
       <widget class="QWidget" name="loginPage">
        <layout class="QVBoxLayout" name="loginPageLayout">
@@ -1333,7 +1333,7 @@ QFrame#logShellDetailCard {
       <property name="minimumSize">
        <size>
         <width>0</width>
-        <height>52</height>
+        <height>51</height>
        </size>
       </property>
       <property name="maximumSize">
@@ -1408,7 +1408,7 @@ QFrame#logShellDetailCard {
         </widget>
        </item>
        <item>
-       <widget class="QLabel" name="userInfoLabel">
+        <widget class="QLabel" name="userInfoLabel">
          <property name="text">
           <string>用户：未登录</string>
          </property>

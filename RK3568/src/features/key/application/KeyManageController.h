@@ -21,6 +21,7 @@
 #include "shared/contracts/SystemTicketDto.h"
 #include "features/key/application/SerialLogManager.h"
 
+class QNetworkAccessManager;
 class TicketStore;
 class TicketIngressService;
 class TicketReturnHttpClient;
@@ -128,6 +129,8 @@ private:
     void clearActiveReturnContext(bool clearHandshakeOnly = false);
     void markReturnDeletePending(const QString &taskId, const QByteArray &taskIdRaw);
     void finalizePendingReturnDelete(const QList<KeyTaskDto> &tasks);
+    bool retryPendingReturnDelete(const QString &reason);
+    void callTermination(const QString &taskId);
     bool canProcessCancelNow(QString *blockedReason = nullptr) const;
     void schedulePendingCancelReconcile(const QString &reason = QString(), int delayMs = 300);
     void tryProcessPendingCancelTasks(const QList<KeyTaskDto> &tasks);
@@ -140,6 +143,9 @@ private:
     QByteArray findKeyTaskIdRaw(const QString &taskId, quint8 *status = nullptr) const;
     static QString taskIdFromRaw(const QByteArray &taskIdRaw);
     bool taskExistsInList(const QList<KeyTaskDto> &tasks, const QString &taskId) const;
+    bool hasBlockingIncompleteKeyTask(const QList<KeyTaskDto> &tasks,
+                                      QString *blockingTaskId = nullptr,
+                                      const QByteArray &excludeTaskIdRaw = QByteArray()) const;
     bool startDirectWorkbenchTransfer(const QString &taskId,
                                       const QByteArray &jsonBytes,
                                       int expectedSessionId,
@@ -160,6 +166,7 @@ private:
     TicketReturnHttpClient *m_ticketReturnClient;
     KeyProvisioningService *m_keyProvisioning;
     TicketCancelCoordinator *m_ticketCancelCoordinator;
+    QNetworkAccessManager *m_terminationNetwork;
     int m_nextOpId;
     QString m_selectedSystemTicketId;
     QByteArray m_selectedKeyTaskRaw;
@@ -174,12 +181,15 @@ private:
     QString m_pendingDeletedSystemTicketId;
     QByteArray m_pendingDeletedKeyTaskRaw;
     bool m_pendingDeleteAllowsRetransfer = false;
+    int m_pendingDeleteRetryCount = 0;
     QString m_pendingCancelSystemTicketId;
     QByteArray m_pendingCancelKeyTaskRaw;
     int m_keySessionId = 0;
     int m_keySessionSeed = 0;
     int m_activeTransferSessionId = 0;
     int m_activeReturnSessionId = 0;
+    enum class DeleteOrigin { None, ManualDelete, AutoReturnCleanup };
+    DeleteOrigin m_pendingDeleteOrigin = DeleteOrigin::None;
     int m_pendingDeleteSessionId = 0;
     int m_pendingCancelSessionId = 0;
     int m_autoQuerySessionId = 0;
