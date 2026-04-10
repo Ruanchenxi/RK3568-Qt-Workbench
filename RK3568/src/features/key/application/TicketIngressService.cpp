@@ -2,6 +2,7 @@
 
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QTimer>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -94,6 +95,20 @@ void TicketIngressService::onDisconnected()
     if (!sock)
         return;
     m_buffers.remove(sock);
+
+    // 客户端主动断线时，清理挂起的延迟响应（定时器停掉避免访问已销毁 socket）
+    for (auto it = m_deferredRequests.begin(); it != m_deferredRequests.end(); ) {
+        if (it->socket == sock) {
+            if (it->timer) {
+                it->timer->stop();
+                it->timer->deleteLater();
+            }
+            it = m_deferredRequests.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
     sock->deleteLater();
 }
 
@@ -287,6 +302,22 @@ void TicketIngressService::tryProcessRequest(QTcpSocket *socket)
         emit jsonReceived(body, savedPath);
     }
 
+    // ── 延迟响应：挂起 socket 直到串口 + Q_TASK 确认钥匙中有此任务 ──
+    if (result.accepted && result.deferred && !result.taskId.trimmed().isEmpty()) {
+        const QString tid = result.taskId.trimmed();
+        auto *timer = new QTimer(this);
+        timer->setSingleShot(true);
+        connect(timer, &QTimer::timeout, this, [this, tid]() {
+            expireDeferredRequest(tid);
+        });
+        m_deferredRequests.insert(tid, DeferredRequest{socket, timer});
+        timer->start(8000);
+        emit httpServerLogAppended(QString::fromUtf8(
+            "[HTTP-INGRESS] taskId=%1 socket held, waiting for serial confirm (8 s timeout)")
+            .arg(tid));
+        return;
+    }
+
     sendResponse(socket, statusCode, statusText,
                  buildJsonResponseBody(result.accepted,
                                        result.message.isEmpty()
@@ -352,4 +383,62 @@ QString TicketIngressService::saveBodyToFile(const QByteArray &body) const
         f.close();
     }
     return filePath;
+}
+
+void TicketIngressService::completeDeferredResponse(const QString &taskId,
+                                                    bool success,
+                                                    const QString &message)
+{
+    auto it = m_deferredRequests.find(taskId);
+    if (it == m_deferredRequests.end())
+        return;
+
+    DeferredRequest req = it.value();
+    m_deferredRequests.erase(it);
+
+    if (req.timer) {
+        req.timer->stop();
+        req.timer->deleteLater();
+    }
+
+    if (!req.socket || req.socket->state() != QAbstractSocket::ConnectedState)
+        return;
+
+    const QString msg = message.isEmpty()
+            ? (success ? QStringLiteral("传票成功，已确认钥匙中存在任务")
+                       : QStringLiteral("传票失败"))
+            : message;
+
+    emit httpServerLogAppended(QString::fromUtf8(
+        "[HTTP-INGRESS] deferred response taskId=%1 success=%2 msg=%3")
+        .arg(taskId,
+             success ? QStringLiteral("true") : QStringLiteral("false"),
+             msg));
+
+    sendResponse(req.socket, 200, QByteArrayLiteral("OK"),
+                 buildJsonResponseBody(success, msg, taskId, 200));
+}
+
+void TicketIngressService::expireDeferredRequest(const QString &taskId)
+{
+    auto it = m_deferredRequests.find(taskId);
+    if (it == m_deferredRequests.end())
+        return;
+
+    DeferredRequest req = it.value();
+    m_deferredRequests.erase(it);
+
+    if (req.timer) {
+        req.timer->stop();
+        req.timer->deleteLater();
+    }
+
+    emit httpServerLogAppended(QString::fromUtf8(
+        "[HTTP-INGRESS] deferred request expired taskId=%1").arg(taskId));
+
+    if (req.socket && req.socket->state() == QAbstractSocket::ConnectedState) {
+        const QString msg = QStringLiteral("传票确认超时（8秒内未收到钥匙确认），请检查钥匙状态后重试");
+        sendResponse(req.socket, 200, QByteArrayLiteral("OK"),
+                     buildJsonResponseBody(false, msg, taskId, 200));
+    }
 }

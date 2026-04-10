@@ -9,6 +9,7 @@
 #include <QObject>
 #include <QHash>
 #include <QString>
+#include <QTimer>
 
 class QTcpServer;
 class QTcpSocket;
@@ -20,6 +21,7 @@ public:
     struct IngressResult
     {
         bool accepted = false;
+        bool deferred = false;   // true：socket 挂起，等 completeDeferredResponse() 回包
         int statusCode = 400;
         QString message;
         QString taskId;
@@ -37,6 +39,9 @@ public:
     void setIngressHandler(IngressHandler handler);
     void setCancelHandler(CancelHandler handler);
 
+    // 串口确认后回包给挂起的 socket；success=false 时立即返回失败
+    void completeDeferredResponse(const QString &taskId, bool success, const QString &message);
+
 signals:
     void httpServerLogAppended(const QString &text);
     void jsonReceived(const QByteArray &jsonBytes, const QString &savedPath);
@@ -47,6 +52,11 @@ private slots:
     void onDisconnected();
 
 private:
+    struct DeferredRequest {
+        QTcpSocket *socket = nullptr;
+        QTimer     *timer  = nullptr;
+    };
+
     void tryProcessRequest(QTcpSocket *socket);
     void sendResponse(QTcpSocket *socket, int statusCode,
                       const QByteArray &statusText,
@@ -57,9 +67,12 @@ private:
                                      const QString &taskId = QString(),
                                      int statusCode = 200) const;
     QString saveBodyToFile(const QByteArray &body) const;
+    // 超时触发，向工作台返回传票确认超时
+    void expireDeferredRequest(const QString &taskId);
 
     QTcpServer *m_server;
     QHash<QTcpSocket *, QByteArray> m_buffers;
+    QHash<QString, DeferredRequest> m_deferredRequests;  // taskId → 挂起的 socket
     QString m_lastError;
     QString m_listenHost;
     quint16 m_listenPort = 0;

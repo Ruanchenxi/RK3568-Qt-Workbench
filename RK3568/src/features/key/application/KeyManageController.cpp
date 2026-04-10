@@ -327,9 +327,10 @@ KeyManageController::KeyManageController(IKeySessionService *session,
             return result;
         }
 
-        // 传票已开始异步发送，立即返回
-        // TicketTransferFinished/TicketTransferFailed 事件处理器负责更新状态并释放事务锁
+        // 传票已开始异步发送，挂起 socket 等待串口 + Q_TASK 确认
+        // TicketTransferFinished/TicketTransferFailed 事件处理器负责调用 completeDeferredResponse
         result.accepted = true;
+        result.deferred = true;
         result.statusCode = 200;
         result.message = QStringLiteral("传票请求已开始发送");
         result.taskId = taskId;
@@ -1297,6 +1298,9 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
             if (wasHttpTransfer) {
                 clearHttpTransferTransaction(false);
             }
+            m_ticketIngress->completeDeferredResponse(
+                failedTaskId, false,
+                QStringLiteral("传票失败：底层命令仍在途，请稍后重试"));
             emit statusMessage(QStringLiteral("人工传票失败：底层命令仍在途，系统不会自动补发，请手动重试：%1")
                                    .arg(failedTaskId));
             break;
@@ -1310,6 +1314,9 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
         if (wasHttpTransfer) {
             clearHttpTransferTransaction(false);
         }
+        m_ticketIngress->completeDeferredResponse(
+            failedTaskId, false,
+            QStringLiteral("传票失败：%1").arg(what.isEmpty() ? QStringLiteral("串口传输错误") : what));
         emit statusMessage(QStringLiteral("传票发送失败：%1").arg(what));
         break;
     }
@@ -2180,6 +2187,11 @@ void KeyManageController::reconcileSystemTicketsFromKeyTasks(const QList<KeyTask
                 && ticket.cancelState != QLatin1String("none")) {
             continue;
         }
+
+        // Q_TASK 证实此任务在钥匙中 → 回包给挂起的 socket（不管当前 transferState 是否已是 success）
+        m_ticketIngress->completeDeferredResponse(
+            taskId, true,
+            QStringLiteral("传票成功，已确认任务存在于钥匙中"));
 
         const bool needsReconcile = ticket.transferState == QLatin1String("received")
                 || ticket.transferState == QLatin1String("auto-pending")
