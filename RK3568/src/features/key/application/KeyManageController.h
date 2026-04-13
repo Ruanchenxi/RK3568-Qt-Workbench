@@ -12,6 +12,7 @@
 
 #include <QObject>
 #include <QList>
+#include <QSet>
 #include <QTimer>
 #include <QVariantMap>
 #include <QVariantList>
@@ -131,6 +132,8 @@ private:
     void finalizePendingReturnDelete(const QList<KeyTaskDto> &tasks);
     bool retryPendingReturnDelete(const QString &reason);
     void callTermination(const QString &taskId);
+    void callTerminationThenRemove(const QString &taskId);
+    bool isKeyPresenceFresh(const SystemTicketDto &ticket) const;
     bool canProcessCancelNow(QString *blockedReason = nullptr) const;
     void schedulePendingCancelReconcile(const QString &reason = QString(), int delayMs = 300);
     void tryProcessPendingCancelTasks(const QList<KeyTaskDto> &tasks);
@@ -212,6 +215,10 @@ private:
     bool m_lastReadyState = false;
     QStringList m_httpClientLogLines;
     QStringList m_httpServerLogLines;
+    // 运行时追踪正在途的 termination HTTP 请求，区别于磁盘持久化的 adminDeleteStage
+    QSet<QString> m_terminationInFlightTaskIds;
+    // P2：最近一次可信 Q_TASK 完成时的毫秒时间戳（0 = 本次会话尚未跑过 Q_TASK）
+    qint64 m_lastQueryTasksAtMs = 0;
 };
 
 #endif // KEYMANAGECONTROLLER_H

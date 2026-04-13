@@ -56,6 +56,7 @@ private:
     bool m_recreatePageOnReload;
     bool m_pendingBusinessReload;
     QElapsedTimer m_reloadCooldownTimer;
+    int m_reloadAttemptCount; // 渲染恢复重试计数，超过上限后停止自动恢复
 
     void ensureWebViewInitialized();
     void initWebView();   // 初始化 WebView

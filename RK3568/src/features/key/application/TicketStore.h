@@ -45,6 +45,10 @@ public:
                               const QDateTime &cancelRequestedAt = QDateTime(),
                               bool wasInKey = false,
                               const QString &stateDetail = QString());
+    bool updateAdminDeleteStage(const QString &taskId,
+                                SystemTicketDto::AdminDeleteStage stage);
+    bool updateAdminDeleteError(const QString &taskId, const QString &errorText);
+    bool refreshKeyConfirmedAt(const QList<QString> &taskIds, qint64 ms);
     bool removeTicket(const QString &taskId);
 
     QList<SystemTicketDto> tickets() const;

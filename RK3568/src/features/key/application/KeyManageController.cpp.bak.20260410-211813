@@ -1,10 +1,9 @@
 /**
  * @file KeyManageController.cpp
- * @brief 钥匙管理页控制器实现
+ * @brief 閽ュ寵绠＄悊椤垫帶鍒跺櫒瀹炵幇
  */
 #include "features/key/application/KeyManageController.h"
 
-#include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -146,12 +145,12 @@ KeyManageController::KeyManageController(IKeySessionService *session,
                                    : m_httpTransferTransactionTaskId,
                            QString::number(m_httpTransferTransactionSessionId),
                            QString::number(m_httpTransferTransactionBridgeEpoch));
-        emit statusMessage(QStringLiteral("传票互斥锁超时（60s），强制释放，请检查日志"));
+        emit statusMessage(QStringLiteral("浼犵エ浜掓枼閿佽秴鏃讹紙60s锛夛紝寮哄埗閲婃斁锛岃妫€鏌ユ棩蹇?") );
         clearHttpTransferTransaction(true);
         if (!timedOutTaskId.isEmpty()) {
             m_ticketStore->updateTransferState(timedOutTaskId,
                                                QStringLiteral("failed"),
-                                               QStringLiteral("HTTP传票事务超时，已强制清理活动上下文"));
+                                               QStringLiteral("HTTP浼犵エ浜嬪姟瓒呮椂锛屽凡寮哄埗娓呯悊娲诲姩涓婁笅鏂?") );
         }
     });
     if (!m_session) {
@@ -177,7 +176,7 @@ KeyManageController::KeyManageController(IKeySessionService *session,
         if (taskId.isEmpty()) {
             result.accepted = false;
             result.statusCode = 200;
-            result.message = QStringLiteral("传票请求中 taskId 为空，无法处理");
+            result.message = QStringLiteral("浼犵エ璇锋眰涓?taskId 涓虹┖锛屾棤娉曞鐞?");
             qInfo().noquote()
                     << QStringLiteral("[KeyManageController] ticket ingress rejected reason=empty-taskId");
             return result;
@@ -191,15 +190,15 @@ KeyManageController::KeyManageController(IKeySessionService *session,
                     || trackedCancel.cancelState == QLatin1String("cancel-executing"))) {
             result.accepted = false;
             result.statusCode = 200;
-            result.message = QStringLiteral("该任务已受理撤销，当前不再接受重复传票");
+            result.message = QStringLiteral("璇ヤ换鍔″凡鍙楃悊鎾ら攢锛屽綋鍓嶄笉鍐嶆帴鍙楅噸澶嶄紶绁?");
             result.taskId = taskId;
             qInfo().noquote()
                     << QStringLiteral("[KeyManageController] ticket ingress rejected reason=cancel-active taskId=%1 cancelState=%2")
                           .arg(taskId, trackedCancel.cancelState);
             return result;
         }
-        // WHY: 钥匙未就绪时禁止执行钥匙传票（本地 HTTP 入口硬门禁）
-        // 在票进入本地票池之前，先检查钥匙状态，避免无钥匙时票错误进入待传链
+        // WHY: 閽ュ寵鏈氨缁椂绂佹鎵ц閽ュ寵浼犵エ锛堟湰鍦?HTTP 鍏ュ彛纭棬绂侊級
+        // 鍦ㄧエ杩涘叆鏈湴绁ㄦ睜涔嬪墠锛屽厛妫€鏌ラ挜鍖欑姸鎬侊紝閬垮厤鏃犻挜鍖欐椂绁ㄩ敊璇繘鍏ュ緟浼犻摼
         const KeySessionSnapshot snapshot = m_session->snapshot();
         const bool keyReady = snapshot.connected
                 && snapshot.keyPresent
@@ -208,8 +207,8 @@ KeyManageController::KeyManageController(IKeySessionService *session,
 
         if (!keyReady) {
             result.accepted = false;
-            result.statusCode = 200;  // 业务拒绝仍返回 HTTP 200
-            result.message = QStringLiteral("未检测到钥匙在位，请确认！");
+            result.statusCode = 200;  // 涓氬姟鎷掔粷浠嶈繑鍥?HTTP 200
+            result.message = QStringLiteral("鏈娴嬪埌閽ュ寵鍦ㄤ綅锛岃纭锛?");
             result.taskId.clear();
             qInfo().noquote()
                     << QStringLiteral("[KeyManageController] ticket ingress rejected reason=key-not-ready connected=%1 keyPresent=%2 keyStable=%3 sessionReady=%4")
@@ -219,15 +218,12 @@ KeyManageController::KeyManageController(IKeySessionService *session,
                                snapshot.sessionReady ? QStringLiteral("true") : QStringLiteral("false"));
             return result;
         }
-        // commandInFlight / recoveryWindowActive 不在此处拦截：
-        // 这两个状态是瞬时的（Q_TASK、电量查询等随时在途），在 ingress 层硬拦会导致用户几乎永远无法传票。
-        // 让请求先入池，由 startDirectWorkbenchTransfer 判断——如果当时仍在途则标记 failed 并返回错误，
-        // 用户重试即可，不会被永久卡死。
-
+        // commandInFlight / recoveryWindowActive 涓嶅湪姝ゅ鎷︽埅锛?        // 杩欎袱涓姸鎬佹槸鐬椂鐨勶紙Q_TASK銆佺數閲忔煡璇㈢瓑闅忔椂鍦ㄩ€旓級锛屽湪 ingress 灞傜‖鎷︿細瀵艰嚧鐢ㄦ埛鍑犱箮姘歌繙鏃犳硶浼犵エ銆?        // 璁╄姹傚厛鍏ユ睜锛岀敱 startDirectWorkbenchTransfer 鍒ゆ柇鈥斺€斿鏋滃綋鏃朵粛鍦ㄩ€斿垯鏍囪 failed 骞惰繑鍥為敊璇紝
+        // 鐢ㄦ埛閲嶈瘯鍗冲彲锛屼笉浼氳姘镐箙鍗℃銆?
         if (m_httpTransferTransactionActive) {
             result.accepted = false;
             result.statusCode = 200;
-            result.message = QStringLiteral("当前已有工作台传票确认事务在执行，请稍后重试");
+            result.message = QStringLiteral("褰撳墠宸叉湁宸ヤ綔鍙颁紶绁ㄧ‘璁や簨鍔″湪鎵ц锛岃绋嶅悗閲嶈瘯");
             result.taskId = taskId;
             qInfo().noquote()
                     << QStringLiteral("[KeyManageController] ticket ingress rejected reason=http-transaction-active taskId=%1 activeTaskId=%2")
@@ -241,7 +237,7 @@ KeyManageController::KeyManageController(IKeySessionService *session,
         const SystemTicketDto oldTicket = m_ticketStore->ticketById(taskId);
         if (oldTicket.valid) {
             if (oldTicket.transferState == QLatin1String("success")) {
-                // 若有最新 Q_TASK 数据且该任务已不在钥匙中，说明本地状态陈旧，允许重传
+                // 鑻ユ湁鏈€鏂?Q_TASK 鏁版嵁涓旇浠诲姟宸蹭笉鍦ㄩ挜鍖欎腑锛岃鏄庢湰鍦扮姸鎬侀檲鏃э紝鍏佽閲嶄紶
                 const bool hasKeyTaskData = !m_lastKeyTasks.isEmpty();
                 const bool taskStillInKey = taskExistsInList(m_lastKeyTasks, taskId);
                 if (hasKeyTaskData && !taskStillInKey) {
@@ -252,7 +248,7 @@ KeyManageController::KeyManageController(IKeySessionService *session,
                 } else {
                     result.accepted = false;
                     result.statusCode = 200;
-                    result.message = QStringLiteral("该任务已传票到钥匙，请勿重复操作");
+                    result.message = QStringLiteral("璇ヤ换鍔″凡浼犵エ鍒伴挜鍖欙紝璇峰嬁閲嶅鎿嶄綔");
                     result.taskId = taskId;
                     return result;
                 }
@@ -260,7 +256,7 @@ KeyManageController::KeyManageController(IKeySessionService *session,
             if (oldTicket.transferState == QLatin1String("sending")) {
                 result.accepted = false;
                 result.statusCode = 200;
-                result.message = QStringLiteral("该任务正在传票中，请勿重复操作");
+                result.message = QStringLiteral("璇ヤ换鍔℃鍦ㄤ紶绁ㄤ腑锛岃鍕块噸澶嶆搷浣?");
                 result.taskId = taskId;
                 return result;
             }
@@ -268,7 +264,7 @@ KeyManageController::KeyManageController(IKeySessionService *session,
                     || oldTicket.transferState == QLatin1String("auto-pending")) {
                 result.accepted = false;
                 result.statusCode = 200;
-                result.message = QStringLiteral("该任务已有待处理的传票请求，请勿重复操作");
+                result.message = QStringLiteral("璇ヤ换鍔″凡鏈夊緟澶勭悊鐨勪紶绁ㄨ姹傦紝璇峰嬁閲嶅鎿嶄綔");
                 result.taskId = taskId;
                 return result;
             }
@@ -281,21 +277,21 @@ KeyManageController::KeyManageController(IKeySessionService *session,
                 || !m_pendingDeletedSystemTicketId.isEmpty()) {
             result.accepted = false;
             result.statusCode = 200;
-            result.message = QStringLiteral("当前钥匙仍有回传或删除确认中的业务，请稍后重试");
+            result.message = QStringLiteral("褰撳墠閽ュ寵浠嶆湁鍥炰紶鎴栧垹闄ょ‘璁や腑鐨勪笟鍔★紝璇风◢鍚庨噸璇?");
             result.taskId = taskId;
             return result;
         }
         if (m_autoQuerySessionId == expectedSessionId && expectedSessionId > 0) {
             result.accepted = false;
             result.statusCode = 200;
-            result.message = QStringLiteral("当前钥匙通讯正在确认，请稍后重试");
+            result.message = QStringLiteral("褰撳墠閽ュ寵閫氳姝ｅ湪纭锛岃绋嶅悗閲嶈瘯");
             result.taskId = taskId;
             return result;
         }
 
+        // P0锛氬厛鍏ユ睜锛坮eceived锛夛紝鍐嶅紓姝ュ彂閫侊紝绔嬪嵆杩斿洖 success=true
+        // m_httpTransferTransactionActive 鍏呭綋骞跺彂浜掓枼閿侊紝鍦ㄤ紶绁ㄥ紓姝ュ畬鎴愬悗鐢变簨浠跺鐞嗗櫒閲婃斁
         // P0：先入池（received），再异步发送，立即返回 success=true
-        // m_httpTransferTransactionActive 充当并发互斥锁，在传票异步完成后由事件处理器释放
-        // setHttpTransferTransaction 同时启动 60 秒安全超时，防止锁永久卡死
         setHttpTransferTransaction(taskId, expectedSessionId, expectedBridgeEpoch);
 
         const QString savedPath = persistBody();
@@ -307,7 +303,7 @@ KeyManageController::KeyManageController(IKeySessionService *session,
             clearHttpTransferTransaction(false);
             result.accepted = false;
             result.statusCode = 200;
-            result.message = QStringLiteral("传票请求入池失败：%1").arg(ingestError);
+            result.message = QStringLiteral("浼犵エ璇锋眰鍏ユ睜澶辫触锛?1").arg(ingestError);
             result.taskId = taskId;
             return result;
         }
@@ -323,23 +319,23 @@ KeyManageController::KeyManageController(IKeySessionService *session,
             result.accepted = false;
             result.statusCode = 200;
             result.message = transferBlockedReason.isEmpty()
-                    ? QStringLiteral("钥匙状态在发送前发生变化，请重新点击钥匙传票")
+                    ? QStringLiteral("閽ュ寵鐘舵€佸湪鍙戦€佸墠鍙戠敓鍙樺寲锛岃閲嶆柊鐐瑰嚮閽ュ寵浼犵エ")
                     : transferBlockedReason;
             result.taskId = taskId;
             return result;
         }
 
-        // 传票已开始异步发送，挂起 socket 等待串口 + Q_TASK 确认
-        // TicketTransferFinished/TicketTransferFailed 事件处理器负责调用 completeDeferredResponse
+        // 浼犵エ宸插紑濮嬪紓姝ュ彂閫侊紝鎸傝捣 socket 绛夊緟涓插彛 + Q_TASK 纭
+        // TicketTransferFinished/TicketTransferFailed 浜嬩欢澶勭悊鍣ㄨ礋璐ｈ皟鐢?completeDeferredResponse
         result.accepted = true;
         result.deferred = true;
         result.statusCode = 200;
-        result.message = QStringLiteral("传票请求已开始发送");
+        result.message = QStringLiteral("浼犵エ璇锋眰宸插紑濮嬪彂閫?");
         result.taskId = taskId;
         return result;
     });
 
-    // ── cancelTicket ingress handler ──
+    // 鈹€鈹€ cancelTicket ingress handler 鈹€鈹€
     m_ticketIngress->setCancelHandler([this](const QString &taskId) {
         TicketIngressService::IngressResult result;
         result.statusCode = 200;
@@ -347,7 +343,7 @@ KeyManageController::KeyManageController(IKeySessionService *session,
 
         if (taskId.isEmpty()) {
             result.accepted = false;
-            result.message = QStringLiteral("taskId 为空");
+            result.message = QStringLiteral("taskId 涓虹┖");
             return result;
         }
 
@@ -357,26 +353,26 @@ KeyManageController::KeyManageController(IKeySessionService *session,
         if (trackedRecord.valid) {
             if (trackedRecord.cancelState == QLatin1String("cancel-done")) {
                 result.accepted = true;
-                result.message = QStringLiteral("任务已取消");
+                result.message = QStringLiteral("浠诲姟宸插彇娑?");
                 return result;
             }
             if (trackedRecord.cancelState == QLatin1String("cancel-accepted")
                     || trackedRecord.cancelState == QLatin1String("cancel-pending")
                     || trackedRecord.cancelState == QLatin1String("cancel-executing")) {
                 result.accepted = true;
-                result.message = QStringLiteral("任务取消已受理");
+                result.message = QStringLiteral("浠诲姟鍙栨秷宸插彈鐞?");
                 return result;
             }
         }
 
         SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
 
-        // 票不存在 — 尝试孤儿恢复（重启后票池丢失但钥匙里仍有任务）
+        // 票不存在，尝试孤儿恢复（重启后票池丢失但钥匙里仍有任务）
         if (!ticket.valid) {
             quint8 orphanStatus = 0xFF;
             const QByteArray orphanRaw = findKeyTaskIdRaw(taskId, &orphanStatus);
             if (!orphanRaw.isEmpty()) {
-                // 钥匙里有这个任务，建孤儿恢复记录后继续走正常流程
+                // 閽ュ寵閲屾湁杩欎釜浠诲姟锛屽缓瀛ゅ効鎭㈠璁板綍鍚庣户缁蛋姝ｅ父娴佺▼
                 m_ticketStore->ingestOrphanTicket(taskId);
                 ticket = m_ticketStore->ticketById(taskId);
                 qInfo().noquote()
@@ -384,7 +380,7 @@ KeyManageController::KeyManageController(IKeySessionService *session,
                               .arg(taskId, QString::number(orphanStatus, 16));
             } else {
                 result.accepted = false;
-                result.message = QStringLiteral("未找到对应任务");
+                result.message = QStringLiteral("鏈壘鍒板搴斾换鍔?");
                 qInfo().noquote()
                         << QStringLiteral("[KeyManageController] cancel ingress rejected reason=not-found taskId=%1")
                               .arg(taskId);
@@ -392,11 +388,12 @@ KeyManageController::KeyManageController(IKeySessionService *session,
             }
         }
 
-        // 已有撤销意图（幂等）
+        // 宸叉湁鎾ら攢鎰忓浘锛堝箓绛夛級
+        // 已受理撤销的票不参与本轮对账升级
         if (!ticket.cancelState.isEmpty()
                 && ticket.cancelState != QLatin1String("none")) {
             result.accepted = true;
-            result.message = QStringLiteral("任务取消已受理");
+            result.message = QStringLiteral("浠诲姟鍙栨秷宸插彈鐞?");
             m_ticketCancelCoordinator->recordAccepted(taskId,
                                                      ticket,
                                                      ticket.cancelState,
@@ -412,7 +409,7 @@ KeyManageController::KeyManageController(IKeySessionService *session,
                 || ticket.returnState == QLatin1String("return-success")
                 || ticket.transferState == QLatin1String("key-cleared")) {
             result.accepted = true;
-            result.message = QStringLiteral("任务已完成，无需撤销");
+            result.message = QStringLiteral("浠诲姟宸插畬鎴愶紝鏃犻渶鎾ら攢");
             m_ticketCancelCoordinator->recordDone(taskId, ticket, result.message);
             qInfo().noquote()
                     << QStringLiteral("[KeyManageController] cancel ingress no-op taskId=%1 returnState=%2 transferState=%3")
@@ -420,51 +417,47 @@ KeyManageController::KeyManageController(IKeySessionService *session,
             return result;
         }
 
-        // 已在回传清理链中（不新起撤销链）
+        // 宸插湪鍥炰紶娓呯悊閾句腑锛堜笉鏂拌捣鎾ら攢閾撅級
         if (ticket.returnState == QLatin1String("return-upload-success")
                 || ticket.returnState == QLatin1String("return-delete-pending")
                 || ticket.returnState == QLatin1String("return-delete-verifying")) {
             result.accepted = true;
-            result.message = QStringLiteral("任务已在清理中，无需重复撤销");
+            result.message = QStringLiteral("浠诲姟宸插湪娓呯悊涓紝鏃犻渶閲嶅鎾ら攢");
             qInfo().noquote()
                     << QStringLiteral("[KeyManageController] cancel ingress already-in-cleanup taskId=%1 returnState=%2")
                           .arg(taskId, ticket.returnState);
             return result;
         }
 
-        // 已传到钥匙（success）：必须以"当前钥匙里能看到这张任务"为硬门槛，否则拒绝
+        // 鏈笅鍙戝埌閽ュ寵锛坮eceived / auto-pending锛夛紝涓?lastKeyTasks 閲屾病鏈?鈫?鐩存帴绉婚櫎
         const KeySessionSnapshot snapshot = m_session->snapshot();
-        if (ticket.transferState == QLatin1String("success")) {
-            const bool keyReady = snapshot.connected && snapshot.keyPresent && snapshot.sessionReady;
-            const bool hasTaskList = !m_lastKeyTasks.isEmpty();
-            const bool taskInKey = taskExistsInList(m_lastKeyTasks, taskId);
-            if (!keyReady || !hasTaskList || !taskInKey) {
-                result.accepted = false;
-                result.message = QStringLiteral("任务已下发到钥匙，当前无法确认钥匙中仍存在该任务，无法撤销");
-                qInfo().noquote()
-                        << QStringLiteral("[KeyManageController] cancel ingress rejected reason=key-task-not-confirmed taskId=%1 keyReady=%2 hasTaskList=%3 taskInKey=%4")
-                              .arg(taskId,
-                                   keyReady ? QStringLiteral("true") : QStringLiteral("false"),
-                                   hasTaskList ? QStringLiteral("true") : QStringLiteral("false"),
-                                   taskInKey ? QStringLiteral("true") : QStringLiteral("false"));
-                return result;
-            }
+        if (ticket.transferState == QLatin1String("success")
+                && (!snapshot.connected || !snapshot.keyPresent || m_lastKeyTasks.isEmpty())) {
+            result.accepted = false;
+            result.message = QStringLiteral("浠诲姟宸蹭笅鍙戝埌閽ュ寵涓旈挜鍖欏凡琚彇璧帮紝鏃犳硶鎾ら攢姝ｅ湪鎵ц鐨勪换鍔?");
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] cancel ingress rejected reason=key-not-present-after-success taskId=%1 connected=%2 keyPresent=%3 lastKeyTasks=%4")
+                          .arg(taskId,
+                               snapshot.connected ? QStringLiteral("true") : QStringLiteral("false"),
+                               snapshot.keyPresent ? QStringLiteral("true") : QStringLiteral("false"),
+                               QString::number(m_lastKeyTasks.size()));
+            return result;
         }
 
         if ((ticket.transferState == QLatin1String("received")
                     || ticket.transferState == QLatin1String("auto-pending"))
                 && !taskExistsInList(m_lastKeyTasks, taskId)) {
-            m_ticketCancelCoordinator->recordDone(taskId, ticket, QStringLiteral("任务已取消"));
+            m_ticketCancelCoordinator->recordDone(taskId, ticket, QStringLiteral("浠诲姟宸插彇娑?") );
             m_ticketStore->removeTicket(taskId);
             result.accepted = true;
-            result.message = QStringLiteral("任务已取消");
+            result.message = QStringLiteral("浠诲姟宸插彇娑?");
             qInfo().noquote()
                     << QStringLiteral("[KeyManageController] cancel ingress direct-remove taskId=%1 transferState=%2")
                           .arg(taskId, ticket.transferState);
             return result;
         }
 
-        // 其他情况：受理撤销，但不抢占当前链路。
+        // 记录当前钥匙列表中的可见性，用于撤销跟踪上下文
         const bool currentlyInKey = taskExistsInList(m_lastKeyTasks, taskId);
         QString blockedReason;
         const bool canProcessNow = canProcessCancelNow(&blockedReason);
@@ -480,18 +473,18 @@ KeyManageController::KeyManageController(IKeySessionService *session,
                                             QDateTime::currentDateTime(),
                                             currentlyInKey,
                                             canProcessNow
-                                                ? QStringLiteral("已受理撤销，等待 Q_TASK 对账后执行删除")
-                                                : QStringLiteral("已受理撤销，等待当前业务链收口"));
+                                                ? QStringLiteral("宸插彈鐞嗘挙閿€锛岀瓑寰?Q_TASK 瀵硅处鍚庢墽琛屽垹闄?")
+                                                : QStringLiteral("宸插彈鐞嗘挙閿€锛岀瓑寰呭綋鍓嶄笟鍔￠摼鏀跺彛"));
         m_ticketCancelCoordinator->recordAccepted(taskId,
                                                  m_ticketStore->ticketById(taskId),
                                                  nextCancelState,
                                                  canProcessNow
-                                                     ? QStringLiteral("任务取消已受理，准备对账执行")
-                                                     : QStringLiteral("任务取消已受理，待当前任务收口后执行"));
+                                                     ? QStringLiteral("浠诲姟鍙栨秷宸插彈鐞嗭紝鍑嗗瀵硅处鎵ц")
+                                                     : QStringLiteral("浠诲姟鍙栨秷宸插彈鐞嗭紝寰呭綋鍓嶄换鍔℃敹鍙ｅ悗鎵ц"));
         result.accepted = true;
         result.message = canProcessNow
-                ? QStringLiteral("任务取消已受理，准备对账执行")
-                : QStringLiteral("任务取消已受理，待当前任务收口后执行");
+                ? QStringLiteral("浠诲姟鍙栨秷宸插彈鐞嗭紝鍑嗗瀵硅处鎵ц")
+                : QStringLiteral("浠诲姟鍙栨秷宸插彈鐞嗭紝寰呭綋鍓嶄换鍔℃敹鍙ｅ悗鎵ц");
         qInfo().noquote()
                 << QStringLiteral("[KeyManageController] cancel ingress accepted taskId=%1 transferState=%2 returnState=%3 nextCancelState=%4 blockedReason=%5")
                       .arg(taskId,
@@ -520,7 +513,7 @@ KeyManageController::KeyManageController(IKeySessionService *session,
     connect(m_keyProvisioning, &KeyProvisioningService::requestFailed,
             this, &KeyManageController::handleProvisionRequestFailed);
     connect(m_logManager, &SerialLogManager::overflowDropped, this, [this]() {
-        emit statusMessage(QStringLiteral("日志达到上限，已自动丢弃旧日志"));
+        emit statusMessage(QStringLiteral("鏃ュ織杈惧埌涓婇檺锛屽凡鑷姩涓㈠純鏃ф棩蹇?") );
     });
     connect(ConfigManager::instance(), &ConfigManager::configChanged,
             this, [this](const QString &key, const QVariant &) {
@@ -534,6 +527,7 @@ void KeyManageController::start()
 {
     m_ticketStore->loadFromDisk();
 
+    // 鐧诲綍鍚庨噸璇曚笂娆″洜鏈櫥褰曡€屽け璐ョ殑宸ヤ綔鍙扮粓姝㈤€氱煡
     auto retryPendingTerminations = [this]() {
         for (const SystemTicketDto &ticket : m_ticketStore->tickets()) {
             if (ticket.adminDeleteStage
@@ -543,17 +537,11 @@ void KeyManageController::start()
         }
     };
     connect(AppContext::instance(), &AppContext::userLoggedIn,
-            this, [retryPendingTerminations](const UserInfo &user) {
-        // 只有管理员 token 才有权限调工作台 termination 接口
-        if (!user.role.contains(QStringLiteral("admin"), Qt::CaseInsensitive)) {
-            return;
-        }
+            this, [retryPendingTerminations](const UserInfo &) {
         retryPendingTerminations();
     });
-    // 控制器启动时若管理员已登录，立即重试（覆盖"先登录后启动"场景）
-    const UserInfo &currentUser = AppContext::instance()->currentUser();
-    if (currentUser.isValid()
-            && currentUser.role.contains(QStringLiteral("admin"), Qt::CaseInsensitive)) {
+    // 控制器启动时用户可能已经是已登录状态，直接触发一次
+    if (AppContext::instance()->isLoggedIn()) {
         retryPendingTerminations();
     }
 
@@ -578,20 +566,20 @@ void KeyManageController::onInitClicked()
 {
     const KeySessionSnapshot snapshot = m_session->snapshot();
     if (!snapshot.connected) {
-        emit statusMessage(QStringLiteral("串口未连接，无法执行初始化"));
+        emit statusMessage(QStringLiteral("涓插彛鏈繛鎺ワ紝鏃犳硶鎵ц鍒濆鍖?") );
         return;
     }
     if (!snapshot.keyPresent || !snapshot.keyStable || !snapshot.sessionReady) {
-        emit statusMessage(QStringLiteral("钥匙未就绪，无法执行初始化"));
+        emit statusMessage(QStringLiteral("閽ュ寵鏈氨缁紝鏃犳硶鎵ц鍒濆鍖?") );
         return;
     }
     if (m_keyProvisioning->isBusy()) {
-        emit statusMessage(QStringLiteral("正在获取钥匙初始化数据，请稍后再试"));
+        emit statusMessage(QStringLiteral("姝ｅ湪鑾峰彇閽ュ寵鍒濆鍖栨暟鎹紝璇风◢鍚庡啀璇?") );
         return;
     }
 
     const int stationNo = resolveBusinessStationNo();
-    emit statusMessage(QStringLiteral("初始化钥匙，正在获取初始化数据..."));
+    emit statusMessage(QStringLiteral("鍒濆鍖栭挜鍖欙紝姝ｅ湪鑾峰彇鍒濆鍖栨暟鎹?.."));
     m_keyProvisioning->requestInitPayload(stationNo);
 }
 
@@ -599,20 +587,20 @@ void KeyManageController::onDownloadRfidClicked()
 {
     const KeySessionSnapshot snapshot = m_session->snapshot();
     if (!snapshot.connected) {
-        emit statusMessage(QStringLiteral("串口未连接，无法下载 RFID"));
+        emit statusMessage(QStringLiteral("涓插彛鏈繛鎺ワ紝鏃犳硶涓嬭浇 RFID"));
         return;
     }
     if (!snapshot.keyPresent || !snapshot.keyStable || !snapshot.sessionReady) {
-        emit statusMessage(QStringLiteral("钥匙未就绪，无法下载 RFID"));
+        emit statusMessage(QStringLiteral("閽ュ寵鏈氨缁紝鏃犳硶涓嬭浇 RFID"));
         return;
     }
     if (m_keyProvisioning->isBusy()) {
-        emit statusMessage(QStringLiteral("正在获取 RFID 数据，请稍后再试"));
+        emit statusMessage(QStringLiteral("姝ｅ湪鑾峰彇 RFID 鏁版嵁锛岃绋嶅悗鍐嶈瘯"));
         return;
     }
 
     const int stationNo = resolveBusinessStationNo();
-    emit statusMessage(QStringLiteral("下载 RFID，正在获取后端数据..."));
+    emit statusMessage(QStringLiteral("涓嬭浇 RFID锛屾鍦ㄨ幏鍙栧悗绔暟鎹?.."));
     m_keyProvisioning->requestRfidPayload(stationNo);
 }
 
@@ -620,7 +608,7 @@ void KeyManageController::onQueryBatteryClicked()
 {
     const KeySessionSnapshot snapshot = m_session->snapshot();
     if (!snapshot.connected) {
-        emit statusMessage(QStringLiteral("串口未连接，无法查询钥匙电量"));
+        emit statusMessage(QStringLiteral("涓插彛鏈繛鎺ワ紝鏃犳硶鏌ヨ閽ュ寵鐢甸噺"));
         return;
     }
 
@@ -628,14 +616,14 @@ void KeyManageController::onQueryBatteryClicked()
     req.id = CommandId::QueryBattery;
     req.opId = nextOpId();
     m_session->execute(req);
-    emit statusMessage(QStringLiteral("执行获取电量 (Q_KEYEQ)"));
+    emit statusMessage(QStringLiteral("鎵ц鑾峰彇鐢甸噺 (Q_KEYEQ)"));
 }
 
 void KeyManageController::onSyncDeviceTimeClicked()
 {
     const KeySessionSnapshot snapshot = m_session->snapshot();
     if (!snapshot.connected) {
-        emit statusMessage(QStringLiteral("串口未连接，无法执行钥匙校时"));
+        emit statusMessage(QStringLiteral("涓插彛鏈繛鎺ワ紝鏃犳硶鎵ц閽ュ寵鏍℃椂"));
         return;
     }
 
@@ -643,19 +631,19 @@ void KeyManageController::onSyncDeviceTimeClicked()
     req.id = CommandId::SyncDeviceTime;
     req.opId = nextOpId();
     m_session->execute(req);
-    emit statusMessage(QStringLiteral("执行钥匙校时 (SET_TIME)"));
+    emit statusMessage(QStringLiteral("鎵ц閽ュ寵鏍℃椂 (SET_TIME)"));
 }
 
 void KeyManageController::onQueryTasksClicked()
 {
     if (m_httpTransferTransactionActive) {
-        emit statusMessage(QStringLiteral("当前工作台传票正在做钥匙任务确认，请稍后再查询"));
+        emit statusMessage(QStringLiteral("褰撳墠宸ヤ綔鍙颁紶绁ㄦ鍦ㄥ仛閽ュ寵浠诲姟纭锛岃绋嶅悗鍐嶆煡璇?") );
         return;
     }
 
     const KeySessionSnapshot snapshot = m_session->snapshot();
     if (!snapshot.connected) {
-        emit statusMessage(QStringLiteral("串口未连接，无法查询任务"));
+        emit statusMessage(QStringLiteral("涓插彛鏈繛鎺ワ紝鏃犳硶鏌ヨ浠诲姟"));
         return;
     }
 
@@ -663,14 +651,14 @@ void KeyManageController::onQueryTasksClicked()
     req.id = CommandId::QueryTasks;
     req.opId = nextOpId();
     m_session->execute(req);
-    emit statusMessage(QStringLiteral("执行获取任务数 (Q_TASK)"));
+    emit statusMessage(QStringLiteral("鎵ц鑾峰彇浠诲姟鏁?(Q_TASK)"));
 }
 
 void KeyManageController::onDeleteClicked()
 {
     const KeySessionSnapshot snapshot = m_session->snapshot();
     if (!snapshot.connected) {
-        emit statusMessage(QStringLiteral("串口未连接，无法删除票"));
+        emit statusMessage(QStringLiteral("涓插彛鏈繛鎺ワ紝鏃犳硶鍒犻櫎绁?") );
         return;
     }
 
@@ -680,7 +668,7 @@ void KeyManageController::onDeleteClicked()
     m_pendingDeleteOrigin = DeleteOrigin::None;
 
     if (m_selectedKeyTaskRaw.isEmpty()) {
-        emit statusMessage(QStringLiteral("未选中钥匙票，无法删除，请先读取钥匙票列表并选中一条任务"));
+        emit statusMessage(QStringLiteral("鏈€変腑閽ュ寵绁紝鏃犳硶鍒犻櫎锛岃鍏堣鍙栭挜鍖欑エ鍒楄〃骞堕€変腑涓€鏉′换鍔?") );
         return;
     }
 
@@ -698,13 +686,13 @@ void KeyManageController::onDeleteClicked()
     req.opId = nextOpId();
     req.payload = m_pendingDeletedKeyTaskRaw;
     m_session->execute(req);
-    emit statusMessage(QStringLiteral("执行删除票 (DEL)"));
+    emit statusMessage(QStringLiteral("鎵ц鍒犻櫎绁?(DEL)"));
 }
 
 void KeyManageController::onTransferSelectedTicket()
 {
     if (m_selectedSystemTicketId.trimmed().isEmpty()) {
-        emit statusMessage(QStringLiteral("未选中系统票，无法发送传票"));
+        emit statusMessage(QStringLiteral("鏈€変腑绯荤粺绁紝鏃犳硶鍙戦€佷紶绁?") );
         return;
     }
 
@@ -714,7 +702,7 @@ void KeyManageController::onTransferSelectedTicket()
 void KeyManageController::onReturnSelectedTicket()
 {
     if (m_selectedSystemTicketId.trimmed().isEmpty()) {
-        emit statusMessage(QStringLiteral("未选中系统票，无法执行回传"));
+        emit statusMessage(QStringLiteral("鏈€変腑绯荤粺绁紝鏃犳硶鎵ц鍥炰紶"));
         return;
     }
 
@@ -768,19 +756,19 @@ void KeyManageController::onClearLogsClicked()
 {
     m_logManager->clear();
     emit logsCleared();
-    emit statusMessage(QStringLiteral("串口日志已清空"));
+    emit statusMessage(QStringLiteral("涓插彛鏃ュ織宸叉竻绌?") );
 }
 
 void KeyManageController::onClearHttpClientLogsClicked()
 {
     m_httpClientLogLines.clear();
-    emit statusMessage(QStringLiteral("HTTP客户端报文已清空"));
+    emit statusMessage(QStringLiteral("HTTP瀹㈡埛绔姤鏂囧凡娓呯┖"));
 }
 
 void KeyManageController::onClearHttpServerLogsClicked()
 {
     m_httpServerLogLines.clear();
-    emit statusMessage(QStringLiteral("HTTP服务端报文已清空"));
+    emit statusMessage(QStringLiteral("HTTP鏈嶅姟绔姤鏂囧凡娓呯┖"));
 }
 
 bool KeyManageController::exportLogs(const QString &path, QString *error) const
@@ -848,7 +836,7 @@ void KeyManageController::requestApplyConfiguredKeyPort()
     const QString configuredPort = ConfigManager::instance()->keySerialPort().trimmed();
     if (configuredPort.isEmpty()) {
         m_keySerialApplyState = QStringLiteral("apply_failed");
-        m_keySerialApplyMessage = QStringLiteral("当前未配置钥匙串口，无法应用到运行态");
+        m_keySerialApplyMessage = QStringLiteral("褰撳墠鏈厤缃挜鍖欎覆鍙ｏ紝鏃犳硶搴旂敤鍒拌繍琛屾€?");
         emit statusMessage(m_keySerialApplyMessage);
         refreshKeySerialApplyStatus();
         return;
@@ -859,7 +847,7 @@ void KeyManageController::requestApplyConfiguredKeyPort()
             && snapshot.connected
             && (!snapshot.keyPresent || (snapshot.sessionReady && snapshot.protocolHealthy))) {
         m_keySerialApplyState = QStringLiteral("applied");
-        m_keySerialApplyMessage = QStringLiteral("运行态已使用当前配置串口，无需重新应用");
+        m_keySerialApplyMessage = QStringLiteral("杩愯鎬佸凡浣跨敤褰撳墠閰嶇疆涓插彛锛屾棤闇€閲嶆柊搴旂敤");
         emit statusMessage(m_keySerialApplyMessage);
         refreshKeySerialApplyStatus();
         return;
@@ -882,11 +870,11 @@ void KeyManageController::requestApplyConfiguredKeyPort()
     ++m_keyPortApplyEpoch;
     m_keyPortApplyTargetPort = configuredPort;
     m_keySerialApplyState = QStringLiteral("applying");
-    m_keySerialApplyMessage = QStringLiteral("正在切换钥匙串口到 %1，并等待新运行态完成通讯接管").arg(configuredPort);
+    m_keySerialApplyMessage = QStringLiteral("姝ｅ湪鍒囨崲閽ュ寵涓插彛鍒?%1锛屽苟绛夊緟鏂拌繍琛屾€佸畬鎴愰€氳鎺ョ").arg(configuredPort);
     emit statusMessage(m_keySerialApplyMessage);
     refreshKeySerialApplyStatus();
 
-    invalidateCurrentKeySession(QStringLiteral("应用新钥匙串口配置"));
+    invalidateCurrentKeySession(QStringLiteral("搴旂敤鏂伴挜鍖欎覆鍙ｉ厤缃?") );
     m_session->setPortSwitchInProgress(true);
     m_session->disconnectPort();
     m_session->clearVerifiedPort();
@@ -895,7 +883,7 @@ void KeyManageController::requestApplyConfiguredKeyPort()
 
     if (connected) {
         emit sessionSnapshotChanged(m_session->snapshot());
-        emit statusMessage(QStringLiteral("新钥匙串口 %1 已打开，等待通讯确认后完成运行态切换").arg(configuredPort));
+        emit statusMessage(QStringLiteral("鏂伴挜鍖欎覆鍙?%1 宸叉墦寮€锛岀瓑寰呴€氳纭鍚庡畬鎴愯繍琛屾€佸垏鎹?").arg(configuredPort));
         refreshKeySerialApplyStatus();
         return;
     }
@@ -905,7 +893,7 @@ void KeyManageController::requestApplyConfiguredKeyPort()
     m_suppressSessionAutomation = false;
     m_keyPortApplyTargetPort.clear();
     m_keySerialApplyState = QStringLiteral("apply_failed");
-    m_keySerialApplyMessage = QStringLiteral("配置已保存，但新钥匙串口 %1 未成功应用到运行态").arg(configuredPort);
+    m_keySerialApplyMessage = QStringLiteral("閰嶇疆宸蹭繚瀛橈紝浣嗘柊閽ュ寵涓插彛 %1 鏈垚鍔熷簲鐢ㄥ埌杩愯鎬?").arg(configuredPort);
     emit sessionSnapshotChanged(m_session->snapshot());
     emit statusMessage(m_keySerialApplyMessage);
     refreshKeySerialApplyStatus();
@@ -945,7 +933,8 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
         break;
     case KeySessionEvent::Timeout: {
         const QString what = event.data.value("what").toString();
-        // 超时也要释放 auto-query 窗口，否则 Q_TASK 超时后 m_autoQuerySessionId 永久卡住
+        // 瓒呮椂涔熻閲婃斁 auto-query 绐楀彛锛屽惁鍒?Q_TASK 瓒呮椂鍚?m_autoQuerySessionId 姘镐箙鍗′綇
+        // NAK 也释放 auto-query 窗口（Q_TASK 被拒绝时）
         if (m_autoQuerySessionId == m_keySessionId && m_keySessionId > 0) {
             m_autoQuerySessionId = 0;
         }
@@ -953,9 +942,9 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
             if (!m_pendingDeletedSystemTicketId.isEmpty()) {
                 m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
                                                  QStringLiteral("return-delete-verifying"),
-                                                 QStringLiteral("DEL 超时，等待后续 Q_TASK 对账确认钥匙任务是否已删除"));
+                                                 QStringLiteral("DEL 瓒呮椂锛岀瓑寰呭悗缁?Q_TASK 瀵硅处纭閽ュ寵浠诲姟鏄惁宸插垹闄?") );
                 m_pendingDeleteSessionId = 0;
-                emit statusMessage(QStringLiteral("DEL 超时，保留删除验证意图，等待后续 Q_TASK 继续对账"));
+                emit statusMessage(QStringLiteral("DEL 瓒呮椂锛屼繚鐣欏垹闄ら獙璇佹剰鍥撅紝绛夊緟鍚庣画 Q_TASK 缁х画瀵硅处"));
             }
         }
         if (!m_pendingCancelSystemTicketId.isEmpty()
@@ -970,11 +959,11 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
                                                     ticket.residentKeyId,
                                                     ticket.cancelRequestedAt.isValid() ? ticket.cancelRequestedAt : QDateTime::currentDateTime(),
                                                     true,
-                                                    QStringLiteral("DEL 超时，等待后续 Q_TASK 对账确认任务是否已删除"));
+                                                    QStringLiteral("DEL 瓒呮椂锛岀瓑寰呭悗缁?Q_TASK 瀵硅处纭浠诲姟鏄惁宸插垹闄?") );
                 m_ticketCancelCoordinator->recordAccepted(taskId,
                                                          m_ticketStore->ticketById(taskId),
                                                          QStringLiteral("cancel-pending"),
-                                                         QStringLiteral("DEL 超时，等待后续 Q_TASK 对账确认任务是否已删除"));
+                                                         QStringLiteral("DEL 瓒呮椂锛岀瓑寰呭悗缁?Q_TASK 瀵硅处纭浠诲姟鏄惁宸插垹闄?") );
             }
             m_pendingCancelSessionId = 0;
             schedulePendingCancelReconcile(QStringLiteral("cancel-del-timeout"), 800);
@@ -986,7 +975,7 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
             m_pendingTransferHandshakeJsonBytes.clear();
             m_pendingTransferHandshakeDebugChunk = 0;
             m_ticketStore->updateTransferState(taskId, QStringLiteral("failed"),
-                                               QStringLiteral("传票前握手超时"));
+                                               QStringLiteral("浼犵エ鍓嶆彙鎵嬭秴鏃?") );
             m_activeTransferTaskId.clear();
             m_activeTransferSessionId = 0;
             if (m_httpTransferTransactionActive) {
@@ -1021,7 +1010,7 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
             request.opId = nextOpId();
             request.debugFrameChunkSize = debugChunk;
             m_session->transferTicket(request);
-            emit statusMessage(QStringLiteral("传票前握手已确认，开始发送 TICKET 帧：%1").arg(taskId));
+            emit statusMessage(QStringLiteral("浼犵エ鍓嶆彙鎵嬪凡纭锛屽紑濮嬪彂閫?TICKET 甯э細%1").arg(taskId));
         }
         if (static_cast<quint8>(event.data.value("ackedCmd").toInt()) == KeyProtocol::CmdSetCom
                 && !m_pendingReturnHandshakeTaskId.isEmpty()
@@ -1034,7 +1023,7 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
             req.opId = nextOpId();
             req.payload = m_pendingReturnHandshakeTaskIdRaw;
             m_session->execute(req);
-            emit statusMessage(QStringLiteral("回传前握手已确认，开始读取钥匙回传日志：%1")
+            emit statusMessage(QStringLiteral("鍥炰紶鍓嶆彙鎵嬪凡纭锛屽紑濮嬭鍙栭挜鍖欏洖浼犳棩蹇楋細%1")
                                    .arg(m_pendingReturnHandshakeTaskId));
             m_pendingReturnHandshakeTaskId.clear();
             m_pendingReturnHandshakeTaskIdRaw.clear();
@@ -1052,15 +1041,14 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
         emit ackReceived(static_cast<quint8>(event.data.value("ackedCmd").toInt()));
         break;
     case KeySessionEvent::Nak:
-        // NAK 也释放 auto-query 窗口（Q_TASK 被拒绝时）
-        if (m_autoQuerySessionId == m_keySessionId && m_keySessionId > 0) {
+        // NAK 涔熼噴鏀?auto-query 绐楀彛锛圦_TASK 琚嫆缁濇椂锛?        if (m_autoQuerySessionId == m_keySessionId && m_keySessionId > 0) {
             m_autoQuerySessionId = 0;
         }
         if (static_cast<quint8>(event.data.value("origCmd").toInt()) == KeyProtocol::CmdDel) {
             if (!m_pendingDeletedSystemTicketId.isEmpty()) {
                 m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
                                                  QStringLiteral("return-delete-verifying"),
-                                                 QStringLiteral("DEL 收到 NAK，等待后续 Q_TASK 对账确认钥匙任务状态"));
+                                                 QStringLiteral("DEL 鏀跺埌 NAK锛岀瓑寰呭悗缁?Q_TASK 瀵硅处纭閽ュ寵浠诲姟鐘舵€?") );
                 m_pendingDeleteSessionId = 0;
             }
         }
@@ -1076,11 +1064,11 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
                                                     ticket.residentKeyId,
                                                     ticket.cancelRequestedAt.isValid() ? ticket.cancelRequestedAt : QDateTime::currentDateTime(),
                                                     true,
-                                                    QStringLiteral("DEL 收到 NAK，等待后续 Q_TASK 对账确认钥匙任务状态"));
+                                                    QStringLiteral("DEL 鏀跺埌 NAK锛岀瓑寰呭悗缁?Q_TASK 瀵硅处纭閽ュ寵浠诲姟鐘舵€?") );
                 m_ticketCancelCoordinator->recordAccepted(taskId,
                                                          m_ticketStore->ticketById(taskId),
                                                          QStringLiteral("cancel-pending"),
-                                                         QStringLiteral("DEL 收到 NAK，等待后续 Q_TASK 对账确认钥匙任务状态"));
+                                                         QStringLiteral("DEL 鏀跺埌 NAK锛岀瓑寰呭悗缁?Q_TASK 瀵硅处纭閽ュ寵浠诲姟鐘舵€?") );
             }
             m_pendingCancelSessionId = 0;
             schedulePendingCancelReconcile(QStringLiteral("cancel-del-nak"), 800);
@@ -1092,20 +1080,20 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
             m_pendingTransferHandshakeJsonBytes.clear();
             m_pendingTransferHandshakeDebugChunk = 0;
             m_ticketStore->updateTransferState(taskId, QStringLiteral("failed"),
-                                               QStringLiteral("传票前握手被钥匙拒绝(NAK)"));
+                                               QStringLiteral("浼犵エ鍓嶆彙鎵嬭閽ュ寵鎷掔粷(NAK)"));
             m_activeTransferTaskId.clear();
             m_activeTransferSessionId = 0;
             if (m_httpTransferTransactionActive) {
                 clearHttpTransferTransaction(false);
             }
-            emit statusMessage(QStringLiteral("传票前握手被钥匙拒绝：%1").arg(taskId));
+            emit statusMessage(QStringLiteral("浼犵エ鍓嶆彙鎵嬭閽ュ寵鎷掔粷锛?1").arg(taskId));
         }
         if (!m_activeReturnTaskId.isEmpty() || !m_pendingReturnHandshakeTaskId.isEmpty()) {
             const quint8 origCmd = static_cast<quint8>(event.data.value("origCmd").toInt());
             if (origCmd == KeyProtocol::CmdSetCom
                     || origCmd == KeyProtocol::CmdITaskLog
                     || origCmd == KeyProtocol::CmdUpTaskLog) {
-                const QString reason = QStringLiteral("收到 NAK，origCmd=0x%1")
+                const QString reason = QStringLiteral("鏀跺埌 NAK锛宱rigCmd=0x%1")
                         .arg(origCmd, 2, 16, QLatin1Char('0'))
                         .toUpper();
                 failActiveReturnHandshake(reason);
@@ -1137,7 +1125,7 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
                                QString::number(m_httpTransferTransactionBridgeEpoch));
         } else if (ready) {
             reconcileSystemTicketsFromKeyTasks(tasks);
-            // 主动孤儿识别：钥匙中有任务但本地票池无记录 → 建孤儿恢复票
+            // 涓诲姩瀛ゅ効璇嗗埆锛氶挜鍖欎腑鏈変换鍔′絾鏈湴绁ㄦ睜鏃犺褰?鈫?寤哄鍎挎仮澶嶇エ
             for (const KeyTaskDto &task : tasks) {
                 const QString orphanTaskId = taskIdFromRaw(task.taskId);
                 if (!m_ticketStore->ticketById(orphanTaskId).valid) {
@@ -1165,8 +1153,8 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
             m_selectedKeyTaskRaw.clear();
         }
         emit tasksUpdated(tasks);
-        emit statusMessage(QStringLiteral("Q_TASK 完成，任务数=%1").arg(tasks.size()));
-        // Q_TASK 完成后释放 auto-query 窗口，允许人工传票通过 ingress 门禁
+        emit statusMessage(QStringLiteral("Q_TASK 瀹屾垚锛屼换鍔℃暟=%1").arg(tasks.size()));
+        // Q_TASK 瀹屾垚鍚庨噴鏀?auto-query 绐楀彛锛屽厑璁镐汉宸ヤ紶绁ㄩ€氳繃 ingress 闂ㄧ
         if (m_autoQuerySessionId == m_keySessionId && m_keySessionId > 0) {
             m_autoQuerySessionId = 0;
         }
@@ -1198,7 +1186,7 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
             break;
         }
         if (m_activeReturnTaskId.isEmpty() || !isCurrentKeySession(m_activeReturnSessionId)) {
-            emit statusMessage(QStringLiteral("收到任务回传日志，但当前无活动回传任务"));
+            emit statusMessage(QStringLiteral("鏀跺埌浠诲姟鍥炰紶鏃ュ織锛屼絾褰撳墠鏃犳椿鍔ㄥ洖浼犱换鍔?") );
             break;
         }
 
@@ -1216,7 +1204,7 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
 
         m_ticketStore->updateReturnState(m_activeReturnTaskId, QStringLiteral("return-uploading"));
         m_ticketReturnClient->uploadReturnPayload(payload);
-        emit statusMessage(QStringLiteral("已解析钥匙回传日志，准备上传到服务端"));
+        emit statusMessage(QStringLiteral("宸茶В鏋愰挜鍖欏洖浼犳棩蹇楋紝鍑嗗涓婁紶鍒版湇鍔＄"));
         break;
     }
     case KeySessionEvent::TicketTransferProgress: {
@@ -1239,7 +1227,7 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
         if (!m_activeTransferTaskId.isEmpty()) {
             m_ticketStore->updateTransferState(m_activeTransferTaskId, QStringLiteral("sending"));
         }
-        emit statusMessage(QStringLiteral("传票发送中：第 %1/%2 帧").arg(frameIndex).arg(totalFrames));
+        emit statusMessage(QStringLiteral("浼犵エ鍙戦€佷腑锛氱 %1/%2 甯?").arg(frameIndex).arg(totalFrames));
         break;
     }
     case KeySessionEvent::TicketTransferFinished: {
@@ -1269,9 +1257,9 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
         if (wasHttpTransfer) {
             clearHttpTransferTransaction(false);
         }
-        emit statusMessage(QStringLiteral("传票发送完成：%1").arg(finishedTaskId));
-        // 传票完成后主动触发一次 Q_TASK 对账，确认任务已写入钥匙并更新 m_lastKeyTasks
-        // 这样下次 success 状态检查有新鲜数据，不依赖下次 ready-edge 才能对账
+        emit statusMessage(QStringLiteral("浼犵エ鍙戦€佸畬鎴愶細%1").arg(finishedTaskId));
+        // 浼犵エ瀹屾垚鍚庝富鍔ㄨЕ鍙戜竴娆?Q_TASK 瀵硅处锛岀‘璁や换鍔″凡鍐欏叆閽ュ寵骞舵洿鏂?m_lastKeyTasks
+        // 杩欐牱涓嬫 success 鐘舵€佹鏌ユ湁鏂伴矞鏁版嵁锛屼笉渚濊禆涓嬫 ready-edge 鎵嶈兘瀵硅处
         if (trackedTicket && isCurrentKeySession(finishedSessionId)) {
             onQueryTasksClicked();
         } else {
@@ -1300,7 +1288,7 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
 
         const QString failedTaskId = m_activeTransferTaskId;
         const int failedSessionId = m_activeTransferSessionId;
-        const bool inflightBusy = what.contains(QStringLiteral("当前有命令在途"));
+        const bool inflightBusy = what.contains(QStringLiteral("褰撳墠鏈夊懡浠ゅ湪閫?") );
         const SystemTicketDto failedTicket = m_ticketStore->ticketById(failedTaskId);
         const bool trackedTicket = failedTicket.valid;
         const bool allowAutoPending = trackedTicket && isAutomaticTransferSource(failedTicket);
@@ -1308,21 +1296,21 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
         if (inflightBusy && allowAutoPending) {
             m_ticketStore->updateTransferState(failedTaskId,
                                                QStringLiteral("auto-pending"),
-                                               QStringLiteral("底层仍有命令在途，等待当前命令完成后自动重试"));
+                                               QStringLiteral("搴曞眰浠嶆湁鍛戒护鍦ㄩ€旓紝绛夊緟褰撳墠鍛戒护瀹屾垚鍚庤嚜鍔ㄩ噸璇?") );
             m_activeTransferTaskId.clear();
             m_activeTransferSessionId = 0;
             if (wasHttpTransfer) {
                 clearHttpTransferTransaction(false);
             }
-            emit statusMessage(QStringLiteral("传票暂未发送：当前仍有命令在途，已回到自动等待队列：%1")
+            emit statusMessage(QStringLiteral("浼犵エ鏆傛湭鍙戦€侊細褰撳墠浠嶆湁鍛戒护鍦ㄩ€旓紝宸插洖鍒拌嚜鍔ㄧ瓑寰呴槦鍒楋細%1")
                                    .arg(failedTaskId));
-            scheduleAutoTransferRetry(QStringLiteral("底层命令在途"));
+            scheduleAutoTransferRetry(QStringLiteral("搴曞眰鍛戒护鍦ㄩ€?") );
             break;
         }
         if (inflightBusy && trackedTicket) {
             m_ticketStore->updateTransferState(failedTaskId,
                                                QStringLiteral("failed"),
-                                               QStringLiteral("本次为人工触发，底层命令在途，未自动转回 auto-pending，请人工重试"));
+                                               QStringLiteral("鏈涓轰汉宸ヨЕ鍙戯紝搴曞眰鍛戒护鍦ㄩ€旓紝鏈嚜鍔ㄨ浆鍥?auto-pending锛岃浜哄伐閲嶈瘯"));
             m_activeTransferTaskId.clear();
             m_activeTransferSessionId = 0;
             if (wasHttpTransfer) {
@@ -1330,8 +1318,8 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
             }
             m_ticketIngress->completeDeferredResponse(
                 failedTaskId, false,
-                QStringLiteral("传票失败：底层命令仍在途，请稍后重试"));
-            emit statusMessage(QStringLiteral("人工传票失败：底层命令仍在途，系统不会自动补发，请手动重试：%1")
+                QStringLiteral("浼犵エ澶辫触锛氬簳灞傚懡浠や粛鍦ㄩ€旓紝璇风◢鍚庨噸璇?") );
+            emit statusMessage(QStringLiteral("浜哄伐浼犵エ澶辫触锛氬簳灞傚懡浠や粛鍦ㄩ€旓紝绯荤粺涓嶄細鑷姩琛ュ彂锛岃鎵嬪姩閲嶈瘯锛?1")
                                    .arg(failedTaskId));
             break;
         }
@@ -1346,8 +1334,8 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
         }
         m_ticketIngress->completeDeferredResponse(
             failedTaskId, false,
-            QStringLiteral("传票失败：%1").arg(what.isEmpty() ? QStringLiteral("串口传输错误") : what));
-        emit statusMessage(QStringLiteral("传票发送失败：%1").arg(what));
+            QStringLiteral("浼犵エ澶辫触锛?1").arg(what.isEmpty() ? QStringLiteral("涓插彛浼犺緭閿欒") : what));
+        emit statusMessage(QStringLiteral("浼犵エ鍙戦€佸け璐ワ細%1").arg(what));
         break;
     }
     case KeySessionEvent::KeyStateChanged: {
@@ -1369,7 +1357,7 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
                 m_keyPortApplyInProgress = false;
                 m_suppressSessionAutomation = false;
                 m_keySerialApplyState = QStringLiteral("apply_failed");
-                m_keySerialApplyMessage = QStringLiteral("配置已保存，但新钥匙串口 %1 在切换过程中断开，运行态未完成接管")
+                m_keySerialApplyMessage = QStringLiteral("閰嶇疆宸蹭繚瀛橈紝浣嗘柊閽ュ寵涓插彛 %1 鍦ㄥ垏鎹㈣繃绋嬩腑鏂紑锛岃繍琛屾€佹湭瀹屾垚鎺ョ")
                                                   .arg(targetPort.isEmpty() ? QStringLiteral("<unknown>") : targetPort);
                 m_keyPortApplyTargetPort.clear();
                 emit sessionSnapshotChanged(snapshot);
@@ -1382,7 +1370,7 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
                 m_lastReadyState = false;
                 emit sessionSnapshotChanged(snapshot);
                 refreshKeySerialApplyStatus(QStringLiteral("applying"),
-                                            QStringLiteral("新串口 %1 已切到运行态，当前未检测到钥匙，待放稳并完成通讯确认后结束 apply")
+                                            QStringLiteral("鏂颁覆鍙?%1 宸插垏鍒拌繍琛屾€侊紝褰撳墠鏈娴嬪埌閽ュ寵锛屽緟鏀剧ǔ骞跺畬鎴愰€氳纭鍚庣粨鏉?apply")
                                                     .arg(targetPort.isEmpty() ? snapshot.portName.trimmed() : targetPort));
                 break;
             }
@@ -1391,7 +1379,7 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
                 m_lastReadyState = false;
                 emit sessionSnapshotChanged(snapshot);
                 refreshKeySerialApplyStatus(QStringLiteral("applying"),
-                                            QStringLiteral("新串口 %1 已打开，正在等待 SET_COM/通讯确认完成")
+                                            QStringLiteral("鏂颁覆鍙?%1 宸叉墦寮€锛屾鍦ㄧ瓑寰?SET_COM/閫氳纭瀹屾垚")
                                                     .arg(targetPort.isEmpty() ? snapshot.portName.trimmed() : targetPort));
                 break;
             }
@@ -1401,7 +1389,7 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
             m_suppressSessionAutomation = false;
             m_acceptedBridgeEpoch = snapshot.bridgeEpoch;
             m_keySerialApplyState = QStringLiteral("applied");
-            m_keySerialApplyMessage = QStringLiteral("钥匙串口已切换到 %1，新运行态已完成通讯确认")
+            m_keySerialApplyMessage = QStringLiteral("閽ュ寵涓插彛宸插垏鎹㈠埌 %1锛屾柊杩愯鎬佸凡瀹屾垚閫氳纭")
                                               .arg(targetPort.isEmpty() ? snapshot.portName.trimmed() : targetPort);
             m_keyPortApplyTargetPort.clear();
         }
@@ -1413,12 +1401,12 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
         const bool linkInterrupted = !snapshot.connected || !snapshot.keyPresent;
         if (linkInterrupted) {
             invalidateCurrentKeySession(!snapshot.connected
-                    ? QStringLiteral("串口断开")
-                    : QStringLiteral("钥匙移除"));
+                    ? QStringLiteral("涓插彛鏂紑")
+                    : QStringLiteral("閽ュ寵绉婚櫎"));
             if (!m_activeTransferTaskId.isEmpty()) {
                 const QString reason = !snapshot.connected
-                        ? QStringLiteral("串口已断开，当前传票已中断，请重新连接后重试")
-                        : QStringLiteral("钥匙已移除，当前传票已中断，请重新放回钥匙后重试");
+                        ? QStringLiteral("涓插彛宸叉柇寮€锛屽綋鍓嶄紶绁ㄥ凡涓柇锛岃閲嶆柊杩炴帴鍚庨噸璇?")
+                        : QStringLiteral("閽ュ寵宸茬Щ闄わ紝褰撳墠浼犵エ宸蹭腑鏂紝璇烽噸鏂版斁鍥為挜鍖欏悗閲嶈瘯");
                 m_ticketStore->updateTransferState(m_activeTransferTaskId,
                                                    QStringLiteral("failed"),
                                                    reason);
@@ -1427,7 +1415,7 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
                 m_pendingTransferHandshakeTaskId.clear();
                 m_pendingTransferHandshakeJsonBytes.clear();
                 m_pendingTransferHandshakeDebugChunk = 0;
-                // 钥匙中断时 HTTP 事务也必须释放，否则后续请求会被永久挡住
+                // 閽ュ寵涓柇鏃?HTTP 浜嬪姟涔熷繀椤婚噴鏀撅紝鍚﹀垯鍚庣画璇锋眰浼氳姘镐箙鎸′綇
                 if (m_httpTransferTransactionActive) {
                     clearHttpTransferTransaction(false);
                 }
@@ -1436,8 +1424,8 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
 
             if (!m_activeReturnTaskId.isEmpty() || !m_pendingReturnHandshakeTaskId.isEmpty()) {
                 const QString reason = !snapshot.connected
-                        ? QStringLiteral("串口已断开，当前回传已中断，请重新连接后重试")
-                        : QStringLiteral("钥匙已移除，当前回传已中断，请重新放回钥匙后重试");
+                        ? QStringLiteral("涓插彛宸叉柇寮€锛屽綋鍓嶅洖浼犲凡涓柇锛岃閲嶆柊杩炴帴鍚庨噸璇?")
+                        : QStringLiteral("閽ュ寵宸茬Щ闄わ紝褰撳墠鍥炰紶宸蹭腑鏂紝璇烽噸鏂版斁鍥為挜鍖欏悗閲嶈瘯");
                 failActiveReturnHandshake(reason);
                 emit statusMessage(reason);
             }
@@ -1446,12 +1434,13 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
                 const QString taskId = m_pendingDeletedSystemTicketId;
                 m_ticketStore->updateReturnState(taskId,
                                                  QStringLiteral("return-delete-verifying"),
-                                                 QStringLiteral("钥匙已移除，删除验证已中断，等待重新放回后继续对账"));
+                                                 QStringLiteral("閽ュ寵宸茬Щ闄わ紝鍒犻櫎楠岃瘉宸蹭腑鏂紝绛夊緟閲嶆柊鏀惧洖鍚庣户缁璐?") );
                 m_pendingDeleteSessionId = 0;
-                emit statusMessage(QStringLiteral("钥匙已移除，任务 %1 的钥匙清理验证已中断；重新放回后将继续检查")
+                emit statusMessage(QStringLiteral("閽ュ寵宸茬Щ闄わ紝浠诲姟 %1 鐨勯挜鍖欐竻鐞嗛獙璇佸凡涓柇锛涢噸鏂版斁鍥炲悗灏嗙户缁鏌?")
                                        .arg(taskId));
             }
         }
+
 
         if (linkInterrupted && !m_pendingCancelSystemTicketId.isEmpty()) {
             const QString taskId = m_pendingCancelSystemTicketId;
@@ -1464,14 +1453,14 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
                                                     ticket.residentKeyId,
                                                     ticket.cancelRequestedAt.isValid() ? ticket.cancelRequestedAt : QDateTime::currentDateTime(),
                                                     true,
-                                                    QStringLiteral("钥匙已移除，撤销删除验证已中断，等待重新放回后继续对账"));
+                                                    QStringLiteral("閽ュ寵宸茬Щ闄わ紝鎾ら攢鍒犻櫎楠岃瘉宸蹭腑鏂紝绛夊緟閲嶆柊鏀惧洖鍚庣户缁璐?") );
                 m_ticketCancelCoordinator->recordAccepted(taskId,
                                                          m_ticketStore->ticketById(taskId),
                                                          QStringLiteral("cancel-pending"),
-                                                         QStringLiteral("钥匙已移除，撤销删除验证已中断，等待重新放回后继续对账"));
+                                                         QStringLiteral("閽ュ寵宸茬Щ闄わ紝鎾ら攢鍒犻櫎楠岃瘉宸蹭腑鏂紝绛夊緟閲嶆柊鏀惧洖鍚庣户缁璐?") );
             }
             m_pendingCancelSessionId = 0;
-            emit statusMessage(QStringLiteral("钥匙已移除，任务 %1 的撤销删除链已中断；重新放回后将继续对账").arg(taskId));
+            emit statusMessage(QStringLiteral("閽ュ寵宸茬Щ闄わ紝浠诲姟 %1 鐨勬挙閿€鍒犻櫎閾惧凡涓柇锛涢噸鏂版斁鍥炲悗灏嗙户缁璐?").arg(taskId));
         }
 
         if (ready && !m_lastReadyState) {
@@ -1517,7 +1506,7 @@ void KeyManageController::handleSystemTicketsChanged(const QList<SystemTicketDto
                        m_activeTransferTaskId.isEmpty() ? QStringLiteral("<none>") : m_activeTransferTaskId,
                        m_activeReturnTaskId.isEmpty() ? QStringLiteral("<none>") : m_activeReturnTaskId,
                        m_pendingDeletedSystemTicketId.isEmpty() ? QStringLiteral("<none>") : m_pendingDeletedSystemTicketId);
-    emit statusMessage(QStringLiteral("系统票列表已刷新，当前票数=%1").arg(tickets.size()));
+    emit statusMessage(QStringLiteral("绯荤粺绁ㄥ垪琛ㄥ凡鍒锋柊锛屽綋鍓嶇エ鏁?%1").arg(tickets.size()));
     emit systemTicketsUpdated(tickets);
     if (!m_selectedSystemTicketId.isEmpty()) {
         for (const SystemTicketDto &ticket : tickets) {
@@ -1575,7 +1564,7 @@ bool KeyManageController::ingestWorkbenchJson(const QByteArray &jsonBytes,
                 << QStringLiteral("[KeyManageController] ingestWorkbenchJson failed taskId=%1 reason=%2")
                       .arg(taskId.isEmpty() ? QStringLiteral("<empty>") : taskId,
                            ingestError);
-        emit statusMessage(QStringLiteral("系统票入池失败：%1").arg(ingestError));
+        emit statusMessage(QStringLiteral("绯荤粺绁ㄥ叆姹犲け璐ワ細%1").arg(ingestError));
         return false;
     }
     if (resultMessage) {
@@ -1586,7 +1575,7 @@ bool KeyManageController::ingestWorkbenchJson(const QByteArray &jsonBytes,
             << QStringLiteral("[KeyManageController] ingestWorkbenchJson accepted taskId=%1 autoTransfer=%2")
                   .arg(taskId,
                        autoTransferEnabled() ? QStringLiteral("true") : QStringLiteral("false"));
-    emit statusMessage(QStringLiteral("系统票入池成功：taskId=%1，当前状态=received").arg(taskId));
+    emit statusMessage(QStringLiteral("绯荤粺绁ㄥ叆姹犳垚鍔燂細taskId=%1锛屽綋鍓嶇姸鎬?received").arg(taskId));
 
     if (oldTicket.valid) {
         if (oldTicket.transferState == QLatin1String("success")) {
@@ -1596,7 +1585,7 @@ bool KeyManageController::ingestWorkbenchJson(const QByteArray &jsonBytes,
             qInfo().noquote()
                     << QStringLiteral("[KeyManageController] ingestWorkbenchJson duplicate success taskId=%1 ignored=true")
                           .arg(taskId);
-            emit statusMessage(QStringLiteral("系统票已存在且已传票到钥匙，本次重复请求已忽略"));
+            emit statusMessage(QStringLiteral("绯荤粺绁ㄥ凡瀛樺湪涓斿凡浼犵エ鍒伴挜鍖欙紝鏈閲嶅璇锋眰宸插拷鐣?") );
             return true;
         }
         if (oldTicket.transferState == QLatin1String("sending")) {
@@ -1606,7 +1595,7 @@ bool KeyManageController::ingestWorkbenchJson(const QByteArray &jsonBytes,
             qInfo().noquote()
                     << QStringLiteral("[KeyManageController] ingestWorkbenchJson duplicate sending taskId=%1 ignored=true")
                           .arg(taskId);
-            emit statusMessage(QStringLiteral("系统票正在传票到钥匙，本次重复请求已忽略"));
+            emit statusMessage(QStringLiteral("绯荤粺绁ㄦ鍦ㄤ紶绁ㄥ埌閽ュ寵锛屾湰娆￠噸澶嶈姹傚凡蹇界暐"));
             return true;
         }
         if (oldTicket.transferState == QLatin1String("key-cleared")) {
@@ -1617,7 +1606,7 @@ bool KeyManageController::ingestWorkbenchJson(const QByteArray &jsonBytes,
                 qInfo().noquote()
                         << QStringLiteral("[KeyManageController] ingestWorkbenchJson key-cleared taskId=%1 action=auto-retransfer")
                               .arg(taskId);
-                emit statusMessage(QStringLiteral("系统票对应钥匙任务已删除，准备再次自动传票"));
+                emit statusMessage(QStringLiteral("绯荤粺绁ㄥ搴旈挜鍖欎换鍔″凡鍒犻櫎锛屽噯澶囧啀娆¤嚜鍔ㄤ紶绁?") );
                 tryStartTicketTransfer(taskId, true);
             } else {
                 if (resultMessage) {
@@ -1632,8 +1621,8 @@ bool KeyManageController::ingestWorkbenchJson(const QByteArray &jsonBytes,
                                    ? QStringLiteral("manual-retransfer")
                                    : QStringLiteral("immediate-transfer"));
                 emit statusMessage(scheduleAutoTransfer
-                                   ? QStringLiteral("系统票对应钥匙任务已删除，可手动再次传票")
-                                   : QStringLiteral("系统票对应钥匙任务已删除，准备立即重新传票"));
+                                   ? QStringLiteral("绯荤粺绁ㄥ搴旈挜鍖欎换鍔″凡鍒犻櫎锛屽彲鎵嬪姩鍐嶆浼犵エ")
+                                   : QStringLiteral("绯荤粺绁ㄥ搴旈挜鍖欎换鍔″凡鍒犻櫎锛屽噯澶囩珛鍗抽噸鏂颁紶绁?") );
             }
             return true;
         }
@@ -1643,17 +1632,17 @@ bool KeyManageController::ingestWorkbenchJson(const QByteArray &jsonBytes,
         if (resultMessage) {
             *resultMessage = QStringLiteral("ticket accepted, ready for immediate transfer");
         }
-        emit statusMessage(QStringLiteral("系统票已接收并入池，准备立即发送到钥匙"));
+        emit statusMessage(QStringLiteral("绯荤粺绁ㄥ凡鎺ユ敹骞跺叆姹狅紝鍑嗗绔嬪嵆鍙戦€佸埌閽ュ寵"));
     } else if (autoTransferEnabled()) {
         if (resultMessage) {
             *resultMessage = QStringLiteral("ticket accepted, queued for auto transfer");
         }
-        emit statusMessage(QStringLiteral("系统票已接收并入池，准备自动传票"));
+        emit statusMessage(QStringLiteral("绯荤粺绁ㄥ凡鎺ユ敹骞跺叆姹狅紝鍑嗗鑷姩浼犵エ"));
     } else {
         if (resultMessage) {
             *resultMessage = QStringLiteral("ticket accepted, auto transfer disabled");
         }
-        emit statusMessage(QStringLiteral("系统票已接收并入池（自动传票已关闭）"));
+        emit statusMessage(QStringLiteral("绯荤粺绁ㄥ凡鎺ユ敹骞跺叆姹狅紙鑷姩浼犵エ宸插叧闂級"));
     }
     qInfo().noquote()
             << QStringLiteral("[KeyManageController] ingestWorkbenchJson taskId=%1 nextAction=%2")
@@ -1691,7 +1680,7 @@ void KeyManageController::handleInitPayloadReady(const QByteArray &payload)
     req.opId = nextOpId();
     req.payload = payload;
     m_session->execute(req);
-    emit statusMessage(QStringLiteral("初始化数据已准备完成，开始下发到钥匙"));
+    emit statusMessage(QStringLiteral("鍒濆鍖栨暟鎹凡鍑嗗瀹屾垚锛屽紑濮嬩笅鍙戝埌閽ュ寵"));
 }
 
 void KeyManageController::handleRfidPayloadReady(const QByteArray &payload)
@@ -1701,7 +1690,7 @@ void KeyManageController::handleRfidPayloadReady(const QByteArray &payload)
     req.opId = nextOpId();
     req.payload = payload;
     m_session->execute(req);
-    emit statusMessage(QStringLiteral("RFID 数据已准备完成，开始下发到钥匙"));
+    emit statusMessage(QStringLiteral("RFID 鏁版嵁宸插噯澶囧畬鎴愶紝寮€濮嬩笅鍙戝埌閽ュ寵"));
 }
 
 void KeyManageController::handleProvisionRequestFailed(const QString &reason)
@@ -1711,7 +1700,7 @@ void KeyManageController::handleProvisionRequestFailed(const QString &reason)
 
 void KeyManageController::handleReturnUploadSucceeded(const QString &taskId)
 {
-    emit statusMessage(QStringLiteral("回传上传成功：%1").arg(taskId));
+    emit statusMessage(QStringLiteral("鍥炰紶涓婁紶鎴愬姛锛?1").arg(taskId));
 
     if (!m_activeReturnTaskIdRaw.isEmpty() && isCurrentKeySession(m_activeReturnSessionId)) {
         markReturnDeletePending(taskId, m_activeReturnTaskIdRaw);
@@ -1721,9 +1710,9 @@ void KeyManageController::handleReturnUploadSucceeded(const QString &taskId)
         req.opId = nextOpId();
         req.payload = m_activeReturnTaskIdRaw;
         m_session->execute(req);
-        emit statusMessage(QStringLiteral("回传上传成功，开始删除钥匙中的已完成任务"));
+        emit statusMessage(QStringLiteral("鍥炰紶涓婁紶鎴愬姛锛屽紑濮嬪垹闄ら挜鍖欎腑鐨勫凡瀹屾垚浠诲姟"));
     } else {
-        const QString reason = QStringLiteral("回传上传成功，但缺少钥匙任务原始ID，无法自动删除钥匙任务");
+        const QString reason = QStringLiteral("鍥炰紶涓婁紶鎴愬姛锛屼絾缂哄皯閽ュ寵浠诲姟鍘熷ID锛屾棤娉曡嚜鍔ㄥ垹闄ら挜鍖欎换鍔?");
         m_ticketStore->updateReturnState(taskId, QStringLiteral("manual-required"), reason);
         emit statusMessage(reason);
     }
@@ -1734,7 +1723,7 @@ void KeyManageController::handleReturnUploadSucceeded(const QString &taskId)
 void KeyManageController::handleReturnUploadFailed(const QString &taskId, const QString &reason)
 {
     m_ticketStore->updateReturnState(taskId, QStringLiteral("manual-required"), reason);
-    emit statusMessage(QStringLiteral("回传上传失败：%1").arg(reason));
+    emit statusMessage(QStringLiteral("鍥炰紶涓婁紶澶辫触锛?1").arg(reason));
     clearActiveReturnContext();
 }
 
@@ -1799,18 +1788,16 @@ void KeyManageController::finalizePendingReturnDelete(const QList<KeyTaskDto> &t
 
     const bool sessionUnknown = (m_pendingDeleteSessionId == 0);
     if (sessionUnknown && !stillExists) {
-        if (m_pendingDeleteOrigin != DeleteOrigin::ManualDelete) {
-            m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
-                                             QStringLiteral("return-delete-verifying"),
-                                             QStringLiteral("删除链路曾被钥匙移除打断，当前钥匙未观测到该任务，继续等待原钥匙回位后再确认"));
-        }
-        emit statusMessage(QStringLiteral("删除链路曾被钥匙移除打断，当前未确认到原任务，继续等待原钥匙回位"));
+        m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
+                                         QStringLiteral("return-delete-verifying"),
+                                         QStringLiteral("鍒犻櫎閾捐矾鏇捐閽ュ寵绉婚櫎鎵撴柇锛屽綋鍓嶉挜鍖欐湭瑙傛祴鍒拌浠诲姟锛岀户缁瓑寰呭師閽ュ寵鍥炰綅鍚庡啀纭"));
+        emit statusMessage(QStringLiteral("鍒犻櫎閾捐矾鏇捐閽ュ寵绉婚櫎鎵撴柇锛屽綋鍓嶆湭纭鍒板師浠诲姟锛岀户缁瓑寰呭師閽ュ寵鍥炰綅"));
         return;
     }
     if (stillExists || sessionUnknown) {
         const QString retryReason = (sessionUnknown && !stillExists)
-                ? QStringLiteral("删除后钥匙发生过移除，当前无法确认是否为同一把钥匙，重新发送 DEL 以避免误判成功")
-                : QStringLiteral("删除后验证发现钥匙任务仍存在，重新发送 DEL 继续清理");
+                ? QStringLiteral("鍒犻櫎鍚庨挜鍖欏彂鐢熻繃绉婚櫎锛屽綋鍓嶆棤娉曠‘璁ゆ槸鍚︿负鍚屼竴鎶婇挜鍖欙紝閲嶆柊鍙戦€?DEL 浠ラ伩鍏嶈鍒ゆ垚鍔?")
+                : QStringLiteral("鍒犻櫎鍚庨獙璇佸彂鐜伴挜鍖欎换鍔′粛瀛樺湪锛岄噸鏂板彂閫?DEL 缁х画娓呯悊");
         if (!retryPendingReturnDelete(retryReason)) {
             emit statusMessage(retryReason);
         }
@@ -1821,18 +1808,19 @@ void KeyManageController::finalizePendingReturnDelete(const QList<KeyTaskDto> &t
             m_ticketStore->markKeyTaskDeleted(m_pendingDeletedSystemTicketId);
             const SystemTicketDto ticket = m_ticketStore->ticketById(m_pendingDeletedSystemTicketId);
             if (ticket.valid) {
+                // 閽ュ寵宸叉竻鐞嗗畬姣曪紝寮傛閫氱煡宸ヤ綔鍙扮粓姝紱鎴愬姛鍚庡垹闄ゆ湰鍦拌褰曪紝澶辫触鍒欎繚鐣欎緵閲嶈瘯
                 callTerminationThenRemove(m_pendingDeletedSystemTicketId);
-                emit statusMessage(QStringLiteral("钥匙任务已删除，正在通知工作台终止系统票：%1")
+                emit statusMessage(QStringLiteral("閽ュ寵浠诲姟宸插垹闄わ紝姝ｅ湪閫氱煡宸ヤ綔鍙扮粓姝㈢郴缁熺エ锛?1")
                                        .arg(m_pendingDeletedSystemTicketId));
             } else {
-                emit statusMessage(QStringLiteral("钥匙残留任务已清理（本地记录已过期）：%1")
+                emit statusMessage(QStringLiteral("閽ュ寵娈嬬暀浠诲姟宸叉竻鐞嗭紙鏈湴璁板綍宸茶繃鏈燂級锛?1")
                                        .arg(m_pendingDeletedSystemTicketId));
             }
         } else {
-            // 回传清理收口 — 原有逻辑完全不变
+            // 鍥炰紶娓呯悊鏀跺彛 鈥?鍘熸湁閫昏緫瀹屽叏涓嶅彉
             if (m_pendingDeleteAllowsRetransfer) {
                 m_ticketStore->markKeyTaskDeleted(m_pendingDeletedSystemTicketId);
-                emit statusMessage(QStringLiteral("钥匙任务已删除，可再次传票"));
+                emit statusMessage(QStringLiteral("閽ュ寵浠诲姟宸插垹闄わ紝鍙啀娆′紶绁?") );
             } else {
                 const SystemTicketDto ticket = m_ticketStore->ticketById(m_pendingDeletedSystemTicketId);
                 if (ticket.valid && (ticket.returnState == QLatin1String("return-delete-verifying")
@@ -1840,11 +1828,11 @@ void KeyManageController::finalizePendingReturnDelete(const QList<KeyTaskDto> &t
                                      || ticket.returnState == QLatin1String("return-upload-success"))) {
                     m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
                                                      QStringLiteral("return-delete-success"));
-                    emit statusMessage(QStringLiteral("回传完成，钥匙任务已清理：%1")
+                    emit statusMessage(QStringLiteral("鍥炰紶瀹屾垚锛岄挜鍖欎换鍔″凡娓呯悊锛?1")
                                            .arg(m_pendingDeletedSystemTicketId));
                     emit workbenchRefreshRequested();
                 } else {
-                    emit statusMessage(QStringLiteral("钥匙任务已删除"));
+                    emit statusMessage(QStringLiteral("閽ュ寵浠诲姟宸插垹闄?") );
                 }
             }
         }
@@ -1855,12 +1843,10 @@ void KeyManageController::finalizePendingReturnDelete(const QList<KeyTaskDto> &t
         m_pendingDeleteRetryCount = 0;
         m_pendingDeleteOrigin = DeleteOrigin::None;
     } else {
-        if (m_pendingDeleteOrigin != DeleteOrigin::ManualDelete) {
-            m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
-                                             QStringLiteral("return-delete-verifying"),
-                                             QStringLiteral("删除后验证发现钥匙任务仍存在，等待后续自动清理"));
-        }
-        emit statusMessage(QStringLiteral("删除后验证发现钥匙任务仍存在，请继续等待自动清理"));
+        m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
+                                         QStringLiteral("return-delete-verifying"),
+                                         QStringLiteral("鍒犻櫎鍚庨獙璇佸彂鐜伴挜鍖欎换鍔′粛瀛樺湪锛岀瓑寰呭悗缁嚜鍔ㄦ竻鐞?") );
+        emit statusMessage(QStringLiteral("鍒犻櫎鍚庨獙璇佸彂鐜伴挜鍖欎换鍔′粛瀛樺湪锛岃缁х画绛夊緟鑷姩娓呯悊"));
     }
 }
 
@@ -1870,44 +1856,28 @@ bool KeyManageController::retryPendingReturnDelete(const QString &reason)
         return false;
     }
 
-    const bool isManualDelete = (m_pendingDeleteOrigin == DeleteOrigin::ManualDelete);
-
     const KeySessionSnapshot snapshot = m_session->snapshot();
     if (!snapshot.connected || !snapshot.keyPresent || !snapshot.keyStable || !snapshot.sessionReady) {
-        if (!isManualDelete) {
-            m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
-                                             QStringLiteral("return-delete-verifying"),
-                                             reason.isEmpty()
-                                                     ? QStringLiteral("等待钥匙重新就绪后继续删除验证")
-                                                     : reason);
-        }
+        m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
+                                         QStringLiteral("return-delete-verifying"),
+                                         reason.isEmpty()
+                                                 ? QStringLiteral("绛夊緟閽ュ寵閲嶆柊灏辩华鍚庣户缁垹闄ら獙璇?")
+                                                 : reason);
         return false;
     }
     if (snapshot.commandInFlight || snapshot.recoveryWindowActive) {
-        if (!isManualDelete) {
-            m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
-                                             QStringLiteral("return-delete-verifying"),
-                                             reason.isEmpty()
-                                                     ? QStringLiteral("等待当前协议窗口收口后继续删除验证")
-                                                     : reason);
-        }
+        m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
+                                         QStringLiteral("return-delete-verifying"),
+                                         reason.isEmpty()
+                                                 ? QStringLiteral("绛夊緟褰撳墠鍗忚绐楀彛鏀跺彛鍚庣户缁垹闄ら獙璇?")
+                                                 : reason);
         return false;
     }
     if (m_pendingDeleteRetryCount >= 3) {
-        if (isManualDelete) {
-            // ManualDelete：DEL 串口确认失败，不写 returnState，改写 adminDeleteStage 供 UI 提示
-            m_ticketStore->updateAdminDeleteStage(
-                    m_pendingDeletedSystemTicketId,
-                    SystemTicketDto::AdminDeleteStage::TerminationFailed);
-            m_ticketStore->updateAdminDeleteError(
-                    m_pendingDeletedSystemTicketId,
-                    QStringLiteral("DEL 串口命令重试 3 次仍未确认删除，钥匙任务状态未知，请人工确认"));
-        } else {
-            m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
-                                             QStringLiteral("return-delete-failed"),
-                                             QStringLiteral("DEL 已重试 3 次仍未确认删除，请人工处理"));
-        }
-        emit statusMessage(QStringLiteral("任务 %1 删除验证失败：DEL 已重试 3 次仍未收口，请人工处理")
+        m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
+                                         QStringLiteral("return-delete-failed"),
+                                         QStringLiteral("DEL 宸查噸璇?3 娆′粛鏈‘璁ゅ垹闄わ紝璇蜂汉宸ュ鐞?") );
+        emit statusMessage(QStringLiteral("浠诲姟 %1 鍒犻櫎楠岃瘉澶辫触锛欴EL 宸查噸璇?3 娆′粛鏈敹鍙ｏ紝璇蜂汉宸ュ鐞?")
                                .arg(m_pendingDeletedSystemTicketId));
         m_pendingDeletedSystemTicketId.clear();
         m_pendingDeletedKeyTaskRaw.clear();
@@ -1920,20 +1890,18 @@ bool KeyManageController::retryPendingReturnDelete(const QString &reason)
 
     ++m_pendingDeleteRetryCount;
     m_pendingDeleteSessionId = m_keySessionId;
-    if (!isManualDelete) {
-        m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
-                                         QStringLiteral("return-delete-pending"),
-                                         QStringLiteral("DEL 重试第 %1/3 次：%2")
-                                                 .arg(m_pendingDeleteRetryCount)
-                                                 .arg(reason.isEmpty() ? QStringLiteral("继续确认钥匙任务清理结果") : reason));
-    }
+    m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
+                                     QStringLiteral("return-delete-pending"),
+                                     QStringLiteral("DEL 閲嶈瘯绗?%1/3 娆★細%2")
+                                             .arg(m_pendingDeleteRetryCount)
+                                             .arg(reason.isEmpty() ? QStringLiteral("缁х画纭閽ュ寵浠诲姟娓呯悊缁撴灉") : reason));
 
     CommandRequest req;
     req.id = CommandId::DeleteTask;
     req.opId = nextOpId();
     req.payload = m_pendingDeletedKeyTaskRaw;
     m_session->execute(req);
-    emit statusMessage(QStringLiteral("任务 %1 删除验证未收口，已自动重发 DEL（第 %2/3 次）")
+    emit statusMessage(QStringLiteral("浠诲姟 %1 鍒犻櫎楠岃瘉鏈敹鍙ｏ紝宸茶嚜鍔ㄩ噸鍙?DEL锛堢 %2/3 娆★級")
                            .arg(m_pendingDeletedSystemTicketId)
                            .arg(m_pendingDeleteRetryCount));
     return true;
@@ -1946,7 +1914,7 @@ void KeyManageController::callTermination(const QString &taskId)
     if (accessToken.isEmpty()) {
         qWarning().noquote()
                 << QStringLiteral("[KeyManageController] callTermination skip: no accessToken taskId=%1").arg(taskId);
-        emit statusMessage(QStringLiteral("终止系统票失败：未登录，请管理员手动在工作台终止"));
+        emit statusMessage(QStringLiteral("缁堟绯荤粺绁ㄥけ璐ワ細鏈櫥褰曪紝璇风鐞嗗憳鎵嬪姩鍦ㄥ伐浣滃彴缁堟"));
         return;
     }
 
@@ -1961,7 +1929,7 @@ void KeyManageController::callTermination(const QString &taskId)
     QUrl url(apiBase + QStringLiteral("/task/termination"));
     QUrlQuery query;
     query.addQueryItem(QStringLiteral("id"), taskId);
-    query.addQueryItem(QStringLiteral("reason"), QStringLiteral("管理员手工删除钥匙任务"));
+    query.addQueryItem(QStringLiteral("reason"), QStringLiteral("绠＄悊鍛樻墜宸ュ垹闄ら挜鍖欎换鍔?") );
     url.setQuery(query);
 
     QNetworkRequest request(url);
@@ -1983,39 +1951,27 @@ void KeyManageController::callTermination(const QString &taskId)
             qWarning().noquote()
                     << QStringLiteral("[KeyManageController] callTermination failed taskId=%1 http=%2 error=%3")
                            .arg(taskId).arg(httpStatus).arg(reply->errorString());
-            emit statusMessage(QStringLiteral("终止系统票接口调用失败（HTTP %1），请管理员在工作台手动终止").arg(httpStatus));
+            emit statusMessage(QStringLiteral("缁堟绯荤粺绁ㄦ帴鍙ｈ皟鐢ㄥけ璐ワ紙HTTP %1锛夛紝璇风鐞嗗憳鍦ㄥ伐浣滃彴鎵嬪姩缁堟").arg(httpStatus));
         }
     });
 }
 
 void KeyManageController::callTerminationThenRemove(const QString &taskId)
 {
-    // 重入防护：仅阻止本次运行时真正已在途的 HTTP 请求，不阻止跨会话重试
-    if (m_terminationInFlightTaskIds.contains(taskId)) {
-        qInfo().noquote()
-                << QStringLiteral("[KeyManageController] callTerminationThenRemove skip: already in-flight taskId=%1")
-                      .arg(taskId);
-        return;
-    }
-
     AuthServiceAdapter authAdapter;
     const QString accessToken = authAdapter.accessToken().trimmed();
     if (accessToken.isEmpty()) {
         qWarning().noquote()
-                << QStringLiteral("[KeyManageController] callTerminationThenRemove skip: no accessToken taskId=%1")
-                      .arg(taskId);
-        m_ticketStore->updateAdminDeleteStage(
-                taskId, SystemTicketDto::AdminDeleteStage::KeyClearedAwaitingTermination);
-        m_ticketStore->updateAdminDeleteError(
-                taskId, QStringLiteral("未登录，等待下次登录后自动重试"));
-        emit statusMessage(
-                QStringLiteral("工作台通知失败：未登录，下次登录后将自动重试（任务 ID: %1）").arg(taskId));
+                << QStringLiteral("[KeyManageController] callTerminationThenRemove skip: no accessToken taskId=%1").arg(taskId);
+        m_ticketStore->updateAdminDeleteStage(taskId,
+                SystemTicketDto::AdminDeleteStage::KeyClearedAwaitingTermination);
+        m_ticketStore->updateAdminDeleteError(taskId, QStringLiteral("鏈櫥褰曪紝绛夊緟涓嬫鐧诲綍鍚庤嚜鍔ㄩ噸璇?") );
+        emit statusMessage(QStringLiteral("宸ヤ綔鍙伴€氱煡澶辫触锛氭湭鐧诲綍锛屼笅娆＄櫥褰曞悗灏嗚嚜鍔ㄩ噸璇曪紙浠诲姟 ID: %1锛?").arg(taskId));
         return;
     }
 
-    m_ticketStore->updateAdminDeleteStage(
-            taskId, SystemTicketDto::AdminDeleteStage::KeyClearedAwaitingTermination);
-    m_ticketStore->updateAdminDeleteError(taskId, QString());
+    m_ticketStore->updateAdminDeleteStage(taskId,
+            SystemTicketDto::AdminDeleteStage::KeyClearedAwaitingTermination);
 
     QString apiBase = ConfigManager::instance()->apiUrl();
     if (apiBase.endsWith(QLatin1String("/third-api"))) {
@@ -2028,7 +1984,7 @@ void KeyManageController::callTerminationThenRemove(const QString &taskId)
     QUrl url(apiBase + QStringLiteral("/task/termination"));
     QUrlQuery query;
     query.addQueryItem(QStringLiteral("id"), taskId);
-    query.addQueryItem(QStringLiteral("reason"), QStringLiteral("管理员手工删除钥匙任务"));
+    query.addQueryItem(QStringLiteral("reason"), QStringLiteral("绠＄悊鍛樻墜宸ュ垹闄ら挜鍖欎换鍔?") );
     url.setQuery(query);
 
     QNetworkRequest request(url);
@@ -2040,63 +1996,58 @@ void KeyManageController::callTerminationThenRemove(const QString &taskId)
             << QStringLiteral("[KeyManageController] callTerminationThenRemove POST taskId=%1 url=%2")
                   .arg(taskId, url.toString());
 
-    m_terminationInFlightTaskIds.insert(taskId);
     QNetworkReply *reply = m_terminationNetwork->post(request, QByteArray("{}"));
     connect(reply, &QNetworkReply::finished, this, [this, reply, taskId]() {
         const QByteArray body = reply->readAll();
+        reply->deleteLater();
         const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        const bool transportOk = reply->error() == QNetworkReply::NoError
-                && httpStatus >= 200 && httpStatus < 300;
-        QString errText = reply->errorString();
-        bool businessOk = false;
 
-        if (transportOk) {
-            QJsonParseError parseError;
-            const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
-            if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
-                const QJsonObject obj = doc.object();
-                const bool successFlag = obj.value(QStringLiteral("success")).toBool(false);
-                const int code = obj.value(QStringLiteral("code")).toInt(-1);
-                businessOk = successFlag || code == 200;
-                if (!businessOk) {
-                    const QString message = obj.value(QStringLiteral("message")).toString().trimmed();
-                    if (!message.isEmpty()) {
-                        errText = message;
-                    }
-                }
-            } else {
-                // body 非 JSON：空 body 视为成功（REST 约定），非空非 JSON 内容视为异常
-                if (body.trimmed().isEmpty()) {
-                    businessOk = true;
-                } else {
-                    errText = QStringLiteral("响应格式异常（非 JSON），HTTP %1").arg(httpStatus);
-                }
+        // 鍏堝垽鏂紶杈撳眰鏄惁鎴愬姛
+        QString errText;
+        bool transportOk = (reply->error() == QNetworkReply::NoError
+                            && httpStatus >= 200 && httpStatus < 300);
+        if (!transportOk) {
+            errText = reply->errorString();
+            if (errText.trimmed().isEmpty()) {
+                errText = QStringLiteral("HTTP %1").arg(httpStatus);
             }
         }
 
-        reply->deleteLater();
-        m_terminationInFlightTaskIds.remove(taskId);
+        // 鍐嶅垽鏂笟鍔″眰锛堜笌 TicketReturnHttpClient 淇濇寔涓€鑷达級
+        bool businessOk = false;
+        if (transportOk) {
+            QJsonParseError pe;
+            const QJsonDocument doc = QJsonDocument::fromJson(body, &pe);
+            if (!doc.isNull() && doc.isObject()) {
+                const QJsonObject obj = doc.object();
+                businessOk = obj.value(QStringLiteral("success")).toBool(false)
+                             || obj.value(QStringLiteral("code")).toInt() == 200;
+                if (!businessOk) {
+                    errText = obj.value(QStringLiteral("msg")).toString().trimmed();
+                    if (errText.isEmpty()) {
+                        errText = QStringLiteral("宸ヤ綔鍙版帴鍙ｈ繑鍥炰笟鍔″け璐ワ紙HTTP %1锛?").arg(httpStatus);
+                    }
+                }
+            } else {
+                // body 闈?JSON 鏃讹紝浼犺緭灞?2xx 鍗宠涓烘垚鍔燂紙鍏煎鏃?body 鍝嶅簲锛?                businessOk = true;
+            }
+        }
 
         if (businessOk) {
             qInfo().noquote()
                     << QStringLiteral("[KeyManageController] callTerminationThenRemove success taskId=%1 http=%2")
                           .arg(taskId).arg(httpStatus);
             m_ticketStore->removeTicket(taskId);
-            emit statusMessage(QStringLiteral("系统票已终止并删除：%1").arg(taskId));
+            emit statusMessage(QStringLiteral("绯荤粺绁ㄥ凡缁堟骞跺垹闄わ細%1").arg(taskId));
         } else {
-            if (errText.trimmed().isEmpty()) {
-                errText = transportOk
-                        ? QStringLiteral("终止系统票业务返回失败")
-                        : QStringLiteral("网络或接口调用失败");
-            }
             qWarning().noquote()
                     << QStringLiteral("[KeyManageController] callTerminationThenRemove failed taskId=%1 http=%2 error=%3")
                           .arg(taskId).arg(httpStatus).arg(errText);
-            m_ticketStore->updateAdminDeleteStage(
-                    taskId, SystemTicketDto::AdminDeleteStage::TerminationFailed);
+            m_ticketStore->updateAdminDeleteStage(taskId,
+                    SystemTicketDto::AdminDeleteStage::TerminationFailed);
             m_ticketStore->updateAdminDeleteError(taskId, errText);
             emit statusMessage(
-                    QStringLiteral("工作台通知失败，请手动在工作台关闭任务 ID: %1（错误：%2）")
+                    QStringLiteral("宸ヤ綔鍙伴€氱煡澶辫触锛岃鎵嬪姩鍦ㄥ伐浣滃彴鍏抽棴浠诲姟 ID: %1锛堥敊璇細%2锛?")
                             .arg(taskId, errText));
         }
     });
@@ -2111,35 +2062,35 @@ bool KeyManageController::canProcessCancelNow(QString *blockedReason) const
     };
 
     if (m_pendingCancelSystemTicketId.size() > 0) {
-        setBlockedReason(QStringLiteral("当前已有撤销删除链在执行"));
+        setBlockedReason(QStringLiteral("褰撳墠宸叉湁鎾ら攢鍒犻櫎閾惧湪鎵ц"));
         return false;
     }
     if (!m_activeTransferTaskId.isEmpty()) {
-        setBlockedReason(QStringLiteral("当前存在传票链在途"));
+        setBlockedReason(QStringLiteral("褰撳墠瀛樺湪浼犵エ閾惧湪閫?") );
         return false;
     }
     if (!m_activeReturnTaskId.isEmpty()
             || !m_pendingReturnHandshakeTaskId.isEmpty()
             || !m_pendingDeletedSystemTicketId.isEmpty()) {
-        setBlockedReason(QStringLiteral("当前存在回传或删除验证链在途"));
+        setBlockedReason(QStringLiteral("褰撳墠瀛樺湪鍥炰紶鎴栧垹闄ら獙璇侀摼鍦ㄩ€?") );
         return false;
     }
 
     const KeySessionSnapshot snapshot = m_session->snapshot();
     if (!snapshot.connected || !snapshot.keyPresent || !snapshot.keyStable || !snapshot.sessionReady) {
-        setBlockedReason(QStringLiteral("当前钥匙会话未就绪"));
+        setBlockedReason(QStringLiteral("褰撳墠閽ュ寵浼氳瘽鏈氨缁?") );
         return false;
     }
     if (snapshot.commandInFlight) {
-        setBlockedReason(QStringLiteral("当前底层仍有协议命令在途"));
+        setBlockedReason(QStringLiteral("褰撳墠搴曞眰浠嶆湁鍗忚鍛戒护鍦ㄩ€?") );
         return false;
     }
     if (snapshot.recoveryWindowActive) {
-        setBlockedReason(QStringLiteral("当前处于自动恢复窗口"));
+        setBlockedReason(QStringLiteral("褰撳墠澶勪簬鑷姩鎭㈠绐楀彛"));
         return false;
     }
     if (m_autoQuerySessionId == m_keySessionId && m_keySessionId > 0) {
-        setBlockedReason(QStringLiteral("当前正在执行自动 Q_TASK 对账"));
+        setBlockedReason(QStringLiteral("褰撳墠姝ｅ湪鎵ц鑷姩 Q_TASK 瀵硅处"));
         return false;
     }
 
@@ -2180,7 +2131,7 @@ void KeyManageController::schedulePendingCancelReconcile(const QString &reason, 
         }
 
         m_autoQuerySessionId = m_keySessionId;
-        emit statusMessage(QStringLiteral("检测到待撤销任务，开始读取钥匙票列表进行对账"));
+        emit statusMessage(QStringLiteral("妫€娴嬪埌寰呮挙閿€浠诲姟锛屽紑濮嬭鍙栭挜鍖欑エ鍒楄〃杩涜瀵硅处"));
         onQueryTasksClicked();
     });
 }
@@ -2210,13 +2161,13 @@ void KeyManageController::tryProcessPendingCancelTasks(const QList<KeyTaskDto> &
             if (ticket.returnState == QLatin1String("return-delete-success")
                     || ticket.returnState == QLatin1String("return-success")
                     || ticket.transferState == QLatin1String("key-cleared")) {
-                m_ticketCancelCoordinator->recordDone(taskId, ticket, QStringLiteral("任务已完成，无需撤销"));
+                m_ticketCancelCoordinator->recordDone(taskId, ticket, QStringLiteral("浠诲姟宸插畬鎴愶紝鏃犻渶鎾ら攢"));
                 continue;
             }
             if (ticket.returnState == QLatin1String("return-upload-success")
                     || ticket.returnState == QLatin1String("return-delete-pending")
                     || ticket.returnState == QLatin1String("return-delete-verifying")) {
-                m_ticketCancelCoordinator->recordDone(taskId, ticket, QStringLiteral("任务已在清理中，无需重复撤销"));
+                m_ticketCancelCoordinator->recordDone(taskId, ticket, QStringLiteral("浠诲姟宸插湪娓呯悊涓紝鏃犻渶閲嶅鎾ら攢"));
                 continue;
             }
         }
@@ -2225,12 +2176,12 @@ void KeyManageController::tryProcessPendingCancelTasks(const QList<KeyTaskDto> &
         const QByteArray keyTaskRaw = findKeyTaskIdRaw(taskId, &keyTaskStatus);
         if (keyTaskRaw.isEmpty()) {
             if (ticket.valid) {
-                m_ticketCancelCoordinator->recordDone(taskId, ticket, QStringLiteral("任务已取消"));
+                m_ticketCancelCoordinator->recordDone(taskId, ticket, QStringLiteral("浠诲姟宸插彇娑?") );
                 m_ticketStore->removeTicket(taskId);
             } else {
-                m_ticketCancelCoordinator->recordDoneWithoutTicket(taskId, QStringLiteral("任务已取消"));
+                m_ticketCancelCoordinator->recordDoneWithoutTicket(taskId, QStringLiteral("浠诲姟宸插彇娑?") );
             }
-            emit statusMessage(QStringLiteral("撤销任务已确认不在钥匙中，已完成收口：%1").arg(taskId));
+            emit statusMessage(QStringLiteral("鎾ら攢浠诲姟宸茬‘璁や笉鍦ㄩ挜鍖欎腑锛屽凡瀹屾垚鏀跺彛锛?1").arg(taskId));
             continue;
         }
 
@@ -2246,10 +2197,10 @@ void KeyManageController::tryProcessPendingCancelTasks(const QList<KeyTaskDto> &
                                                 ticket.residentKeyId,
                                                 ticket.cancelRequestedAt.isValid() ? ticket.cancelRequestedAt : QDateTime::currentDateTime(),
                                                 true,
-                                                QStringLiteral("已确认钥匙中存在任务，开始执行 DEL"));
+                                                QStringLiteral("宸茬‘璁ら挜鍖欎腑瀛樺湪浠诲姟锛屽紑濮嬫墽琛?DEL"));
             m_ticketCancelCoordinator->recordExecuting(taskId,
                                                        m_ticketStore->ticketById(taskId),
-                                                       QStringLiteral("已确认钥匙中存在任务，开始执行 DEL"));
+                                                       QStringLiteral("宸茬‘璁ら挜鍖欎腑瀛樺湪浠诲姟锛屽紑濮嬫墽琛?DEL"));
         } else {
             SystemTicketDto transientTicket;
             transientTicket.taskId = taskId;
@@ -2261,7 +2212,7 @@ void KeyManageController::tryProcessPendingCancelTasks(const QList<KeyTaskDto> &
             transientTicket.valid = true;
             m_ticketCancelCoordinator->recordExecuting(taskId,
                                                        transientTicket,
-                                                       QStringLiteral("已确认钥匙中存在任务，开始执行 DEL"));
+                                                       QStringLiteral("宸茬‘璁ら挜鍖欎腑瀛樺湪浠诲姟锛屽紑濮嬫墽琛?DEL"));
         }
 
         CommandRequest req;
@@ -2269,7 +2220,7 @@ void KeyManageController::tryProcessPendingCancelTasks(const QList<KeyTaskDto> &
         req.opId = nextOpId();
         req.payload = keyTaskRaw;
         m_session->execute(req);
-        emit statusMessage(QStringLiteral("检测到待撤销任务仍在钥匙中，开始执行删除：%1").arg(taskId));
+        emit statusMessage(QStringLiteral("妫€娴嬪埌寰呮挙閿€浠诲姟浠嶅湪閽ュ寵涓紝寮€濮嬫墽琛屽垹闄わ細%1").arg(taskId));
         return;
     }
 }
@@ -2300,12 +2251,12 @@ void KeyManageController::finalizePendingCancelDelete(const QList<KeyTaskDto> &t
     const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
     if (!stillExists) {
         if (ticket.valid) {
-            m_ticketCancelCoordinator->recordDone(taskId, ticket, QStringLiteral("任务已取消"));
+            m_ticketCancelCoordinator->recordDone(taskId, ticket, QStringLiteral("浠诲姟宸插彇娑?") );
             m_ticketStore->removeTicket(taskId);
         } else {
-            m_ticketCancelCoordinator->recordDoneWithoutTicket(taskId, QStringLiteral("任务已取消"));
+            m_ticketCancelCoordinator->recordDoneWithoutTicket(taskId, QStringLiteral("浠诲姟宸插彇娑?") );
         }
-        emit statusMessage(QStringLiteral("撤销任务已完成，钥匙侧任务已清理：%1").arg(taskId));
+        emit statusMessage(QStringLiteral("鎾ら攢浠诲姟宸插畬鎴愶紝閽ュ寵渚т换鍔″凡娓呯悊锛?1").arg(taskId));
         emit workbenchRefreshRequested();
         m_pendingCancelSystemTicketId.clear();
         m_pendingCancelKeyTaskRaw.clear();
@@ -2321,13 +2272,13 @@ void KeyManageController::finalizePendingCancelDelete(const QList<KeyTaskDto> &t
                                             ticket.residentKeyId,
                                             ticket.cancelRequestedAt.isValid() ? ticket.cancelRequestedAt : QDateTime::currentDateTime(),
                                             true,
-                                            QStringLiteral("删除验证发现钥匙任务仍存在，等待下一次安全窗口继续清理"));
+                                            QStringLiteral("鍒犻櫎楠岃瘉鍙戠幇閽ュ寵浠诲姟浠嶅瓨鍦紝绛夊緟涓嬩竴娆″畨鍏ㄧ獥鍙ｇ户缁竻鐞?") );
         m_ticketCancelCoordinator->recordAccepted(taskId,
                                                   m_ticketStore->ticketById(taskId),
                                                   QStringLiteral("cancel-pending"),
-                                                  QStringLiteral("删除验证发现钥匙任务仍存在，等待下一次安全窗口继续清理"));
+                                                  QStringLiteral("鍒犻櫎楠岃瘉鍙戠幇閽ュ寵浠诲姟浠嶅瓨鍦紝绛夊緟涓嬩竴娆″畨鍏ㄧ獥鍙ｇ户缁竻鐞?") );
     }
-    emit statusMessage(QStringLiteral("撤销删除验证发现任务仍存在，等待后续继续清理：%1").arg(taskId));
+    emit statusMessage(QStringLiteral("鎾ら攢鍒犻櫎楠岃瘉鍙戠幇浠诲姟浠嶅瓨鍦紝绛夊緟鍚庣画缁х画娓呯悊锛?1").arg(taskId));
     m_pendingCancelSystemTicketId.clear();
     m_pendingCancelKeyTaskRaw.clear();
     m_pendingCancelSessionId = 0;
@@ -2339,40 +2290,26 @@ bool KeyManageController::autoTransferEnabled() const
     return ConfigManager::instance()->value("ticket/autoTransferEnabled", false).toBool();
 }
 
-bool KeyManageController::isKeyPresenceFresh(const SystemTicketDto &ticket) const
-{
-    if (ticket.transferState != QLatin1String("success")) return false;
-    if (ticket.keyConfirmedAtMs <= 0)                     return false;
-    if (m_lastQueryTasksAtMs <= 0)                        return false;
-    // 此票的确认时间戳不早于最近一次 Q_TASK（给 500ms 缓冲），视为新鲜
-    return ticket.keyConfirmedAtMs + 500 >= m_lastQueryTasksAtMs;
-}
-
 void KeyManageController::reconcileSystemTicketsFromKeyTasks(const QList<KeyTaskDto> &tasks)
 {
-    // P2：记录本次 Q_TASK 的时间戳（无论 tasks 是否为空）
-    m_lastQueryTasksAtMs = QDateTime::currentMSecsSinceEpoch();
+    m_lastSuccessfulQueryTasksAtMs = QDateTime::currentMSecsSinceEpoch();
 
-    QList<QString> confirmedTaskIds;
     for (const KeyTaskDto &task : tasks) {
         const QString taskId = taskIdFromRaw(task.taskId);
         const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
         if (!ticket.valid) {
             continue;
         }
-        // 已受理撤销的票不做对账纠正（避免把撤销中的票又推回 success）
-        if (!ticket.cancelState.isEmpty()
+        // 宸插彈鐞嗘挙閿€鐨勭エ涓嶅仛瀵硅处绾犳锛堥伩鍏嶆妸鎾ら攢涓殑绁ㄥ張鎺ㄥ洖 success锛?        if (!ticket.cancelState.isEmpty()
                 && ticket.cancelState != QLatin1String("none")) {
             continue;
         }
 
-        // P2：亲眼在钥匙中看到此票，收集待刷新的 taskId（循环后批量写盘）
-        confirmedTaskIds.append(taskId);
+        m_ticketStore->updateKeyConfirmedAt(taskId, m_lastSuccessfulQueryTasksAtMs);
 
-        // Q_TASK 证实此任务在钥匙中 → 回包给挂起的 socket（不管当前 transferState 是否已是 success）
-        m_ticketIngress->completeDeferredResponse(
+        // Q_TASK 璇佸疄姝や换鍔″湪閽ュ寵涓?鈫?鍥炲寘缁欐寕璧风殑 socket锛堜笉绠″綋鍓?transferState 鏄惁宸叉槸 success锛?        m_ticketIngress->completeDeferredResponse(
             taskId, true,
-            QStringLiteral("传票成功，已确认任务存在于钥匙中"));
+            QStringLiteral("浼犵エ鎴愬姛锛屽凡纭浠诲姟瀛樺湪浜庨挜鍖欎腑"));
 
         const bool needsReconcile = ticket.transferState == QLatin1String("received")
                 || ticket.transferState == QLatin1String("auto-pending")
@@ -2383,12 +2320,9 @@ void KeyManageController::reconcileSystemTicketsFromKeyTasks(const QList<KeyTask
         }
 
         m_ticketStore->updateTransferState(taskId, QStringLiteral("success"));
-        emit statusMessage(QStringLiteral("检测到钥匙中已存在系统票，已将本地状态纠正为\"已传票到钥匙\"：%1")
+        emit statusMessage(QStringLiteral("妫€娴嬪埌閽ュ寵涓凡瀛樺湪绯荤粺绁紝宸插皢鏈湴鐘舵€佺籂姝ｄ负鈥滃凡浼犵エ鍒伴挜鍖欌€濓細%1")
                                .arg(taskId));
     }
-
-    // P2：一次 Q_TASK 只做一次落盘 / 一次 ticketsChanged
-    m_ticketStore->refreshKeyConfirmedAt(confirmedTaskIds, m_lastQueryTasksAtMs);
 }
 
 void KeyManageController::recoverAutoTransferWhenKeyEmpty(const QList<KeyTaskDto> &tasks)
@@ -2406,8 +2340,7 @@ void KeyManageController::recoverAutoTransferWhenKeyEmpty(const QList<KeyTaskDto
     bool requeued = false;
     const QList<SystemTicketDto> tickets = systemTickets();
     for (const SystemTicketDto &ticket : tickets) {
-        // 已受理撤销的票不参与自动恢复
-        if (!ticket.cancelState.isEmpty()
+        // 宸插彈鐞嗘挙閿€鐨勭エ涓嶅弬涓庤嚜鍔ㄦ仮澶?        if (!ticket.cancelState.isEmpty()
                 && ticket.cancelState != QLatin1String("none")) {
             continue;
         }
@@ -2432,7 +2365,7 @@ void KeyManageController::recoverAutoTransferWhenKeyEmpty(const QList<KeyTaskDto
         }
 
         m_ticketStore->updateTransferState(ticket.taskId, QStringLiteral("auto-pending"));
-        emit statusMessage(QStringLiteral("钥匙中未检测到系统票，已将任务重新加入自动传票队列：%1")
+        emit statusMessage(QStringLiteral("閽ュ寵涓湭妫€娴嬪埌绯荤粺绁紝宸插皢浠诲姟閲嶆柊鍔犲叆鑷姩浼犵エ闃熷垪锛?1")
                                .arg(ticket.taskId));
         requeued = true;
     }
@@ -2490,7 +2423,7 @@ void KeyManageController::tryAutoCleanupReturnedTicket(const QList<KeyTaskDto> &
         req.opId = nextOpId();
         req.payload = task.taskId;
         m_session->execute(req);
-        emit statusMessage(QStringLiteral("检测到回传已成功但钥匙任务仍存在，自动继续清理钥匙任务：%1")
+        emit statusMessage(QStringLiteral("妫€娴嬪埌鍥炰紶宸叉垚鍔熶絾閽ュ寵浠诲姟浠嶅瓨鍦紝鑷姩缁х画娓呯悊閽ュ寵浠诲姟锛?1")
                                .arg(taskId));
         return;
     }
@@ -2514,7 +2447,7 @@ void KeyManageController::tryAutoRefreshKeyTasksOnReady(const KeySessionSnapshot
     }
 
     m_autoQuerySessionId = m_keySessionId;
-    emit statusMessage(QStringLiteral("钥匙已就绪，自动读取钥匙票列表以检查待回传任务"));
+    emit statusMessage(QStringLiteral("閽ュ寵宸插氨缁紝鑷姩璇诲彇閽ュ寵绁ㄥ垪琛ㄤ互妫€鏌ュ緟鍥炰紶浠诲姟"));
     onQueryTasksClicked();
 }
 
@@ -2540,8 +2473,8 @@ void KeyManageController::tryStartTicketReturn(const QString &taskId, bool autom
     req.id = CommandId::SetCom;
     req.opId = nextOpId();
     m_session->execute(req);
-    emit statusMessage(QStringLiteral("%1回传前重新握手：%2")
-                           .arg(automatic ? QStringLiteral("自动") : QStringLiteral("执行"))
+    emit statusMessage(QStringLiteral("%1鍥炰紶鍓嶉噸鏂版彙鎵嬶細%2")
+                           .arg(automatic ? QStringLiteral("鑷姩") : QStringLiteral("鎵ц"))
                            .arg(taskId));
 }
 
@@ -2564,7 +2497,7 @@ void KeyManageController::tryAutoReturnCompletedTicket(const QList<KeyTaskDto> &
         if (!ticket.valid) {
             continue;
         }
-        // 已受理撤销的票不参与自动回传
+        // 已受理撤销的票不参与自动恢复
         if (!ticket.cancelState.isEmpty()
                 && ticket.cancelState != QLatin1String("none")) {
             continue;
@@ -2602,51 +2535,51 @@ bool KeyManageController::canStartTicketReturn(const QString &taskId,
     };
 
     if (taskId.trimmed().isEmpty()) {
-        setBlockedReason(QStringLiteral("回传失败：taskId 为空"));
+        setBlockedReason(QStringLiteral("鍥炰紶澶辫触锛歵askId 涓虹┖"));
         return false;
     }
 
     const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
     if (!ticket.valid) {
-        setBlockedReason(QStringLiteral("回传失败：系统票不存在"));
+        setBlockedReason(QStringLiteral("鍥炰紶澶辫触锛氱郴缁熺エ涓嶅瓨鍦?") );
         return false;
     }
     if (!isKeyPresenceFresh(ticket)) {
-        setBlockedReason(QStringLiteral("回传失败：该系统票尚未获得钥匙端确认"));
+        setBlockedReason(QStringLiteral("鍥炰紶澶辫触锛氳绯荤粺绁ㄥ皻鏈幏寰楅挜鍖欑纭"));
         return false;
     }
     if (isReturnCleanupState(ticket.returnState)) {
-        setBlockedReason(QStringLiteral("该系统票已进入回传成功后的清理阶段，本次不重复上传"));
+        setBlockedReason(QStringLiteral("璇ョ郴缁熺エ宸茶繘鍏ュ洖浼犳垚鍔熷悗鐨勬竻鐞嗛樁娈碉紝鏈涓嶉噸澶嶄笂浼?") );
         return false;
     }
     if (ticket.returnState == QLatin1String("return-success")
             || ticket.returnState == QLatin1String("return-delete-success")) {
-        setBlockedReason(QStringLiteral("该系统票已完成回传，本次不重复上传"));
+        setBlockedReason(QStringLiteral("璇ョ郴缁熺エ宸插畬鎴愬洖浼狅紝鏈涓嶉噸澶嶄笂浼?") );
         return false;
     }
     if (!m_ticketReturnClient->isConfigured()) {
-        setBlockedReason(QStringLiteral("回传接口未配置，暂不发起回传"));
+        setBlockedReason(QStringLiteral("鍥炰紶鎺ュ彛鏈厤缃紝鏆備笉鍙戣捣鍥炰紶"));
         return false;
     }
 
     const QString busyTaskId = activeReturnChainTaskId();
     if (!busyTaskId.isEmpty() && busyTaskId != taskId) {
-        setBlockedReason(QStringLiteral("当前任务 %1 正在回传或清理，请等待当前链路完成后再试").arg(busyTaskId));
+        setBlockedReason(QStringLiteral("褰撳墠浠诲姟 %1 姝ｅ湪鍥炰紶鎴栨竻鐞嗭紝璇风瓑寰呭綋鍓嶉摼璺畬鎴愬悗鍐嶈瘯").arg(busyTaskId));
         return false;
     }
     if (busyTaskId == taskId && (isReturnInFlightState(ticket.returnState) || isReturnCleanupState(ticket.returnState))) {
-        setBlockedReason(QStringLiteral("该系统票当前回传链仍在执行中，请稍后再试"));
+        setBlockedReason(QStringLiteral("璇ョ郴缁熺エ褰撳墠鍥炰紶閾句粛鍦ㄦ墽琛屼腑锛岃绋嶅悗鍐嶈瘯"));
         return false;
     }
 
     quint8 keyTaskStatus = 0;
     const QByteArray resolvedTaskIdRaw = findKeyTaskIdRaw(taskId, &keyTaskStatus);
     if (resolvedTaskIdRaw.isEmpty()) {
-        setBlockedReason(QStringLiteral("钥匙内未找到该系统票，请先读取钥匙票列表"));
+        setBlockedReason(QStringLiteral("閽ュ寵鍐呮湭鎵惧埌璇ョ郴缁熺エ锛岃鍏堣鍙栭挜鍖欑エ鍒楄〃"));
         return false;
     }
     if (keyTaskStatus != 0x02) {
-        setBlockedReason(QStringLiteral("该系统票在钥匙中的状态未完成，当前任务完成后才允许回传"));
+        setBlockedReason(QStringLiteral("璇ョ郴缁熺エ鍦ㄩ挜鍖欎腑鐨勭姸鎬佹湭瀹屾垚锛屽綋鍓嶄换鍔″畬鎴愬悗鎵嶅厑璁稿洖浼?") );
         return false;
     }
 
@@ -2655,6 +2588,20 @@ bool KeyManageController::canStartTicketReturn(const QString &taskId,
     }
     setBlockedReason(QString());
     return true;
+}
+
+bool KeyManageController::isKeyPresenceFresh(const SystemTicketDto &ticket) const
+{
+    if (ticket.transferState != QLatin1String("success")) {
+        return false;
+    }
+    if (ticket.keyConfirmedAtMs <= 0) {
+        return false;
+    }
+    if (m_lastSuccessfulQueryTasksAtMs <= 0) {
+        return false;
+    }
+    return ticket.keyConfirmedAtMs + 500 >= m_lastSuccessfulQueryTasksAtMs;
 }
 
 QString KeyManageController::activeReturnChainTaskId() const
@@ -2733,19 +2680,19 @@ bool KeyManageController::startDirectWorkbenchTransfer(const QString &taskId,
 {
     if (taskId.trimmed().isEmpty()) {
         if (blockedReason) {
-            *blockedReason = QStringLiteral("传票发送失败：taskId 为空");
+            *blockedReason = QStringLiteral("浼犵エ鍙戦€佸け璐ワ細taskId 涓虹┖");
         }
         return false;
     }
     if (jsonBytes.isEmpty()) {
         if (blockedReason) {
-            *blockedReason = QStringLiteral("传票发送失败：JSON 内容为空");
+            *blockedReason = QStringLiteral("浼犵エ鍙戦€佸け璐ワ細JSON 鍐呭涓虹┖");
         }
         return false;
     }
     if (!m_activeTransferTaskId.isEmpty()) {
         if (blockedReason) {
-            *blockedReason = QStringLiteral("当前已有其他传票任务正在执行，请稍后重试");
+            *blockedReason = QStringLiteral("褰撳墠宸叉湁鍏朵粬浼犵エ浠诲姟姝ｅ湪鎵ц锛岃绋嶅悗閲嶈瘯");
         }
         return false;
     }
@@ -2753,43 +2700,43 @@ bool KeyManageController::startDirectWorkbenchTransfer(const QString &taskId,
     const KeySessionSnapshot snapshot = m_session->snapshot();
     if (expectedSessionId <= 0 || !isCurrentKeySession(expectedSessionId)) {
         if (blockedReason) {
-            *blockedReason = QStringLiteral("当前钥匙会话未建立，无法发送传票");
+            *blockedReason = QStringLiteral("褰撳墠閽ュ寵浼氳瘽鏈缓绔嬶紝鏃犳硶鍙戦€佷紶绁?");
         }
         return false;
     }
     if (expectedBridgeEpoch <= 0 || snapshot.bridgeEpoch != expectedBridgeEpoch) {
         if (blockedReason) {
-            *blockedReason = QStringLiteral("当前钥匙会话已变化，无法发送传票");
+            *blockedReason = QStringLiteral("褰撳墠閽ュ寵浼氳瘽宸插彉鍖栵紝鏃犳硶鍙戦€佷紶绁?");
         }
         return false;
     }
     if (!snapshot.connected) {
         if (blockedReason) {
-            *blockedReason = QStringLiteral("串口未连接，无法发送传票");
+            *blockedReason = QStringLiteral("涓插彛鏈繛鎺ワ紝鏃犳硶鍙戦€佷紶绁?");
         }
         return false;
     }
     if (!snapshot.keyPresent || !snapshot.keyStable) {
         if (blockedReason) {
-            *blockedReason = QStringLiteral("钥匙未就绪，无法发送传票");
+            *blockedReason = QStringLiteral("閽ュ寵鏈氨缁紝鏃犳硶鍙戦€佷紶绁?");
         }
         return false;
     }
     if (!snapshot.sessionReady) {
         if (blockedReason) {
-            *blockedReason = QStringLiteral("钥匙通讯会话未就绪，无法发送传票");
+            *blockedReason = QStringLiteral("閽ュ寵閫氳浼氳瘽鏈氨缁紝鏃犳硶鍙戦€佷紶绁?");
         }
         return false;
     }
     if (snapshot.commandInFlight) {
         if (blockedReason) {
-            *blockedReason = QStringLiteral("当前底层仍有协议命令在途，无法发送传票");
+            *blockedReason = QStringLiteral("褰撳墠搴曞眰浠嶆湁鍗忚鍛戒护鍦ㄩ€旓紝鏃犳硶鍙戦€佷紶绁?");
         }
         return false;
     }
     if (snapshot.recoveryWindowActive) {
         if (blockedReason) {
-            *blockedReason = QStringLiteral("当前钥匙通讯正在恢复中，无法发送传票");
+            *blockedReason = QStringLiteral("褰撳墠閽ュ寵閫氳姝ｅ湪鎭㈠涓紝鏃犳硶鍙戦€佷紶绁?");
         }
         return false;
     }
@@ -2810,7 +2757,7 @@ bool KeyManageController::startDirectWorkbenchTransfer(const QString &taskId,
     req.id = CommandId::SetCom;
     req.opId = nextOpId();
     m_session->execute(req);
-    emit statusMessage(QStringLiteral("传票前重新握手：%1").arg(taskId));
+    emit statusMessage(QStringLiteral("浼犵エ鍓嶉噸鏂版彙鎵嬶細%1").arg(taskId));
     if (blockedReason) {
         blockedReason->clear();
     }
@@ -2834,8 +2781,7 @@ void KeyManageController::setHttpTransferTransaction(const QString &taskId,
     m_httpTransferTransactionTaskId = taskId;
     m_httpTransferTransactionSessionId = sessionId;
     m_httpTransferTransactionBridgeEpoch = bridgeEpoch;
-    m_httpTransactionSafetyTimer->start(); // 60 秒安全超时
-    qInfo().noquote()
+    m_httpTransactionSafetyTimer->start(); // 60 绉掑畨鍏ㄨ秴鏃?    qInfo().noquote()
             << QStringLiteral("[KeyManageController] HTTP transfer transaction SET taskId=%1 session=%2 epoch=%3 safetyTimeout=60s")
                   .arg(taskId, QString::number(sessionId), QString::number(bridgeEpoch));
 }
@@ -2860,7 +2806,7 @@ void KeyManageController::clearHttpTransferTransaction(bool clearActiveTransfer)
     m_httpTransferTransactionTaskId.clear();
     m_httpTransferTransactionSessionId = 0;
     m_httpTransferTransactionBridgeEpoch = 0;
-    m_httpTransactionSafetyTimer->stop(); // 正常释放时停止安全计时器
+    m_httpTransactionSafetyTimer->stop(); // 姝ｅ父閲婃斁鏃跺仠姝㈠畨鍏ㄨ鏃跺櫒
     qInfo().noquote()
             << QStringLiteral("[KeyManageController] HTTP transfer transaction CLEARED taskId=%1 session=%2")
                   .arg(taskId.isEmpty() ? QStringLiteral("<none>") : taskId,
@@ -2876,15 +2822,15 @@ bool KeyManageController::tryStartTicketTransfer(const QString &taskId,
         qWarning().noquote()
                 << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked reason=empty-taskId automatic=%1")
                       .arg(automatic ? QStringLiteral("true") : QStringLiteral("false"));
-        emit statusMessage(QStringLiteral("传票发送失败：taskId 为空"));
+        emit statusMessage(QStringLiteral("浼犵エ鍙戦€佸け璐ワ細taskId 涓虹┖"));
         if (blockedReason) {
-            *blockedReason = QStringLiteral("传票发送失败：taskId 为空");
+            *blockedReason = QStringLiteral("浼犵エ鍙戦€佸け璐ワ細taskId 涓虹┖");
         }
         return false;
     }
 
     if (!m_activeTransferTaskId.isEmpty()) {
-        const QString reason = QStringLiteral("当前已有其他传票任务正在执行，请稍后重试");
+        const QString reason = QStringLiteral("褰撳墠宸叉湁鍏朵粬浼犵エ浠诲姟姝ｅ湪鎵ц锛岃绋嶅悗閲嶈瘯");
         qInfo().noquote()
                 << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=active-transfer activeTransfer=%2 automatic=%3")
                       .arg(taskId,
@@ -2908,7 +2854,7 @@ bool KeyManageController::tryStartTicketTransfer(const QString &taskId,
     if (ticket.valid
             && !ticket.cancelState.isEmpty()
             && ticket.cancelState != QLatin1String("none")) {
-        const QString reason = QStringLiteral("该系统票已受理撤销，当前不再参与传票");
+        const QString reason = QStringLiteral("璇ョ郴缁熺エ宸插彈鐞嗘挙閿€锛屽綋鍓嶄笉鍐嶅弬涓庝紶绁?");
         qInfo().noquote()
                 << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=cancel-pending cancelState=%2 automatic=%3")
                       .arg(taskId,
@@ -2922,7 +2868,7 @@ bool KeyManageController::tryStartTicketTransfer(const QString &taskId,
     }
 
     if (ticket.valid && ticket.transferState == QLatin1String("success")) {
-        const QString reason = QStringLiteral("该系统票已传票到钥匙，本次不重复下发");
+        const QString reason = QStringLiteral("璇ョ郴缁熺エ宸蹭紶绁ㄥ埌閽ュ寵锛屾湰娆′笉閲嶅涓嬪彂");
         qInfo().noquote()
                 << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=already-success automatic=%2")
                       .arg(taskId,
@@ -2934,7 +2880,7 @@ bool KeyManageController::tryStartTicketTransfer(const QString &taskId,
         return false;
     }
     if (ticket.valid && ticket.transferState == QLatin1String("sending")) {
-        const QString reason = QStringLiteral("该系统票正在传票中，请稍后再试");
+        const QString reason = QStringLiteral("璇ョ郴缁熺エ姝ｅ湪浼犵エ涓紝璇风◢鍚庡啀璇?");
         qInfo().noquote()
                 << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=already-sending automatic=%2")
                       .arg(taskId,
@@ -2948,8 +2894,8 @@ bool KeyManageController::tryStartTicketTransfer(const QString &taskId,
 
     if (!snapshot.connected) {
         const QString reason = automatic
-                ? QStringLiteral("系统票已入池，等待串口连接后自动传票")
-                : QStringLiteral("串口未连接，无法发送传票");
+                ? QStringLiteral("绯荤粺绁ㄥ凡鍏ユ睜锛岀瓑寰呬覆鍙ｈ繛鎺ュ悗鑷姩浼犵エ")
+                : QStringLiteral("涓插彛鏈繛鎺ワ紝鏃犳硶鍙戦€佷紶绁?");
         qInfo().noquote()
                 << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=serial-disconnected automatic=%2")
                       .arg(taskId,
@@ -2971,8 +2917,8 @@ bool KeyManageController::tryStartTicketTransfer(const QString &taskId,
 
     if (!snapshot.keyPresent || !snapshot.keyStable) {
         const QString reason = automatic
-                ? QStringLiteral("系统票已入池，等待钥匙就绪后自动传票")
-                : QStringLiteral("钥匙未就绪，无法发送传票");
+                ? QStringLiteral("绯荤粺绁ㄥ凡鍏ユ睜锛岀瓑寰呴挜鍖欏氨缁悗鑷姩浼犵エ")
+                : QStringLiteral("閽ュ寵鏈氨缁紝鏃犳硶鍙戦€佷紶绁?");
         qInfo().noquote()
                 << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=key-not-ready keyPresent=%2 keyStable=%3 automatic=%4")
                       .arg(taskId,
@@ -2996,8 +2942,8 @@ bool KeyManageController::tryStartTicketTransfer(const QString &taskId,
 
     if (!snapshot.sessionReady) {
         const QString reason = automatic
-                ? QStringLiteral("系统票已入池，等待握手完成后自动传票")
-                : QStringLiteral("钥匙通讯会话未就绪，无法发送传票");
+                ? QStringLiteral("绯荤粺绁ㄥ凡鍏ユ睜锛岀瓑寰呮彙鎵嬪畬鎴愬悗鑷姩浼犵エ")
+                : QStringLiteral("閽ュ寵閫氳浼氳瘽鏈氨缁紝鏃犳硶鍙戦€佷紶绁?");
         qInfo().noquote()
                 << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=session-not-ready automatic=%2 currentSession=%3")
                       .arg(taskId,
@@ -3020,8 +2966,8 @@ bool KeyManageController::tryStartTicketTransfer(const QString &taskId,
 
     if (snapshot.commandInFlight) {
         const QString reason = automatic
-                ? QStringLiteral("系统票已入池，等待当前协议命令完成后自动传票")
-                : QStringLiteral("当前底层仍有协议命令在途，无法发送传票");
+                ? QStringLiteral("绯荤粺绁ㄥ凡鍏ユ睜锛岀瓑寰呭綋鍓嶅崗璁懡浠ゅ畬鎴愬悗鑷姩浼犵エ")
+                : QStringLiteral("褰撳墠搴曞眰浠嶆湁鍗忚鍛戒护鍦ㄩ€旓紝鏃犳硶鍙戦€佷紶绁?");
         qInfo().noquote()
                 << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=command-in-flight automatic=%2")
                       .arg(taskId,
@@ -3043,8 +2989,8 @@ bool KeyManageController::tryStartTicketTransfer(const QString &taskId,
 
     if (snapshot.recoveryWindowActive) {
         const QString reason = automatic
-                ? QStringLiteral("系统票已入池，等待钥匙通讯恢复后自动传票")
-                : QStringLiteral("当前钥匙通讯正在恢复中，无法发送传票");
+                ? QStringLiteral("绯荤粺绁ㄥ凡鍏ユ睜锛岀瓑寰呴挜鍖欓€氳鎭㈠鍚庤嚜鍔ㄤ紶绁?")
+                : QStringLiteral("褰撳墠閽ュ寵閫氳姝ｅ湪鎭㈠涓紝鏃犳硶鍙戦€佷紶绁?");
         qInfo().noquote()
                 << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=recovery-window automatic=%2")
                       .arg(taskId,
@@ -3066,7 +3012,7 @@ bool KeyManageController::tryStartTicketTransfer(const QString &taskId,
 
     const QByteArray jsonBytes = m_ticketStore->rawJsonById(taskId);
     if (jsonBytes.isEmpty()) {
-        const QString reason = QStringLiteral("选中系统票缺少原始 JSON，无法发送传票");
+        const QString reason = QStringLiteral("閫変腑绯荤粺绁ㄧ己灏戝師濮?JSON锛屾棤娉曞彂閫佷紶绁?");
         qWarning().noquote()
                 << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=raw-json-missing automatic=%2")
                       .arg(taskId,
@@ -3100,8 +3046,8 @@ bool KeyManageController::tryStartTicketTransfer(const QString &taskId,
     req.id = CommandId::SetCom;
     req.opId = nextOpId();
     m_session->execute(req);
-    emit statusMessage(QStringLiteral("%1传票前重新握手：%2")
-                           .arg(automatic ? QStringLiteral("自动") : QStringLiteral("执行"))
+    emit statusMessage(QStringLiteral("%1浼犵エ鍓嶉噸鏂版彙鎵嬶細%2")
+                           .arg(automatic ? QStringLiteral("鑷姩") : QStringLiteral("鎵ц"))
                            .arg(taskId));
     if (blockedReason) {
         blockedReason->clear();
@@ -3139,7 +3085,7 @@ void KeyManageController::tryAutoTransferPendingTicket()
             || !m_pendingReturnHandshakeTaskId.isEmpty()
             || !m_pendingDeletedSystemTicketId.isEmpty()
             || !m_pendingCancelSystemTicketId.isEmpty()) {
-        // busy 状态会被高频触发，降级为 debug 避免日志刷屏
+        // busy 鐘舵€佷細琚珮棰戣Е鍙戯紝闄嶇骇涓?debug 閬垮厤鏃ュ織鍒峰睆
         qDebug().noquote()
                 << QStringLiteral("[KeyManageController] tryAutoTransferPendingTicket skipped reason=busy activeTransfer=%1 activeReturn=%2 pendingHandshake=%3 pendingDelete=%4 pendingCancel=%5")
                       .arg(m_activeTransferTaskId.isEmpty() ? QStringLiteral("<none>") : m_activeTransferTaskId,
@@ -3152,8 +3098,7 @@ void KeyManageController::tryAutoTransferPendingTicket()
 
     const QList<SystemTicketDto> tickets = systemTickets();
     for (const SystemTicketDto &ticket : tickets) {
-        // 已受理撤销的票不参与自动传票
-        if (!ticket.cancelState.isEmpty()
+        // 宸插彈鐞嗘挙閿€鐨勭エ涓嶅弬涓庤嚜鍔ㄤ紶绁?        if (!ticket.cancelState.isEmpty()
                 && ticket.cancelState != QLatin1String("none")) {
             continue;
         }
@@ -3165,12 +3110,12 @@ void KeyManageController::tryAutoTransferPendingTicket()
                                ticket.transferState,
                                ticket.returnState,
                                QString::number(tickets.size()));
-            emit statusMessage(QStringLiteral("发现可自动传票任务：%1").arg(ticket.taskId));
+            emit statusMessage(QStringLiteral("鍙戠幇鍙嚜鍔ㄤ紶绁ㄤ换鍔★細%1").arg(ticket.taskId));
             tryStartTicketTransfer(ticket.taskId, true);
             return;
         }
     }
-    // 空池或无符合条件的票时不打日志，避免刷屏（每次 KeyStateChanged 都会触发本函数）
+    // 绌烘睜鎴栨棤绗﹀悎鏉′欢鐨勭エ鏃朵笉鎵撴棩蹇楋紝閬垮厤鍒峰睆锛堟瘡娆?KeyStateChanged 閮戒細瑙﹀彂鏈嚱鏁帮級
 }
 
 bool KeyManageController::hasPendingApplySensitiveBusiness() const
@@ -3214,19 +3159,19 @@ bool KeyManageController::isKeyPortApplyBusy(QString *reason) const
 
     QString busyReason;
     if (m_keyPortApplyInProgress) {
-        busyReason = QStringLiteral("当前正在应用钥匙串口配置，请等待本次切换完成");
+        busyReason = QStringLiteral("褰撳墠姝ｅ湪搴旂敤閽ュ寵涓插彛閰嶇疆锛岃绛夊緟鏈鍒囨崲瀹屾垚");
     } else if (hasPendingApplySensitiveBusiness()) {
-        busyReason = QStringLiteral("当前钥匙业务尚未收口，包含传票/回传/删除验证中的链路，请稍后再试");
+        busyReason = QStringLiteral("褰撳墠閽ュ寵涓氬姟灏氭湭鏀跺彛锛屽寘鍚紶绁?鍥炰紶/鍒犻櫎楠岃瘉涓殑閾捐矾锛岃绋嶅悗鍐嶈瘯");
     } else if (snapshot.commandInFlight) {
-        busyReason = QStringLiteral("当前底层仍有协议命令在途，请等待当前串口命令完成后再切换");
+        busyReason = QStringLiteral("褰撳墠搴曞眰浠嶆湁鍗忚鍛戒护鍦ㄩ€旓紝璇风瓑寰呭綋鍓嶄覆鍙ｅ懡浠ゅ畬鎴愬悗鍐嶅垏鎹?");
     } else if (m_keyProvisioning->isBusy()) {
-        busyReason = QStringLiteral("当前正在执行 INIT 或下载 RFID，请等待当前取数与下发完成");
+        busyReason = QStringLiteral("褰撳墠姝ｅ湪鎵ц INIT 鎴栦笅杞?RFID锛岃绛夊緟褰撳墠鍙栨暟涓庝笅鍙戝畬鎴?");
     } else if (snapshot.recoveryWindowActive) {
-        busyReason = QStringLiteral("当前处于自动恢复窗口，暂不允许切换钥匙串口");
+        busyReason = QStringLiteral("褰撳墠澶勪簬鑷姩鎭㈠绐楀彛锛屾殏涓嶅厑璁稿垏鎹㈤挜鍖欎覆鍙?");
     } else if (snapshot.connected && snapshot.keyPresent && !snapshot.sessionReady) {
-        busyReason = QStringLiteral("当前钥匙会话正在握手或等待通信确认，暂不允许切换钥匙串口");
+        busyReason = QStringLiteral("褰撳墠閽ュ寵浼氳瘽姝ｅ湪鎻℃墜鎴栫瓑寰呴€氫俊纭锛屾殏涓嶅厑璁稿垏鎹㈤挜鍖欎覆鍙?");
     } else if (m_autoQuerySessionId == m_keySessionId && m_keySessionId > 0) {
-        busyReason = QStringLiteral("当前钥匙刚进入 ready 边沿自动 Q_TASK 窗口，暂不允许切换钥匙串口");
+        busyReason = QStringLiteral("褰撳墠閽ュ寵鍒氳繘鍏?ready 杈规部鑷姩 Q_TASK 绐楀彛锛屾殏涓嶅厑璁稿垏鎹㈤挜鍖欎覆鍙?");
     }
 
     if (reason) {
@@ -3265,27 +3210,27 @@ void KeyManageController::refreshKeySerialApplyStatus(const QString &overrideSta
             const QString targetPort = m_keyPortApplyTargetPort.isEmpty() ? configuredPort : m_keyPortApplyTargetPort;
             if (!targetPort.isEmpty() && runtimePort == targetPort && snapshot.connected) {
                 if (snapshot.keyPresent && (!snapshot.sessionReady || !snapshot.protocolHealthy)) {
-                    nextMessage = QStringLiteral("新串口 %1 已打开，正在等待 SET_COM/通讯确认完成").arg(targetPort);
+                    nextMessage = QStringLiteral("鏂颁覆鍙?%1 宸叉墦寮€锛屾鍦ㄧ瓑寰?SET_COM/閫氳纭瀹屾垚").arg(targetPort);
                 } else {
-                    nextMessage = QStringLiteral("新串口 %1 已接管运行态，等待最终状态确认").arg(targetPort);
+                    nextMessage = QStringLiteral("鏂颁覆鍙?%1 宸叉帴绠¤繍琛屾€侊紝绛夊緟鏈€缁堢姸鎬佺‘璁?").arg(targetPort);
                 }
             } else {
-                nextMessage = QStringLiteral("正在应用钥匙串口配置，请等待切换结果");
+                nextMessage = QStringLiteral("姝ｅ湪搴旂敤閽ュ寵涓插彛閰嶇疆锛岃绛夊緟鍒囨崲缁撴灉");
             }
         } else if (nextState == QLatin1String("applied")) {
             if (configuredPort.isEmpty()) {
-                nextMessage = QStringLiteral("当前未配置钥匙串口");
+                nextMessage = QStringLiteral("褰撳墠鏈厤缃挜鍖欎覆鍙?");
             } else if (!snapshot.keyPresent) {
-                nextMessage = QStringLiteral("运行态已切换到 %1，当前未检测到钥匙，待放稳后再完成通讯确认").arg(configuredPort);
+                nextMessage = QStringLiteral("杩愯鎬佸凡鍒囨崲鍒?%1锛屽綋鍓嶆湭妫€娴嬪埌閽ュ寵锛屽緟鏀剧ǔ鍚庡啀瀹屾垚閫氳纭").arg(configuredPort);
             } else {
-                nextMessage = QStringLiteral("配置态与运行态一致，当前运行串口：%1").arg(configuredPort);
+                nextMessage = QStringLiteral("閰嶇疆鎬佷笌杩愯鎬佷竴鑷达紝褰撳墠杩愯涓插彛锛?1").arg(configuredPort);
             }
         } else if (nextState == QLatin1String("apply_failed")) {
             nextMessage = m_keySerialApplyMessage.isEmpty()
-                    ? QStringLiteral("配置已保存，但尚未成功应用到运行态")
+                    ? QStringLiteral("閰嶇疆宸蹭繚瀛橈紝浣嗗皻鏈垚鍔熷簲鐢ㄥ埌杩愯鎬?")
                     : m_keySerialApplyMessage;
         } else {
-            nextMessage = QStringLiteral("配置已保存，当前运行态仍锚定旧串口，需手动\"应用并重连\"");
+            nextMessage = QStringLiteral("閰嶇疆宸蹭繚瀛橈紝褰撳墠杩愯鎬佷粛閿氬畾鏃т覆鍙ｏ紝闇€鎵嬪姩鈥滃簲鐢ㄥ苟閲嶈繛鈥?");
         }
     }
 
@@ -3304,7 +3249,7 @@ void KeyManageController::openNewKeySession()
     m_keySessionId = ++m_keySessionSeed;
     m_acceptedBridgeEpoch = m_session->snapshot().bridgeEpoch;
     m_autoQuerySessionId = 0;
-    emit statusMessage(QStringLiteral("钥匙会话已建立：session=%1").arg(m_keySessionId));
+    emit statusMessage(QStringLiteral("閽ュ寵浼氳瘽宸插缓绔嬶細session=%1").arg(m_keySessionId));
 }
 
 void KeyManageController::invalidateCurrentKeySession(const QString &reason)
@@ -3316,14 +3261,13 @@ void KeyManageController::invalidateCurrentKeySession(const QString &reason)
     const int expiredSessionId = m_keySessionId;
     m_keySessionId = 0;
     m_autoQuerySessionId = 0;
-    // 会话失效时清空钥匙任务缓存，防止陈旧数据影响下次 success 状态判断
-    m_lastKeyTasks.clear();
+    // 浼氳瘽澶辨晥鏃舵竻绌洪挜鍖欎换鍔＄紦瀛橈紝闃叉闄堟棫鏁版嵁褰卞搷涓嬫 success 鐘舵€佸垽鏂?    m_lastKeyTasks.clear();
     m_pendingDeleteRetryCount = 0;
 
     emit statusMessage(
             reason.trimmed().isEmpty()
-            ? QStringLiteral("钥匙会话已失效：session=%1").arg(expiredSessionId)
-            : QStringLiteral("钥匙会话已失效：session=%1，原因=%2")
+            ? QStringLiteral("閽ュ寵浼氳瘽宸插け鏁堬細session=%1").arg(expiredSessionId)
+            : QStringLiteral("閽ュ寵浼氳瘽宸插け鏁堬細session=%1锛屽師鍥?%2")
                   .arg(expiredSessionId)
                   .arg(reason));
 }
@@ -3369,7 +3313,7 @@ void KeyManageController::tryAutoConnectKeyPort()
     }
 
     if (candidates.isEmpty()) {
-        emit statusMessage(QStringLiteral("未检测到可用串口"));
+        emit statusMessage(QStringLiteral("鏈娴嬪埌鍙敤涓插彛"));
         emit sessionSnapshotChanged(m_session->snapshot());
         return;
     }
@@ -3377,11 +3321,11 @@ void KeyManageController::tryAutoConnectKeyPort()
     for (const QString &port : candidates) {
         if (m_session->connectPort(port, baud)) {
             if (m_keySerialApplyState == QLatin1String("saved_not_applied")) {
-                emit statusMessage(QStringLiteral("串口继续锚定旧运行端口: %1").arg(port));
+                emit statusMessage(QStringLiteral("涓插彛缁х画閿氬畾鏃ц繍琛岀鍙? %1").arg(port));
             } else if (!configPort.isEmpty()) {
-                emit statusMessage(QStringLiteral("串口已连接(配置端口): %1").arg(port));
+                emit statusMessage(QStringLiteral("涓插彛宸茶繛鎺?閰嶇疆绔彛): %1").arg(port));
             } else {
-                emit statusMessage(QStringLiteral("串口已连接(已验证端口): %1").arg(port));
+                emit statusMessage(QStringLiteral("涓插彛宸茶繛鎺?宸查獙璇佺鍙?: %1").arg(port));
             }
             emit sessionSnapshotChanged(m_session->snapshot());
             refreshKeySerialApplyStatus();
@@ -3389,7 +3333,7 @@ void KeyManageController::tryAutoConnectKeyPort()
         }
     }
 
-    emit statusMessage(QStringLiteral("串口连接失败，请检查底座或配置"));
+    emit statusMessage(QStringLiteral("涓插彛杩炴帴澶辫触锛岃妫€鏌ュ簳搴ф垨閰嶇疆"));
     emit sessionSnapshotChanged(m_session->snapshot());
     refreshKeySerialApplyStatus();
 }

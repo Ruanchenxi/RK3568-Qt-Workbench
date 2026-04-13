@@ -67,6 +67,9 @@ static QJsonObject dtoToJson(const SystemTicketDto &dto)
                dto.receivedAt.isValid()
                    ? dto.receivedAt.toString(Qt::ISODateWithMs)
                    : QString());
+    obj.insert(QStringLiteral("adminDeleteStage"), static_cast<int>(dto.adminDeleteStage));
+    obj.insert(QStringLiteral("adminDeleteError"), dto.adminDeleteError);
+    obj.insert(QStringLiteral("keyConfirmedAtMs"), static_cast<qint64>(dto.keyConfirmedAtMs));
     return obj;
 }
 
@@ -97,6 +100,10 @@ static SystemTicketDto dtoFromJson(const QJsonObject &obj)
     dto.jsonPath = obj.value(QStringLiteral("jsonPath")).toString().trimmed();
     const QString rcvStr = obj.value(QStringLiteral("receivedAt")).toString().trimmed();
     dto.receivedAt = rcvStr.isEmpty() ? QDateTime() : QDateTime::fromString(rcvStr, Qt::ISODateWithMs);
+    dto.adminDeleteStage = static_cast<SystemTicketDto::AdminDeleteStage>(
+            obj.value(QStringLiteral("adminDeleteStage")).toInt(0));
+    dto.adminDeleteError = obj.value(QStringLiteral("adminDeleteError")).toString().trimmed();
+    dto.keyConfirmedAtMs = obj.value(QStringLiteral("keyConfirmedAtMs")).toVariant().toLongLong();
     dto.valid = !dto.taskId.isEmpty();
     return dto;
 }
@@ -318,6 +325,9 @@ bool TicketStore::ingestJson(const QByteArray &jsonBytes,
             dto.cancelSource = m_tickets[i].cancelSource;
             dto.wasInKey = m_tickets[i].wasInKey;
             dto.stateDetail = m_tickets[i].stateDetail;
+            dto.adminDeleteStage = m_tickets[i].adminDeleteStage;
+            dto.adminDeleteError = m_tickets[i].adminDeleteError;
+            dto.keyConfirmedAtMs = m_tickets[i].keyConfirmedAtMs;
             m_tickets[i] = dto;
             replaced = true;
             break;
@@ -536,4 +546,67 @@ bool TicketStore::removeTicket(const QString &taskId)
         }
     }
     return false;
+}
+
+bool TicketStore::updateAdminDeleteStage(const QString &taskId,
+                                         SystemTicketDto::AdminDeleteStage stage)
+{
+    for (int i = 0; i < m_tickets.size(); ++i) {
+        if (m_tickets[i].taskId == taskId) {
+            if (m_tickets[i].adminDeleteStage == stage) {
+                return true;
+            }
+            m_tickets[i].adminDeleteStage = stage;
+            qInfo().noquote()
+                    << QStringLiteral("[TicketStore] updateAdminDeleteStage taskId=%1 stage=%2")
+                          .arg(taskId, QString::number(static_cast<int>(stage)));
+            saveToDisk();
+            emit ticketsChanged(m_tickets);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool TicketStore::updateAdminDeleteError(const QString &taskId, const QString &errorText)
+{
+    for (int i = 0; i < m_tickets.size(); ++i) {
+        if (m_tickets[i].taskId == taskId) {
+            if (m_tickets[i].adminDeleteError == errorText) {
+                return true;
+            }
+            m_tickets[i].adminDeleteError = errorText;
+            qInfo().noquote()
+                    << QStringLiteral("[TicketStore] updateAdminDeleteError taskId=%1 error=%2")
+                          .arg(taskId, errorText.left(80));
+            saveToDisk();
+            emit ticketsChanged(m_tickets);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool TicketStore::refreshKeyConfirmedAt(const QList<QString> &taskIds, qint64 ms)
+{
+    if (taskIds.isEmpty()) {
+        return false;
+    }
+    bool anyChanged = false;
+    for (const QString &taskId : taskIds) {
+        for (int i = 0; i < m_tickets.size(); ++i) {
+            if (m_tickets[i].taskId == taskId) {
+                if (m_tickets[i].keyConfirmedAtMs != ms) {
+                    m_tickets[i].keyConfirmedAtMs = ms;
+                    anyChanged = true;
+                }
+                break;
+            }
+        }
+    }
+    if (anyChanged) {
+        saveToDisk();
+        emit ticketsChanged(m_tickets);
+    }
+    return anyChanged;
 }

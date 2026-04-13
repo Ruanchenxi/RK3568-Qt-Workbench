@@ -66,7 +66,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
                                           m_keyboardController(nullptr),
                                           m_processService(new ProcessService(this)),
                                           m_mainController(new MainWindowController(nullptr, this)),
-                                          m_timeTimer(nullptr)
+                                          m_timeTimer(nullptr),
+                                          m_inactivityTimer(nullptr)
 {
     // 初始化核心服务，确保主窗口壳体和页面替换流程进入稳定默认态。
     ConfigManager::instance();
@@ -110,6 +111,11 @@ MainWindow::~MainWindow()
     {
         m_timeTimer->stop();
         delete m_timeTimer;
+    }
+    if (m_inactivityTimer)
+    {
+        m_inactivityTimer->stop();
+        delete m_inactivityTimer;
     }
     delete ui;
 }
@@ -263,6 +269,12 @@ void MainWindow::setupTimer()
 
     // 立即更新一次时间
     updateTime();
+
+    // 无操作自动注销：登录后启动，任意用户输入重置计时，超时直接注销。
+    m_inactivityTimer = new QTimer(this);
+    m_inactivityTimer->setSingleShot(true);
+    connect(m_inactivityTimer, &QTimer::timeout, this, &MainWindow::onInactivityTimeout);
+    qApp->installEventFilter(this);
 }
 
 void MainWindow::setupCustomKeyboard()
@@ -897,6 +909,10 @@ void MainWindow::onUserLoggedIn(const QString &username, const QString &role)
     // 登录成功后跳转到工作台
     switchToPage(PAGE_WORKBENCH);
 
+    if (m_inactivityTimer) {
+        m_inactivityTimer->start(INACTIVITY_TIMEOUT_MS);
+    }
+
     QMessageBox::information(this, "登录成功",
                              QString("欢迎 %1，您已成功登录！").arg(username));
 }
@@ -907,6 +923,10 @@ void MainWindow::onUserLoggedIn(const QString &username, const QString &role)
  */
 void MainWindow::onUserLoggedOut()
 {
+    if (m_inactivityTimer) {
+        m_inactivityTimer->stop();
+    }
+
     // 统一由控制器触发登出，避免主窗口直连服务实现。
     if (m_mainController) {
         m_mainController->logout();
@@ -914,4 +934,33 @@ void MainWindow::onUserLoggedOut()
 
     updateUserDisplay();
     switchToPage(PAGE_LOGIN);
+}
+
+void MainWindow::onInactivityTimeout()
+{
+    if (!m_mainController || !m_mainController->isLoggedIn()) {
+        return;
+    }
+    qInfo() << "[MainWindow] 无操作超时（5分钟），自动注销";
+    onUserLoggedOut();
+}
+
+bool MainWindow::eventFilter(QObject *obj, QEvent *event)
+{
+    if (m_inactivityTimer && m_inactivityTimer->isActive()) {
+        switch (event->type()) {
+        case QEvent::MouseButtonPress:
+        case QEvent::MouseButtonRelease:
+        case QEvent::MouseMove:
+        case QEvent::KeyPress:
+        case QEvent::TouchBegin:
+        case QEvent::TouchUpdate:
+        case QEvent::Wheel:
+            m_inactivityTimer->start(INACTIVITY_TIMEOUT_MS);
+            break;
+        default:
+            break;
+        }
+    }
+    return QMainWindow::eventFilter(obj, event);
 }

@@ -10,6 +10,12 @@
 
 struct SystemTicketDto
 {
+    enum class AdminDeleteStage {
+        None,                          // 未进入管理员删除流程
+        KeyClearedAwaitingTermination, // 钥匙已清理，等待 HTTP 通知工作台
+        TerminationFailed              // HTTP 通知工作台失败，需人工处理
+    };
+
     QString taskId;
     QString ticketNo;
     QString taskName;
@@ -33,6 +39,10 @@ struct SystemTicketDto
     QString jsonPath;
     QDateTime receivedAt;
     bool valid = false;
+    AdminDeleteStage adminDeleteStage = AdminDeleteStage::None;
+    QString adminDeleteError;
+    // 最近一次 Q_TASK 在钥匙中亲眼确认此任务的毫秒时间戳（0 表示尚未确认）
+    qint64 keyConfirmedAtMs = 0;
 };
 
 #endif // SYSTEMTICKETDTO_H

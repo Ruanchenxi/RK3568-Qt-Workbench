@@ -94,6 +94,7 @@ WorkbenchPage::WorkbenchPage(QWidget *parent)
       m_reloadScheduled(false)
       , m_recreatePageOnReload(false)
       , m_pendingBusinessReload(false)
+      , m_reloadAttemptCount(0)
 {
     ui->setupUi(this);
 }
@@ -213,6 +214,7 @@ void WorkbenchPage::initWebView()
         if (ok) {
             m_renderProcessTerminated = false;
             m_reloadScheduled = false;
+            m_reloadAttemptCount = 0;
         }
         if (workbenchWebDebugEnabled()) {
             if (ok) {
@@ -329,10 +331,19 @@ void WorkbenchPage::scheduleWorkbenchReload()
         return;
     }
 
+    constexpr int kMaxReloadAttempts = 5;
+    if (m_reloadAttemptCount >= kMaxReloadAttempts) {
+        qWarning() << "[WorkbenchPage] 工作台渲染恢复已达最大重试次数"
+                   << kMaxReloadAttempts << "次，停止自动恢复，需人工重启设备";
+        return;
+    }
+
     if (m_reloadCooldownTimer.isValid() && m_reloadCooldownTimer.elapsed() < 1200) {
         qWarning() << "[WorkbenchPage] 工作台恢复重载已在冷却中，跳过本次重复触发";
         return;
     }
+
+    m_reloadAttemptCount++;
 
     m_reloadScheduled = true;
     QTimer::singleShot(300, this, [this]() {
@@ -351,7 +362,8 @@ void WorkbenchPage::scheduleWorkbenchReload()
             attachDebugPage(true);
             m_recreatePageOnReload = false;
         }
-        qWarning() << "[WorkbenchPage] 尝试重新加载工作台，以恢复白屏/渲染异常";
+        qWarning() << "[WorkbenchPage] 尝试重新加载工作台，以恢复白屏/渲染异常"
+                   << "attempt=" << m_reloadAttemptCount;
         loadWorkbench();
     });
 }

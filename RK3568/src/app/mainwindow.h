@@ -91,6 +91,7 @@ private slots:
 
     // ========== 其他槽函数 ==========
     void updateTime(); ///< 更新时间显示
+    void onInactivityTimeout(); ///< 无操作超时自动注销
 
 private:
     Ui::MainWindow *ui; ///< UI指针
@@ -108,7 +109,9 @@ private:
 
     // ========== 状态变量 ==========
     // 登录态通过 MainWindowController 提供，主窗口不再直接读取全局上下文单例。
-    QTimer *m_timeTimer; ///< 时间更新定时器
+    QTimer *m_timeTimer;         ///< 时间更新定时器
+    QTimer *m_inactivityTimer;   ///< 无操作自动注销定时器
+    static constexpr int INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; ///< 5分钟无操作注销
 
     // ========== 私有方法 ==========
     void setupPages();                       ///< 设置页面
@@ -135,6 +138,7 @@ protected:
     void showEvent(QShowEvent *event) override; ///< 显示后按真实窗口装饰再次修正可见区
     void closeEvent(QCloseEvent *event) override; ///< 记录主窗口关闭链路，辅助板端排查异常退出
     bool event(QEvent *event) override; ///< 触摸事件诊断日志，仅观察不拦截，用于偶发触摸失效问题复现取证
+    bool eventFilter(QObject *obj, QEvent *event) override; ///< 全局输入事件拦截，用于重置无操作计时器
 };
 
 #endif // MAINWINDOW_H

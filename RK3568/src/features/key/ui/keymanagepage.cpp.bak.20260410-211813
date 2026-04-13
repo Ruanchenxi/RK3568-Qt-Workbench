@@ -1,13 +1,8 @@
 /**
  * @file keymanagepage.cpp
- * @brief 钥匙管理页面实现
+ * @brief 閽ュ寵绠＄悊椤甸潰瀹炵幇
  *
- * 四个 Tab：钥匙 / 串口报文 / HTTP客户端报文 / HTTP服务端报文
- * 说明：
- * 1. 本文件仅保留 UI 组织与渲染职责。
- * 2. 串口业务编排由 KeyManageController 负责。
- * 3. 页面层不再直连具体协议实现，避免协议细节渗透到 UI。
- */
+ * 鍥涗釜 Tab锛氶挜鍖?/ 涓插彛鎶ユ枃 / HTTP瀹㈡埛绔姤鏂?/ HTTP鏈嶅姟绔姤鏂? * 璇存槑锛? * 1. 鏈枃浠朵粎淇濈暀 UI 缁勭粐涓庢覆鏌撹亴璐ｃ€? * 2. 涓插彛涓氬姟缂栨帓鐢?KeyManageController 璐熻矗銆? * 3. 椤甸潰灞備笉鍐嶇洿杩炲叿浣撳崗璁疄鐜帮紝閬垮厤鍗忚缁嗚妭娓楅€忓埌 UI銆? */
 
 #include "keymanagepage.h"
 #include "ui_keymanagepage.h"
@@ -84,7 +79,7 @@ bool isReturnCleanupState(const QString &state)
 }
 
 // ====================================================================
-// 构造 / 析构
+// 鏋勯€?/ 鏋愭瀯
 // ====================================================================
 
 KeyManagePage::KeyManagePage(QWidget *parent)
@@ -130,8 +125,7 @@ void KeyManagePage::hideEvent(QHideEvent *event)
 }
 
 // ====================================================================
-// 初始化
-// ====================================================================
+// 鍒濆鍖?// ====================================================================
 
 void KeyManagePage::initUi()
 {
@@ -146,15 +140,15 @@ void KeyManagePage::initUi()
     ui->lblSelectedTicketTitle->setText(QStringLiteral("当前选中系统票"));
     ui->lblSystemTicketTitle->setText(QStringLiteral("系统票数据"));
     ui->lblKeyTicketTitle->setText(QStringLiteral("钥匙票数据"));
-    ui->lblTicketOpTitle->setText(QStringLiteral("票据操作"));
+    ui->lblTicketOpTitle->setText(QStringLiteral("绁ㄦ嵁鎿嶄綔"));
     ui->btnTransferTicket->setText(QStringLiteral("传票到钥匙"));
     ui->btnDeleteTicket->setText(QStringLiteral("删除钥匙票"));
-    ui->btnQueryTaskCount->setText(QStringLiteral("Q_TASK诊断"));
+    ui->btnQueryTaskCount->setText(QStringLiteral("Q_TASK璇婃柇"));
     ui->btnGetSystemTicketList->setText(QStringLiteral("刷新本地系统票列表"));
     ui->lblCommSeatNo->setText(QStringLiteral("当前配置座号: --"));
-    ui->btnQueryTaskCount->setToolTip(QStringLiteral("发送一次 Q_TASK 诊断查询；与“读取钥匙票列表”使用同一协议命令"));
+    ui->btnQueryTaskCount->setToolTip(QStringLiteral("鍙戦€佷竴娆?Q_TASK 璇婃柇鏌ヨ锛涗笌鈥滆鍙栭挜鍖欑エ鍒楄〃鈥濅娇鐢ㄥ悓涓€鍗忚鍛戒护"));
     ui->btnDeleteTicket->setToolTip(QStringLiteral("删除钥匙中已存在的票，请先读取钥匙票列表并选中。"));
-    ui->lblReturnHint->setText(QStringLiteral("回传按任务独立触发；当前任务完成后可自动或手动回传；接口未配置时不会上传"));
+    ui->lblReturnHint->setText(QStringLiteral("鍥炰紶鎸変换鍔＄嫭绔嬭Е鍙戯紱褰撳墠浠诲姟瀹屾垚鍚庡彲鑷姩鎴栨墜鍔ㄥ洖浼狅紱鎺ュ彛鏈厤缃椂涓嶄細涓婁紶"));
 
     ui->serialLogTable->setSelectionMode(QAbstractItemView::SingleSelection);
     ui->serialLogTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -177,18 +171,19 @@ void KeyManagePage::initUi()
     serialHeader->setSectionResizeMode(4, QHeaderView::Fixed);
     serialHeader->setSectionResizeMode(5, QHeaderView::Fixed);
     serialHeader->setSectionResizeMode(6, QHeaderView::Fixed);
-    ui->serialLogTable->setColumnWidth(0, 120);  // 时间
-    ui->serialLogTable->setColumnWidth(1, 72);   // 方向
+    ui->serialLogTable->setColumnWidth(0, 120);  // 鏃堕棿
+    ui->serialLogTable->setColumnWidth(1, 72);   // 鏂瑰悜
     ui->serialLogTable->setColumnWidth(2, 64);   // OpId
-    ui->serialLogTable->setColumnWidth(3, 96);   // 命令
-    ui->serialLogTable->setColumnWidth(4, 72);   // 长度
-    ui->serialLogTable->setColumnWidth(5, 280);  // 摘要
+    ui->serialLogTable->setColumnWidth(3, 96);   // 鍛戒护
+    ui->serialLogTable->setColumnWidth(4, 72);   // 闀垮害
+    ui->serialLogTable->setColumnWidth(5, 280);  // 鎽樿
     ui->serialLogTable->setColumnWidth(6, 560);  // Hex
     if (QTableWidgetItem *h = ui->serialLogTable->horizontalHeaderItem(2)) h->setText(QStringLiteral("OpId"));
     if (QTableWidgetItem *h = ui->serialLogTable->horizontalHeaderItem(1)) h->setTextAlignment(Qt::AlignCenter);
     if (QTableWidgetItem *h = ui->serialLogTable->horizontalHeaderItem(2)) h->setTextAlignment(Qt::AlignCenter);
     if (QTableWidgetItem *h = ui->serialLogTable->horizontalHeaderItem(3)) h->setTextAlignment(Qt::AlignCenter);
     if (QTableWidgetItem *h = ui->serialLogTable->horizontalHeaderItem(4)) h->setTextAlignment(Qt::AlignCenter);
+    // 强制覆盖高亮文本颜色，避免部分主题下选中行出现“白底白字”不可读。
     // 强制覆盖高亮文本颜色，避免部分主题下选中行出现“白底白字”不可读。
     QPalette serialPalette = ui->serialLogTable->palette();
     serialPalette.setColor(QPalette::Highlight, QColor("#E8F1FF"));
@@ -237,6 +232,7 @@ void KeyManagePage::initUi()
     ui->keyTicketTable->verticalHeader()->setVisible(false);
     ui->keyTicketTable->horizontalHeader()->setStretchLastSection(false);
     ui->keyTicketTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    ui->keyTicketTable->setColumnCount(5);
     ui->keyTicketTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
     ui->keyTicketTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
     ui->keyTicketTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
@@ -259,12 +255,12 @@ void KeyManagePage::initUi()
     ui->lblTicketReturnStatus->setMinimumHeight(60);
     ui->ticketInfoCard->setMinimumHeight(220);
 
-    ui->lblBatteryInfo->setText(QStringLiteral("电量: --"));
-    ui->lblTaskInfo->setText(QStringLiteral("任务数: --"));
+    ui->lblBatteryInfo->setText(QStringLiteral("鐢甸噺: --"));
+    ui->lblTaskInfo->setText(QStringLiteral("浠诲姟鏁? --"));
     refreshCommSeatLabel();
-    ui->lblCommParams->setText(QStringLiteral("串口: -- OFF"));
-    ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#EF6C00'>未连接</font>"));
-    ui->lblKeyPosition->setText(QStringLiteral("在位: <font color='#EF6C00'>未插</font>"));
+    ui->lblCommParams->setText(QStringLiteral("涓插彛: -- OFF"));
+    ui->lblCommStatus->setText(QStringLiteral("閫氳: <font color='#EF6C00'>鏈繛鎺?/font>"));
+    ui->lblKeyPosition->setText(QStringLiteral("鍦ㄤ綅: <font color='#EF6C00'>鏈彃</font>"));
     ui->httpClientLogText->document()->setMaximumBlockCount(1500);
     ui->httpServerLogText->document()->setMaximumBlockCount(1500);
 }
@@ -312,6 +308,7 @@ void KeyManagePage::initConnections()
         m_isAdmin = false;
         updateAdminButtons();
     });
+    // 初始化：页面构造时若已登录则读取当前角色。
     // 初始化：页面构造时若已登录则读取当前角色
     m_isAdmin = AppContext::instance()->currentUser().role.contains(
             QStringLiteral("admin"), Qt::CaseInsensitive);
@@ -359,7 +356,7 @@ void KeyManagePage::initController()
 }
 
 // ====================================================================
-// 顶部 Tab 切换
+// 椤堕儴 Tab 鍒囨崲
 // ====================================================================
 
 void KeyManagePage::onTabChanged(int index)
@@ -375,7 +372,7 @@ void KeyManagePage::onTabChanged(int index)
 }
 
 // ====================================================================
-// 钥匙 Tab: 设备操作按钮
+// 閽ュ寵 Tab: 璁惧鎿嶄綔鎸夐挳
 // ====================================================================
 
 void KeyManagePage::onDownloadRfid()
@@ -396,7 +393,7 @@ void KeyManagePage::onQueryBattery()
 void KeyManagePage::onQueryTaskCount()
 {
     m_controller->onQueryTasksClicked();
-    updateStatusBar(QStringLiteral("执行 Q_TASK 诊断查询"));
+    updateStatusBar(QStringLiteral("鎵ц Q_TASK 璇婃柇鏌ヨ"));
 }
 
 void KeyManagePage::onSyncDeviceTime()
@@ -405,7 +402,7 @@ void KeyManagePage::onSyncDeviceTime()
 }
 
 // ====================================================================
-// 钥匙 Tab: 票据操作按钮
+// 閽ュ寵 Tab: 绁ㄦ嵁鎿嶄綔鎸夐挳
 // ====================================================================
 
 void KeyManagePage::onTransferTicket()
@@ -426,17 +423,17 @@ void KeyManagePage::onReturnTicket()
 void KeyManagePage::onGetSystemTicketList()
 {
     m_controller->onGetSystemTicketListClicked();
-    updateStatusBar(QStringLiteral("刷新本地主程序系统票列表"));
+    updateStatusBar(QStringLiteral("鍒锋柊鏈湴涓荤▼搴忕郴缁熺エ鍒楄〃"));
 }
 
 void KeyManagePage::onReadKeyTicketList()
 {
     m_controller->onQueryTasksClicked();
-    updateStatusBar(QStringLiteral("读取钥匙票列表 (Q_TASK)"));
+    updateStatusBar(QStringLiteral("璇诲彇閽ュ寵绁ㄥ垪琛?(Q_TASK)"));
 }
 
 // ====================================================================
-// 串口报文 Tab
+// 涓插彛鎶ユ枃 Tab
 // ====================================================================
 
 void KeyManagePage::onExpertModeToggled(bool checked)
@@ -444,8 +441,8 @@ void KeyManagePage::onExpertModeToggled(bool checked)
     m_expertMode = checked;
     m_controller->onExpertModeChanged(checked);
     updateStatusBar(checked
-                        ? QStringLiteral("专家模式已开启：显示RAW/诊断日志")
-                        : QStringLiteral("专家模式已关闭：隐藏RAW/诊断日志"));
+                        ? QStringLiteral("涓撳妯″紡宸插紑鍚細鏄剧ずRAW/璇婃柇鏃ュ織")
+                        : QStringLiteral("涓撳妯″紡宸插叧闂細闅愯棌RAW/璇婃柇鏃ュ織"));
 }
 
 void KeyManagePage::onShowHexToggled(bool checked)
@@ -462,7 +459,7 @@ void KeyManagePage::onShowHexToggled(bool checked)
         table->setColumnWidth(5, 280);
         table->setColumnWidth(6, 560);
         table->resizeRowsToContents();
-        updateStatusBar(QStringLiteral("Hex列已显示（固定宽，多行显示）"));
+        updateStatusBar(QStringLiteral("Hex鍒楀凡鏄剧ず锛堝浐瀹氬锛屽琛屾樉绀猴級"));
     } else {
         table->setWordWrap(false);
         header->setSectionResizeMode(5, QHeaderView::Stretch);
@@ -470,7 +467,7 @@ void KeyManagePage::onShowHexToggled(bool checked)
         for (int row = 0; row < table->rowCount(); ++row) {
             table->setRowHeight(row, rowHeight);
         }
-        updateStatusBar(QStringLiteral("Hex列已隐藏"));
+        updateStatusBar(QStringLiteral("Hex鍒楀凡闅愯棌"));
     }
 }
 
@@ -479,7 +476,7 @@ void KeyManagePage::onExportSerialLog()
     const QString defaultName = QStringLiteral("serial_log_%1.txt")
                                     .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"));
     const QString path = QFileDialog::getSaveFileName(this,
-                                                      QStringLiteral("导出串口日志"),
+                                                      QStringLiteral("瀵煎嚭涓插彛鏃ュ織"),
                                                       defaultName,
                                                       QStringLiteral("Text Files (*.txt)"));
     if (path.isEmpty()) {
@@ -488,11 +485,11 @@ void KeyManagePage::onExportSerialLog()
 
     QString error;
     if (!m_controller->exportLogs(path, &error)) {
-        updateStatusBar(QStringLiteral("导出失败：%1").arg(error));
+        updateStatusBar(QStringLiteral("瀵煎嚭澶辫触锛?1").arg(error));
         return;
     }
 
-    updateStatusBar(QStringLiteral("日志已导出: %1").arg(path));
+    updateStatusBar(QStringLiteral("鏃ュ織宸插鍑? %1").arg(path));
 }
 
 void KeyManagePage::onClearSerialLog()
@@ -523,7 +520,7 @@ void KeyManagePage::onSerialLogCellDoubleClicked(int row, int column)
 }
 
 // ====================================================================
-// Controller 回调
+// Controller 鍥炶皟
 // ====================================================================
 
 void KeyManagePage::onSessionSnapshotChanged(const KeySessionSnapshot &snapshot)
@@ -533,7 +530,7 @@ void KeyManagePage::onSessionSnapshotChanged(const KeySessionSnapshot &snapshot)
 
 void KeyManagePage::onTasksUpdated(const QList<KeyTaskDto> &tasks)
 {
-    ui->lblTaskInfo->setText(QStringLiteral("任务数: %1").arg(tasks.size()));
+    ui->lblTaskInfo->setText(QStringLiteral("浠诲姟鏁? %1").arg(tasks.size()));
     m_latestKeyTasks = tasks;
     m_pendingKeyTaskRefresh = true;
     scheduleUiFlush();
@@ -541,12 +538,12 @@ void KeyManagePage::onTasksUpdated(const QList<KeyTaskDto> &tasks)
 
 void KeyManagePage::onAckReceived(quint8 ackedCmd)
 {
-    updateStatusBar(QStringLiteral("收到 ACK: %1").arg(cmdText(ackedCmd)));
+    updateStatusBar(QStringLiteral("鏀跺埌 ACK: %1").arg(cmdText(ackedCmd)));
 }
 
 void KeyManagePage::onNakReceived(quint8 origCmd, quint8 errCode)
 {
-    updateStatusBar(QStringLiteral("收到 NAK: %1 err=0x%2")
+    updateStatusBar(QStringLiteral("鏀跺埌 NAK: %1 err=0x%2")
                         .arg(cmdText(origCmd))
                         .arg(errCode, 2, 16, QLatin1Char('0')));
 }
@@ -554,7 +551,7 @@ void KeyManagePage::onNakReceived(quint8 origCmd, quint8 errCode)
 void KeyManagePage::onControllerTimeout(const QString &what)
 {
     if (what.contains("Q_TASK", Qt::CaseInsensitive)) {
-        ui->lblTaskInfo->setText(QStringLiteral("任务数: 查询超时"));
+        ui->lblTaskInfo->setText(QStringLiteral("浠诲姟鏁? 鏌ヨ瓒呮椂"));
     }
     updateStatusBar(what);
 }
@@ -666,6 +663,7 @@ void KeyManagePage::onKeyTicketSelectionChanged()
     if (matchedSystemRow < 0) {
         return;
     }
+    }
 
     if (ui->systemTicketTable->currentRow() == matchedSystemRow) {
         m_controller->onSystemTicketSelected(matchedSystemRow);
@@ -678,7 +676,7 @@ void KeyManagePage::onKeyTicketSelectionChanged()
 }
 
 // ====================================================================
-// 串口日志辅助
+// 涓插彛鏃ュ織杈呭姪
 // ====================================================================
 
 void KeyManagePage::appendSerialLogRow(const LogItem &item)
@@ -845,13 +843,13 @@ void KeyManagePage::populateSystemTicketTable(const QList<SystemTicketDto> &tick
 void KeyManagePage::updateSelectedSystemTicketCard(const SystemTicketDto &ticket)
 {
     if (!ticket.valid) {
-        ui->lblTicketNo->setText(QStringLiteral("票号: <font color='#2E7D32'>未选择</font>"));
-        ui->lblTicketType->setText(QStringLiteral("类型: --"));
-        ui->lblTicketPosition->setText(QStringLiteral("位置: --"));
-        ui->lblTicketReturnStatus->setText(QStringLiteral("传票状态: <font color='#C62828'>未选择系统票</font>"));
+        ui->lblTicketNo->setText(QStringLiteral("绁ㄥ彿: <font color='#2E7D32'>鏈€夋嫨</font>"));
+        ui->lblTicketType->setText(QStringLiteral("绫诲瀷: --"));
+        ui->lblTicketPosition->setText(QStringLiteral("浣嶇疆: --"));
+        ui->lblTicketReturnStatus->setText(QStringLiteral("浼犵エ鐘舵€? <font color='#C62828'>鏈€夋嫨绯荤粺绁?/font>"));
         ui->lblTicketPosition->setToolTip(QString());
         ui->btnReturnTicket->setEnabled(false);
-        ui->lblReturnHint->setText(QStringLiteral("回传按任务独立触发；当前任务完成后可自动或手动回传；接口未配置时不会上传"));
+        ui->lblReturnHint->setText(QStringLiteral("鍥炰紶鎸変换鍔＄嫭绔嬭Е鍙戯紱褰撳墠浠诲姟瀹屾垚鍚庡彲鑷姩鎴栨墜鍔ㄥ洖浼狅紱鎺ュ彛鏈厤缃椂涓嶄細涓婁紶"));
         return;
     }
 
@@ -885,15 +883,15 @@ void KeyManagePage::updateSelectedSystemTicketCard(const SystemTicketDto &ticket
         stateColor = "#C62828";
     }
 
-    ui->lblTicketNo->setText(QStringLiteral("票号: <font color='#2E7D32'>%1</font>").arg(ticket.ticketNo));
-    ui->lblTicketType->setText(QStringLiteral("类型: %1  |  步骤: %2")
+    ui->lblTicketNo->setText(QStringLiteral("绁ㄥ彿: <font color='#2E7D32'>%1</font>").arg(ticket.ticketNo));
+    ui->lblTicketType->setText(QStringLiteral("绫诲瀷: %1  |  姝ラ: %2")
                                .arg(ticketTypeText(ticket.taskType))
                                .arg(ticket.stepNum));
     const QString positionText = ticketPositionText(ticket.ticketNo, ticket.taskName);
-    ui->lblTicketPosition->setText(QStringLiteral("位置: %1").arg(positionText));
+    ui->lblTicketPosition->setText(QStringLiteral("浣嶇疆: %1").arg(positionText));
     const QString statusText = ticketStateDescription(ticket);
     ui->lblTicketReturnStatus->setText(
-        QStringLiteral("传票状态: <font color='%1'>%2</font>").arg(stateColor, statusText));
+        QStringLiteral("浼犵エ鐘舵€? <font color='%1'>%2</font>").arg(stateColor, statusText));
 
     quint8 keyTaskStatus = 0xFF;
     const bool hasSelectedKeyTask = findKeyTaskStatusForTicket(ticket.taskId, &keyTaskStatus);
@@ -938,10 +936,10 @@ void KeyManagePage::populateKeyTicketTable(const QList<KeyTaskDto> &tasks)
         noItem->setTextAlignment(Qt::AlignCenter);
         ui->keyTicketTable->setItem(row, 0, noItem);
         ui->keyTicketTable->setItem(row, 1, new QTableWidgetItem(taskIdHex.left(16)));
-        QTableWidgetItem *typeItem = new QTableWidgetItem(QStringLiteral("类型%1").arg(task.type));
+        QTableWidgetItem *typeItem = new QTableWidgetItem(QStringLiteral("绫诲瀷%1").arg(task.type));
         typeItem->setTextAlignment(Qt::AlignCenter);
         ui->keyTicketTable->setItem(row, 2, typeItem);
-        QTableWidgetItem *sourceItem = new QTableWidgetItem(QStringLiteral("来源%1").arg(task.source));
+        QTableWidgetItem *sourceItem = new QTableWidgetItem(QStringLiteral("鏉ユ簮%1").arg(task.source));
         sourceItem->setTextAlignment(Qt::AlignCenter);
         ui->keyTicketTable->setItem(row, 3, sourceItem);
         QTableWidgetItem *stateItem = new QTableWidgetItem(keyTaskStatusText(task.status));
@@ -1062,87 +1060,87 @@ void KeyManagePage::updateCommIndicators(const KeySessionSnapshot &snapshot)
             && (snapshot.lastProtocolFailureMs >= snapshot.lastBusinessSuccessMs);
 
     if (!snapshot.connected) {
-        ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#C62828'>断开</font>"));
-        ui->lblCommParams->setText(QStringLiteral("串口: -- OFF"));
-        ui->lblKeyPosition->setText(QStringLiteral("在位: <font color='#EF6C00'>未插</font>"));
-        ui->lblBatteryInfo->setText(QStringLiteral("电量: --"));
-        ui->lblTaskInfo->setText(QStringLiteral("任务数: --"));
-        ui->lblCommStatus->setToolTip(QStringLiteral("串口未连接，当前无法与底座通讯"));
+        ui->lblCommStatus->setText(QStringLiteral("閫氳: <font color='#C62828'>鏂紑</font>"));
+        ui->lblCommParams->setText(QStringLiteral("涓插彛: -- OFF"));
+        ui->lblKeyPosition->setText(QStringLiteral("鍦ㄤ綅: <font color='#EF6C00'>鏈彃</font>"));
+        ui->lblBatteryInfo->setText(QStringLiteral("鐢甸噺: --"));
+        ui->lblTaskInfo->setText(QStringLiteral("浠诲姟鏁? --"));
+        ui->lblCommStatus->setToolTip(QStringLiteral("涓插彛鏈繛鎺ワ紝褰撳墠鏃犳硶涓庡簳搴ч€氳"));
         return;
     }
 
     const QString activePort = !snapshot.verifiedPortName.isEmpty()
             ? snapshot.verifiedPortName
             : snapshot.portName;
-    ui->lblCommParams->setText(QStringLiteral("串口: %1 ON")
+    ui->lblCommParams->setText(QStringLiteral("涓插彛: %1 ON")
                                    .arg(activePort.isEmpty() ? QStringLiteral("--") : activePort));
 
     if (!snapshot.keyPresent) {
-        ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#EF6C00'>待钥匙</font>"));
-        ui->lblKeyPosition->setText(QStringLiteral("在位: <font color='#EF6C00'>未插</font>"));
-        ui->lblBatteryInfo->setText(QStringLiteral("电量: --"));
-        ui->lblTaskInfo->setText(QStringLiteral("任务数: --"));
-        ui->lblCommStatus->setToolTip(QStringLiteral("串口已连接，底座在线，但当前未检测到钥匙在位"));
+        ui->lblCommStatus->setText(QStringLiteral("閫氳: <font color='#EF6C00'>寰呴挜鍖?/font>"));
+        ui->lblKeyPosition->setText(QStringLiteral("鍦ㄤ綅: <font color='#EF6C00'>鏈彃</font>"));
+        ui->lblBatteryInfo->setText(QStringLiteral("鐢甸噺: --"));
+        ui->lblTaskInfo->setText(QStringLiteral("浠诲姟鏁? --"));
+        ui->lblCommStatus->setToolTip(QStringLiteral("涓插彛宸茶繛鎺ワ紝搴曞骇鍦ㄧ嚎锛屼絾褰撳墠鏈娴嬪埌閽ュ寵鍦ㄤ綅"));
         return;
     }
 
     ui->lblBatteryInfo->setText(snapshot.batteryPercent >= 0
-                                    ? QStringLiteral("电量: %1%").arg(snapshot.batteryPercent)
-                                    : QStringLiteral("电量: --"));
+                                    ? QStringLiteral("鐢甸噺: %1%").arg(snapshot.batteryPercent)
+                                    : QStringLiteral("鐢甸噺: --"));
 
     if (!snapshot.keyStable) {
-        ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#EF6C00'>稳定中</font>"));
-        ui->lblKeyPosition->setText(QStringLiteral("在位: <font color='#EF6C00'>已插（稳定中）</font>"));
+        ui->lblCommStatus->setText(QStringLiteral("閫氳: <font color='#EF6C00'>绋冲畾涓?/font>"));
+        ui->lblKeyPosition->setText(QStringLiteral("鍦ㄤ綅: <font color='#EF6C00'>宸叉彃锛堢ǔ瀹氫腑锛?/font>"));
         ui->lblCommStatus->setToolTip(QStringLiteral("已检测到钥匙，但接触仍在稳定窗口内，请保持底座接触稳定"));
         return;
     }
 
     if (!snapshot.sessionReady) {
         if (snapshot.protocolConfirmedOnce || snapshot.recoveryWindowActive) {
-            ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#EF6C00'>恢复中</font>"));
+            ui->lblCommStatus->setText(QStringLiteral("閫氳: <font color='#EF6C00'>鎭㈠涓?/font>"));
             ui->lblCommStatus->setToolTip(QStringLiteral("此前已确认过业务通讯，当前正在重新握手恢复"));
         } else {
-            ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#1565C0'>待握手</font>"));
-            ui->lblCommStatus->setToolTip(QStringLiteral("钥匙已稳定，但尚未完成通讯握手"));
+            ui->lblCommStatus->setText(QStringLiteral("閫氳: <font color='#1565C0'>寰呮彙鎵?/font>"));
+            ui->lblCommStatus->setToolTip(QStringLiteral("閽ュ寵宸茬ǔ瀹氾紝浣嗗皻鏈畬鎴愰€氳鎻℃墜"));
         }
-        ui->lblKeyPosition->setText(QStringLiteral("在位: <font color='#2E7D32'>已插（已稳定）</font>"));
+        ui->lblKeyPosition->setText(QStringLiteral("鍦ㄤ綅: <font color='#2E7D32'>宸叉彃锛堝凡绋冲畾锛?/font>"));
         return;
     }
 
     if (recentBusinessSuccess) {
-        ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#2E7D32'>钥匙已就绪</font>"));
-        ui->lblKeyPosition->setText(QStringLiteral("在位: <font color='#2E7D32'>已插（可通讯）</font>"));
-        ui->lblCommStatus->setToolTip(QStringLiteral("最近已收到一次真实业务成功响应，可执行传票/回传等操作"));
+        ui->lblCommStatus->setText(QStringLiteral("閫氳: <font color='#2E7D32'>閽ュ寵宸插氨缁?/font>"));
+        ui->lblKeyPosition->setText(QStringLiteral("鍦ㄤ綅: <font color='#2E7D32'>宸叉彃锛堝彲閫氳锛?/font>"));
+        ui->lblCommStatus->setToolTip(QStringLiteral("最近已收到一次真实业务成功响应，可执行传票、回传等操作"));
         return;
     }
 
     if (!snapshot.protocolHealthy || snapshot.recoveryWindowActive || recentFailureNewer) {
         if (snapshot.protocolConfirmedOnce || recentFailureNewer) {
-            ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#EF6C00'>恢复中</font>"));
+            ui->lblCommStatus->setText(QStringLiteral("閫氳: <font color='#EF6C00'>鎭㈠涓?/font>"));
             ui->lblCommStatus->setToolTip(QStringLiteral("此前已确认过业务通讯，但近期出现超时/接触波动，系统正在自动恢复"));
         } else {
-            ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#EF6C00'>待确认</font>"));
+            ui->lblCommStatus->setText(QStringLiteral("閫氳: <font color='#EF6C00'>寰呯‘璁?/font>"));
             ui->lblCommStatus->setToolTip(QStringLiteral("握手已完成，但尚未拿到第一次真实业务响应"));
         }
-        ui->lblKeyPosition->setText(QStringLiteral("在位: <font color='#2E7D32'>已插（已稳定）</font>"));
+        ui->lblKeyPosition->setText(QStringLiteral("鍦ㄤ綅: <font color='#2E7D32'>宸叉彃锛堝凡绋冲畾锛?/font>"));
         return;
     }
 
-    ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#2E7D32'>钥匙已就绪</font>"));
-    ui->lblKeyPosition->setText(QStringLiteral("在位: <font color='#2E7D32'>已插（可通讯）</font>"));
-    ui->lblCommStatus->setToolTip(QStringLiteral("已完成握手，并已收到一次真实业务响应，可执行传票/回传等操作"));
+    ui->lblCommStatus->setText(QStringLiteral("閫氳: <font color='#2E7D32'>閽ュ寵宸插氨缁?/font>"));
+    ui->lblKeyPosition->setText(QStringLiteral("鍦ㄤ綅: <font color='#2E7D32'>宸叉彃锛堝彲閫氳锛?/font>"));
+    ui->lblCommStatus->setToolTip(QStringLiteral("已完成握手，并已收到一次真实业务响应，可执行传票、回传等操作"));
 }
 
 void KeyManagePage::refreshCommSeatLabel()
 {
     const QString stationId = ConfigManager::instance()->stationId().trimmed();
     if (stationId.isEmpty()) {
-        ui->lblCommSeatNo->setText(QStringLiteral("当前配置座号: --"));
-        ui->lblCommSeatNo->setToolTip(QStringLiteral("当前未配置站号/座号"));
+        ui->lblCommSeatNo->setText(QStringLiteral("褰撳墠閰嶇疆搴у彿: --"));
+        ui->lblCommSeatNo->setToolTip(QStringLiteral("褰撳墠鏈厤缃珯鍙?搴у彿"));
         return;
     }
 
-    ui->lblCommSeatNo->setText(QStringLiteral("当前配置座号: %1").arg(stationId));
+    ui->lblCommSeatNo->setText(QStringLiteral("褰撳墠閰嶇疆搴у彿: %1").arg(stationId));
     ui->lblCommSeatNo->setToolTip(QStringLiteral("显示当前配置的站号/座号，用于协议站号映射，不是底座自动探测值"));
 }
 
@@ -1153,17 +1151,17 @@ bool KeyManagePage::shouldSuppressStatusBarMessage(const QString &message)
         return true;
     }
 
-    return text == QLatin1String("钥匙已稳定，等待通讯确认")
-            || text == QLatin1String("钥匙已就绪，可发送 Q_TASK/DEL")
-            || text == QLatin1String("自动传票已开启，但当前没有待发送系统票");
+    return text == QLatin1String("閽ュ寵宸茬ǔ瀹氾紝绛夊緟閫氳纭")
+            || text == QLatin1String("閽ュ寵宸插氨缁紝鍙彂閫?Q_TASK/DEL")
+            || text == QLatin1String("鑷姩浼犵エ宸插紑鍚紝浣嗗綋鍓嶆病鏈夊緟鍙戦€佺郴缁熺エ");
 }
 
 QString KeyManagePage::ticketTypeText(int taskType)
 {
     switch (taskType) {
-    case 0: return QStringLiteral("停电");
-    case 1: return QStringLiteral("送电");
-    default: return QStringLiteral("其他");
+    case 0: return QStringLiteral("鍋滅數");
+    case 1: return QStringLiteral("閫佺數");
+    default: return QStringLiteral("鍏朵粬");
     }
 }
 
@@ -1172,52 +1170,52 @@ QString KeyManagePage::keyTaskStatusText(quint8 status)
     switch (status) {
     case 0x00: return QStringLiteral("未操作");
     case 0x01: return QStringLiteral("操作中");
-    case 0x02: return QStringLiteral("操作完成");
-    case 0x04: return QStringLiteral("已删除(钥匙)");
-    case 0x05: return QStringLiteral("已删除(图形)");
+    case 0x02: return QStringLiteral("鎿嶄綔瀹屾垚");
+    case 0x04: return QStringLiteral("宸插垹闄?閽ュ寵)");
+    case 0x05: return QStringLiteral("宸插垹闄?鍥惧舰)");
     default:
-        return QStringLiteral("状态0x%1").arg(status, 2, 16, QLatin1Char('0')).toUpper();
+        return QStringLiteral("鐘舵€?x%1").arg(status, 2, 16, QLatin1Char('0')).toUpper();
     }
 }
 
 QString KeyManagePage::ticketStateText(const QString &state)
 {
     if (state == QLatin1String("return-requesting-log"))
-        return QStringLiteral("钥匙已完成，正在读取回传日志");
+        return QStringLiteral("閽ュ寵宸插畬鎴愶紝姝ｅ湪璇诲彇鍥炰紶鏃ュ織");
     if (state == QLatin1String("return-handshake"))
-        return QStringLiteral("回传前握手中");
+        return QStringLiteral("鍥炰紶鍓嶆彙鎵嬩腑");
     if (state == QLatin1String("return-log-requesting"))
         return QStringLiteral("正在向钥匙请求回传日志");
     if (state == QLatin1String("return-log-receiving"))
-        return QStringLiteral("正在接收钥匙回传日志");
+        return QStringLiteral("姝ｅ湪鎺ユ敹閽ュ寵鍥炰紶鏃ュ織");
     if (state == QLatin1String("return-uploading"))
-        return QStringLiteral("日志已读取，正在回传到服务端");
+        return QStringLiteral("鏃ュ織宸茶鍙栵紝姝ｅ湪鍥炰紶鍒版湇鍔＄");
     if (state == QLatin1String("return-upload-success"))
         return QStringLiteral("已上传回服务端");
     if (state == QLatin1String("return-delete-pending"))
-        return QStringLiteral("服务端已收，正在清理钥匙任务");
+        return QStringLiteral("鏈嶅姟绔凡鏀讹紝姝ｅ湪娓呯悊閽ュ寵浠诲姟");
     if (state == QLatin1String("return-delete-verifying"))
         return QStringLiteral("正在对账确认钥匙任务是否已删除");
     if (state == QLatin1String("return-delete-success"))
-        return QStringLiteral("已完成回传并清理钥匙任务");
+        return QStringLiteral("宸插畬鎴愬洖浼犲苟娓呯悊閽ュ寵浠诲姟");
     if (state == QLatin1String("return-delete-failed"))
-        return QStringLiteral("钥匙删除验证失败，需人工处理");
+        return QStringLiteral("閽ュ寵鍒犻櫎楠岃瘉澶辫触锛岄渶浜哄伐澶勭悊");
     if (state == QLatin1String("return-success"))
-        return QStringLiteral("已回传到系统，并准备清理钥匙任务");
+        return QStringLiteral("宸插洖浼犲埌绯荤粺锛屽苟鍑嗗娓呯悊閽ュ寵浠诲姟");
     if (state == QLatin1String("return-interrupted-retryable"))
-        return QStringLiteral("回传中断，可在钥匙重新就绪后自动恢复");
+        return QStringLiteral("鍥炰紶涓柇锛屽彲鍦ㄩ挜鍖欓噸鏂板氨缁悗鑷姩鎭㈠");
     if (state == QLatin1String("manual-required"))
         return QStringLiteral("回传需人工确认，请查看 HTTP 客户端报文");
     if (state == QLatin1String("upload_uncertain"))
-        return QStringLiteral("回传结果不确定，请人工确认是否已上传");
+        return QStringLiteral("鍥炰紶缁撴灉涓嶇‘瀹氾紝璇蜂汉宸ョ‘璁ゆ槸鍚﹀凡涓婁紶");
     if (state == QLatin1String("return-failed"))
-        return QStringLiteral("回传失败，请查看HTTP客户端报文");
+        return QStringLiteral("回传失败，请查看 HTTP 客户端报文");
     if (state == QLatin1String("received"))
         return QStringLiteral("主程序已接收，尚未开始传票");
     if (state == QLatin1String("auto-pending"))
-        return QStringLiteral("等待自动传票（钥匙/握手未就绪）");
+        return QStringLiteral("绛夊緟鑷姩浼犵エ锛堥挜鍖?鎻℃墜鏈氨缁級");
     if (state == QLatin1String("orphan-recovered"))
-        return QStringLiteral("发现钥匙中的未知任务，待人工确认");
+        return QStringLiteral("鍙戠幇閽ュ寵涓殑鏈煡浠诲姟锛屽緟浜哄伐纭");
     if (state == QLatin1String("sending"))
         return QStringLiteral("正在传票到钥匙");
     if (state == QLatin1String("success"))
@@ -1227,9 +1225,9 @@ QString KeyManagePage::ticketStateText(const QString &state)
     if (state == QLatin1String("admin-delete-pending"))
         return QStringLiteral("钥匙已清理，正在通知工作台终止");
     if (state == QLatin1String("admin-delete-failed"))
-        return QStringLiteral("工作台通知失败，需手动处理");
+        return QStringLiteral("宸ヤ綔鍙伴€氱煡澶辫触锛岄渶鎵嬪姩澶勭悊");
     if (state == QLatin1String("failed"))
-        return QStringLiteral("传票失败，请查看串口报文");
+        return QStringLiteral("浼犵エ澶辫触锛岃鏌ョ湅涓插彛鎶ユ枃");
     return state;
 }
 
@@ -1237,9 +1235,10 @@ QString KeyManagePage::ticketStateDescription(const SystemTicketDto &ticket)
 {
     if (ticket.adminDeleteStage == SystemTicketDto::AdminDeleteStage::TerminationFailed) {
         const QString err = ticket.adminDeleteError.trimmed();
-        return err.isEmpty()
-                ? QStringLiteral("工作台终止通知失败，请手动在工作台关闭该任务")
-                : QStringLiteral("工作台终止通知失败，请手动在工作台关闭该任务（错误：%1）").arg(err);
+        if (!err.isEmpty()) {
+            return QStringLiteral("工作台终止通知失败，请手动在工作台关闭该任务（错误：%1）").arg(err);
+        }
+        return QStringLiteral("工作台终止通知失败，请手动在工作台关闭该任务");
     }
     if (ticket.adminDeleteStage == SystemTicketDto::AdminDeleteStage::KeyClearedAwaitingTermination) {
         return QStringLiteral("钥匙端任务已清理，正在通知工作台终止系统票，请稍候");
@@ -1248,10 +1247,10 @@ QString KeyManagePage::ticketStateDescription(const SystemTicketDto &ticket)
         return QStringLiteral("钥匙任务已完成，主程序正在读取回传日志");
     }
     if (ticket.returnState == QLatin1String("return-handshake")) {
-        return QStringLiteral("主程序正在为回传重新建立钥匙通讯握手");
+        return QStringLiteral("涓荤▼搴忔鍦ㄤ负鍥炰紶閲嶆柊寤虹珛閽ュ寵閫氳鎻℃墜");
     }
     if (ticket.returnState == QLatin1String("return-log-requesting")) {
-        return QStringLiteral("回传握手已完成，主程序正在向钥匙请求任务回传日志");
+        return QStringLiteral("鍥炰紶鎻℃墜宸插畬鎴愶紝涓荤▼搴忔鍦ㄥ悜閽ュ寵璇锋眰浠诲姟鍥炰紶鏃ュ織");
     }
     if (ticket.returnState == QLatin1String("return-log-receiving")) {
         return QStringLiteral("主程序已开始接收钥匙回传日志，正在等待日志帧全部到齐");
@@ -1260,7 +1259,7 @@ QString KeyManagePage::ticketStateDescription(const SystemTicketDto &ticket)
         return QStringLiteral("主程序已读取钥匙日志，正在回传到服务端");
     }
     if (ticket.returnState == QLatin1String("return-upload-success")) {
-        return QStringLiteral("主程序已完成服务端上传，准备继续清理钥匙任务");
+        return QStringLiteral("涓荤▼搴忓凡瀹屾垚鏈嶅姟绔笂浼狅紝鍑嗗缁х画娓呯悊閽ュ寵浠诲姟");
     }
     if (ticket.returnState == QLatin1String("return-delete-pending")) {
         return QStringLiteral("服务端已确认回传，主程序正在继续清理钥匙中的已完成任务");
@@ -1269,23 +1268,23 @@ QString KeyManagePage::ticketStateDescription(const SystemTicketDto &ticket)
         return QStringLiteral("主程序正在通过后续 Q_TASK 对账，确认钥匙中的任务是否已经删除");
     }
     if (ticket.returnState == QLatin1String("return-delete-success")) {
-        return QStringLiteral("主程序已完成回传上传，并已清理钥匙中的已完成任务");
+        return QStringLiteral("涓荤▼搴忓凡瀹屾垚鍥炰紶涓婁紶锛屽苟宸叉竻鐞嗛挜鍖欎腑鐨勫凡瀹屾垚浠诲姟");
     }
     if (ticket.returnState == QLatin1String("return-delete-failed")) {
         if (!ticket.returnError.trimmed().isEmpty()) {
-            return QStringLiteral("钥匙删除验证失败：%1").arg(ticket.returnError);
+            return QStringLiteral("閽ュ寵鍒犻櫎楠岃瘉澶辫触锛?1").arg(ticket.returnError);
         }
         return QStringLiteral("钥匙删除验证失败，需人工处理或稍后手动重试");
     }
     if (ticket.returnState == QLatin1String("return-success")) {
-        return QStringLiteral("主程序已完成回传上传，钥匙任务将进入清理流程");
+        return QStringLiteral("涓荤▼搴忓凡瀹屾垚鍥炰紶涓婁紶锛岄挜鍖欎换鍔″皢杩涘叆娓呯悊娴佺▼");
     }
     if (ticket.returnState == QLatin1String("return-interrupted-retryable")) {
         return QStringLiteral("回传链在握手、日志请求或日志接收阶段被中断；钥匙重新就绪后应可自动继续");
     }
     if (ticket.returnState == QLatin1String("manual-required")) {
         if (!ticket.returnError.trimmed().isEmpty()) {
-            return QStringLiteral("当前回传需要人工确认：%1").arg(ticket.returnError);
+            return QStringLiteral("褰撳墠鍥炰紶闇€瑕佷汉宸ョ‘璁わ細%1").arg(ticket.returnError);
         }
         return QStringLiteral("当前回传需要人工确认，请先查看 HTTP 客户端报文与钥匙状态");
     }
@@ -1294,15 +1293,15 @@ QString KeyManagePage::ticketStateDescription(const SystemTicketDto &ticket)
     }
     if (ticket.returnState == QLatin1String("return-failed")) {
         if (!ticket.returnError.trimmed().isEmpty()) {
-            return QStringLiteral("回传失败：%1").arg(ticket.returnError);
+            return QStringLiteral("鍥炰紶澶辫触锛?1").arg(ticket.returnError);
         }
-        return QStringLiteral("回传失败，请查看HTTP客户端报文");
+        return QStringLiteral("回传失败，请查看 HTTP 客户端报文");
     }
     if (ticket.transferState == QLatin1String("received")) {
-        return QStringLiteral("主程序已接收到工作台JSON，尚未开始向钥匙传票");
+        return QStringLiteral("涓荤▼搴忓凡鎺ユ敹鍒板伐浣滃彴JSON锛屽皻鏈紑濮嬪悜閽ュ寵浼犵エ");
     }
     if (ticket.transferState == QLatin1String("auto-pending")) {
-        return QStringLiteral("主程序已接收JSON，等待串口连接和钥匙就绪后自动传票");
+        return QStringLiteral("主程序已接收 JSON，等待串口连接和钥匙就绪后自动传票");
     }
     if (ticket.transferState == QLatin1String("orphan-recovered")) {
         return QStringLiteral("该任务来自钥匙侧孤儿恢复，当前不会自动回传或自动删除，请先人工确认来源");
@@ -1311,16 +1310,16 @@ QString KeyManagePage::ticketStateDescription(const SystemTicketDto &ticket)
         return QStringLiteral("主程序已开始向钥匙发送传票");
     }
     if (ticket.transferState == QLatin1String("success")) {
-        return QStringLiteral("主程序已完成传票发送；同一任务再次触发钥匙传票时将默认忽略重复下发");
+        return QStringLiteral("涓荤▼搴忓凡瀹屾垚浼犵エ鍙戦€侊紱鍚屼竴浠诲姟鍐嶆瑙﹀彂閽ュ寵浼犵エ鏃跺皢榛樿蹇界暐閲嶅涓嬪彂");
     }
     if (ticket.transferState == QLatin1String("key-cleared")) {
-        return QStringLiteral("钥匙中的同任务已被删除；当前系统票可再次手动传票，也可在工作台重新触发后再次自动传票");
+        return QStringLiteral("閽ュ寵涓殑鍚屼换鍔″凡琚垹闄わ紱褰撳墠绯荤粺绁ㄥ彲鍐嶆鎵嬪姩浼犵エ锛屼篃鍙湪宸ヤ綔鍙伴噸鏂拌Е鍙戝悗鍐嶆鑷姩浼犵エ");
     }
     if (ticket.transferState == QLatin1String("failed")) {
         if (!ticket.lastError.trimmed().isEmpty()) {
-            return QStringLiteral("传票失败：%1").arg(ticket.lastError);
+            return QStringLiteral("浼犵エ澶辫触锛?1").arg(ticket.lastError);
         }
-        return QStringLiteral("传票失败，请查看串口报文日志");
+        return QStringLiteral("浼犵エ澶辫触锛岃鏌ョ湅涓插彛鎶ユ枃鏃ュ織");
     }
     return ticket.transferState;
 }
