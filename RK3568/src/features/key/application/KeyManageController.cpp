@@ -843,6 +843,77 @@ bool KeyManageController::canStartManualReturn(const QString &taskId, QString *b
     return canStartTicketReturn(taskId, false, nullptr, blockedReason);
 }
 
+bool KeyManageController::isSelectedKeyTaskOrphan() const
+{
+    if (m_selectedKeyTaskRaw.isEmpty()) {
+        return false;
+    }
+    const QString taskId = taskIdFromRaw(m_selectedKeyTaskRaw);
+    if (taskId.isEmpty()) {
+        return false;
+    }
+    const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
+    return ticket.valid && ticket.transferState == QLatin1String("orphan-recovered");
+}
+
+void KeyManageController::onClearOrphanKeyTaskClicked()
+{
+    if (m_selectedKeyTaskRaw.isEmpty()) {
+        emit statusMessage(QStringLiteral("未选中钥匙任务，请先读取钥匙票列表并选中未登记任务"));
+        return;
+    }
+
+    const QString taskId = taskIdFromRaw(m_selectedKeyTaskRaw);
+    const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
+    if (!ticket.valid || ticket.transferState != QLatin1String("orphan-recovered")) {
+        emit statusMessage(QStringLiteral("选中任务不是未登记孤儿任务，不允许使用此操作清除"));
+        return;
+    }
+
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    if (!snapshot.connected || !snapshot.keyPresent || !snapshot.keyStable || !snapshot.sessionReady) {
+        emit statusMessage(QStringLiteral("钥匙未就绪，无法执行未登记任务清除"));
+        return;
+    }
+
+    if (!m_pendingDeletedSystemTicketId.isEmpty()) {
+        emit statusMessage(QStringLiteral("当前已有删除操作在途，请稍后再试"));
+        return;
+    }
+
+    if (!m_activeReturnTaskId.isEmpty() || !m_pendingReturnHandshakeTaskId.isEmpty()) {
+        emit statusMessage(QStringLiteral("当前有回传操作在途，无法同时执行未登记任务清除"));
+        return;
+    }
+
+    if (!m_activeTransferTaskId.isEmpty()) {
+        emit statusMessage(QStringLiteral("当前有传票操作在途，无法同时执行未登记任务清除"));
+        return;
+    }
+
+    if (!m_pendingCancelSystemTicketId.isEmpty()) {
+        emit statusMessage(QStringLiteral("当前有撤销操作在途，无法同时执行未登记任务清除"));
+        return;
+    }
+
+    m_pendingDeletedKeyTaskRaw = m_selectedKeyTaskRaw;
+    m_pendingDeletedSystemTicketId = taskId;
+    m_pendingDeleteAllowsRetransfer = false;
+    m_pendingDeleteSessionId = m_keySessionId;
+    m_pendingDeleteRetryCount = 0;
+    m_pendingDeleteOrigin = DeleteOrigin::AdminClearOrphan;
+
+    CommandRequest req;
+    req.id = CommandId::DeleteTask;
+    req.opId = nextOpId();
+    req.payload = m_pendingDeletedKeyTaskRaw;
+    m_session->execute(req);
+    qInfo().noquote()
+            << QStringLiteral("[KeyManageController] onClearOrphanKeyTaskClicked taskId=%1 session=%2")
+                  .arg(taskId, QString::number(m_keySessionId));
+    emit statusMessage(QStringLiteral("发送 DEL 命令，清除未登记任务：%1").arg(taskId));
+}
+
 void KeyManageController::requestApplyConfiguredKeyPort()
 {
     const QString configuredPort = ConfigManager::instance()->keySerialPort().trimmed();
@@ -951,11 +1022,23 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
         }
         if (what.contains(QStringLiteral("DEL"), Qt::CaseInsensitive)) {
             if (!m_pendingDeletedSystemTicketId.isEmpty()) {
-                m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
-                                                 QStringLiteral("return-delete-verifying"),
-                                                 QStringLiteral("DEL 超时，等待后续 Q_TASK 对账确认钥匙任务是否已删除"));
-                m_pendingDeleteSessionId = 0;
-                emit statusMessage(QStringLiteral("DEL 超时，保留删除验证意图，等待后续 Q_TASK 继续对账"));
+                if (m_pendingDeleteOrigin == DeleteOrigin::AdminClearOrphan) {
+                    // AdminClearOrphan：DEL 超时即视为本轮操作中断，不自动续删，保留孤儿记录
+                    const QString taskId = m_pendingDeletedSystemTicketId;
+                    m_pendingDeletedSystemTicketId.clear();
+                    m_pendingDeletedKeyTaskRaw.clear();
+                    m_pendingDeleteAllowsRetransfer = false;
+                    m_pendingDeleteSessionId = 0;
+                    m_pendingDeleteRetryCount = 0;
+                    m_pendingDeleteOrigin = DeleteOrigin::None;
+                    emit statusMessage(QStringLiteral("未登记任务清理未完成（DEL 超时），请确认钥匙状态后再次点击清除：%1").arg(taskId));
+                } else {
+                    m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
+                                                     QStringLiteral("return-delete-verifying"),
+                                                     QStringLiteral("DEL 超时，等待后续 Q_TASK 对账确认钥匙任务是否已删除"));
+                    m_pendingDeleteSessionId = 0;
+                    emit statusMessage(QStringLiteral("DEL 超时，保留删除验证意图，等待后续 Q_TASK 继续对账"));
+                }
             }
         }
         if (!m_pendingCancelSystemTicketId.isEmpty()
@@ -1058,10 +1141,22 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
         }
         if (static_cast<quint8>(event.data.value("origCmd").toInt()) == KeyProtocol::CmdDel) {
             if (!m_pendingDeletedSystemTicketId.isEmpty()) {
-                m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
-                                                 QStringLiteral("return-delete-verifying"),
-                                                 QStringLiteral("DEL 收到 NAK，等待后续 Q_TASK 对账确认钥匙任务状态"));
-                m_pendingDeleteSessionId = 0;
+                if (m_pendingDeleteOrigin == DeleteOrigin::AdminClearOrphan) {
+                    // AdminClearOrphan：DEL NAK 即视为本轮操作中断，不自动续删，保留孤儿记录
+                    const QString taskId = m_pendingDeletedSystemTicketId;
+                    m_pendingDeletedSystemTicketId.clear();
+                    m_pendingDeletedKeyTaskRaw.clear();
+                    m_pendingDeleteAllowsRetransfer = false;
+                    m_pendingDeleteSessionId = 0;
+                    m_pendingDeleteRetryCount = 0;
+                    m_pendingDeleteOrigin = DeleteOrigin::None;
+                    emit statusMessage(QStringLiteral("未登记任务清理未完成（DEL 被拒绝），请确认钥匙状态后再次点击清除：%1").arg(taskId));
+                } else {
+                    m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
+                                                     QStringLiteral("return-delete-verifying"),
+                                                     QStringLiteral("DEL 收到 NAK，等待后续 Q_TASK 对账确认钥匙任务状态"));
+                    m_pendingDeleteSessionId = 0;
+                }
             }
         }
         if (!m_pendingCancelSystemTicketId.isEmpty()
@@ -1172,6 +1267,9 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
         }
         if (!httpTransactionControlledEvent && ready && !m_pendingDeletedSystemTicketId.isEmpty()) {
             finalizePendingReturnDelete(tasks);
+        }
+        if (!httpTransactionControlledEvent && ready) {
+            reconcileStaleOrphanTickets(tasks);
         }
         if (!httpTransactionControlledEvent && ready && !m_pendingCancelSystemTicketId.isEmpty()) {
             finalizePendingCancelDelete(tasks);
@@ -1444,12 +1542,23 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
 
             if (!m_pendingDeletedSystemTicketId.isEmpty()) {
                 const QString taskId = m_pendingDeletedSystemTicketId;
-                m_ticketStore->updateReturnState(taskId,
-                                                 QStringLiteral("return-delete-verifying"),
-                                                 QStringLiteral("钥匙已移除，删除验证已中断，等待重新放回后继续对账"));
-                m_pendingDeleteSessionId = 0;
-                emit statusMessage(QStringLiteral("钥匙已移除，任务 %1 的钥匙清理验证已中断；重新放回后将继续检查")
-                                       .arg(taskId));
+                if (m_pendingDeleteOrigin == DeleteOrigin::AdminClearOrphan) {
+                    // AdminClearOrphan：钥匙移除即视为本轮操作中断，不自动续删，保留孤儿记录
+                    m_pendingDeletedSystemTicketId.clear();
+                    m_pendingDeletedKeyTaskRaw.clear();
+                    m_pendingDeleteAllowsRetransfer = false;
+                    m_pendingDeleteSessionId = 0;
+                    m_pendingDeleteRetryCount = 0;
+                    m_pendingDeleteOrigin = DeleteOrigin::None;
+                    emit statusMessage(QStringLiteral("未登记任务清理中断（钥匙已移除），请重新放回钥匙后再次点击清除：%1").arg(taskId));
+                } else {
+                    m_ticketStore->updateReturnState(taskId,
+                                                     QStringLiteral("return-delete-verifying"),
+                                                     QStringLiteral("钥匙已移除，删除验证已中断，等待重新放回后继续对账"));
+                    m_pendingDeleteSessionId = 0;
+                    emit statusMessage(QStringLiteral("钥匙已移除，任务 %1 的钥匙清理验证已中断；重新放回后将继续检查")
+                                           .arg(taskId));
+                }
             }
         }
 
@@ -1799,6 +1908,19 @@ void KeyManageController::finalizePendingReturnDelete(const QList<KeyTaskDto> &t
 
     const bool sessionUnknown = (m_pendingDeleteSessionId == 0);
     if (sessionUnknown && !stillExists) {
+        if (m_pendingDeleteOrigin == DeleteOrigin::AdminClearOrphan) {
+            // AdminClearOrphan：会话已中断且任务已消失，无法确认是否同一把钥匙，保守停止
+            // 孤儿记录保留，由 reconcileStaleOrphanTickets 在 session 稳定后自动确认清理
+            const QString taskId = m_pendingDeletedSystemTicketId;
+            m_pendingDeletedSystemTicketId.clear();
+            m_pendingDeletedKeyTaskRaw.clear();
+            m_pendingDeleteAllowsRetransfer = false;
+            m_pendingDeleteSessionId = 0;
+            m_pendingDeleteRetryCount = 0;
+            m_pendingDeleteOrigin = DeleteOrigin::None;
+            emit statusMessage(QStringLiteral("未登记任务清理中断（会话已中断），孤儿记录保留待下次 Q_TASK 确认：%1").arg(taskId));
+            return;
+        }
         if (m_pendingDeleteOrigin != DeleteOrigin::ManualDelete) {
             m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
                                              QStringLiteral("return-delete-verifying"),
@@ -1808,6 +1930,18 @@ void KeyManageController::finalizePendingReturnDelete(const QList<KeyTaskDto> &t
         return;
     }
     if (stillExists || sessionUnknown) {
+        if (m_pendingDeleteOrigin == DeleteOrigin::AdminClearOrphan) {
+            // AdminClearOrphan：任务仍存在或会话不确定，保守停止，不自动续删
+            const QString taskId = m_pendingDeletedSystemTicketId;
+            m_pendingDeletedSystemTicketId.clear();
+            m_pendingDeletedKeyTaskRaw.clear();
+            m_pendingDeleteAllowsRetransfer = false;
+            m_pendingDeleteSessionId = 0;
+            m_pendingDeleteRetryCount = 0;
+            m_pendingDeleteOrigin = DeleteOrigin::None;
+            emit statusMessage(QStringLiteral("未登记任务清理未完成（钥匙任务仍存在或会话不确定），请再次点击清除：%1").arg(taskId));
+            return;
+        }
         const QString retryReason = (sessionUnknown && !stillExists)
                 ? QStringLiteral("删除后钥匙发生过移除，当前无法确认是否为同一把钥匙，重新发送 DEL 以避免误判成功")
                 : QStringLiteral("删除后验证发现钥匙任务仍存在，重新发送 DEL 继续清理");
@@ -1828,6 +1962,13 @@ void KeyManageController::finalizePendingReturnDelete(const QList<KeyTaskDto> &t
                 emit statusMessage(QStringLiteral("钥匙残留任务已清理（本地记录已过期）：%1")
                                        .arg(m_pendingDeletedSystemTicketId));
             }
+        } else if (m_pendingDeleteOrigin == DeleteOrigin::AdminClearOrphan) {
+            // 孤儿任务清除：仅做本地删除，不调 callTermination，不更新 returnState
+            m_ticketStore->removeTicket(m_pendingDeletedSystemTicketId);
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] AdminClearOrphan: orphan task removed taskId=%1")
+                          .arg(m_pendingDeletedSystemTicketId);
+            emit statusMessage(QStringLiteral("钥匙未登记任务已清除：%1").arg(m_pendingDeletedSystemTicketId));
         } else {
             // 回传清理收口 — 原有逻辑完全不变
             if (m_pendingDeleteAllowsRetransfer) {
@@ -1855,12 +1996,37 @@ void KeyManageController::finalizePendingReturnDelete(const QList<KeyTaskDto> &t
         m_pendingDeleteRetryCount = 0;
         m_pendingDeleteOrigin = DeleteOrigin::None;
     } else {
-        if (m_pendingDeleteOrigin != DeleteOrigin::ManualDelete) {
+        if (m_pendingDeleteOrigin != DeleteOrigin::ManualDelete
+                && m_pendingDeleteOrigin != DeleteOrigin::AdminClearOrphan) {
             m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
                                              QStringLiteral("return-delete-verifying"),
                                              QStringLiteral("删除后验证发现钥匙任务仍存在，等待后续自动清理"));
         }
         emit statusMessage(QStringLiteral("删除后验证发现钥匙任务仍存在，请继续等待自动清理"));
+    }
+}
+
+void KeyManageController::reconcileStaleOrphanTickets(const QList<KeyTaskDto> &tasks)
+{
+    // 对所有 orphan-recovered 条目，检查对应 key task 是否已从钥匙消失
+    // 条件：无 pending delete、当前条目、Q_TASK 确认任务不在 → 直接清理本地记录
+    // 不发任何协议命令，不写 returnState，纯本地 TicketStore 清理
+    for (const SystemTicketDto &ticket : m_ticketStore->tickets()) {
+        if (ticket.transferState != QLatin1String("orphan-recovered")) {
+            continue;
+        }
+        // 正在走 pending delete 的由 finalizePendingReturnDelete 负责，跳过
+        if (ticket.taskId == m_pendingDeletedSystemTicketId) {
+            continue;
+        }
+        // Q_TASK 确认任务不在钥匙里
+        if (!taskExistsInList(tasks, ticket.taskId)) {
+            m_ticketStore->removeTicket(ticket.taskId);
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] reconcileStaleOrphanTickets: orphan task confirmed absent from key, local record removed taskId=%1")
+                          .arg(ticket.taskId);
+            emit statusMessage(QStringLiteral("已确认未登记任务不在钥匙中，本地残留记录已清除：%1").arg(ticket.taskId));
+        }
     }
 }
 
@@ -1871,10 +2037,11 @@ bool KeyManageController::retryPendingReturnDelete(const QString &reason)
     }
 
     const bool isManualDelete = (m_pendingDeleteOrigin == DeleteOrigin::ManualDelete);
+    const bool isOrphanClear = (m_pendingDeleteOrigin == DeleteOrigin::AdminClearOrphan);
 
     const KeySessionSnapshot snapshot = m_session->snapshot();
     if (!snapshot.connected || !snapshot.keyPresent || !snapshot.keyStable || !snapshot.sessionReady) {
-        if (!isManualDelete) {
+        if (!isManualDelete && !isOrphanClear) {
             m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
                                              QStringLiteral("return-delete-verifying"),
                                              reason.isEmpty()
@@ -1884,7 +2051,7 @@ bool KeyManageController::retryPendingReturnDelete(const QString &reason)
         return false;
     }
     if (snapshot.commandInFlight || snapshot.recoveryWindowActive) {
-        if (!isManualDelete) {
+        if (!isManualDelete && !isOrphanClear) {
             m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
                                              QStringLiteral("return-delete-verifying"),
                                              reason.isEmpty()
@@ -1902,6 +2069,11 @@ bool KeyManageController::retryPendingReturnDelete(const QString &reason)
             m_ticketStore->updateAdminDeleteError(
                     m_pendingDeletedSystemTicketId,
                     QStringLiteral("DEL 串口命令重试 3 次仍未确认删除，钥匙任务状态未知，请人工确认"));
+        } else if (isOrphanClear) {
+            // AdminClearOrphan：不写任何状态，直接记日志，孤儿票保留供人工核查
+            qWarning().noquote()
+                    << QStringLiteral("[KeyManageController] AdminClearOrphan: DEL retry limit reached, orphan ticket preserved for manual check taskId=%1")
+                          .arg(m_pendingDeletedSystemTicketId);
         } else {
             m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
                                              QStringLiteral("return-delete-failed"),
@@ -1920,7 +2092,7 @@ bool KeyManageController::retryPendingReturnDelete(const QString &reason)
 
     ++m_pendingDeleteRetryCount;
     m_pendingDeleteSessionId = m_keySessionId;
-    if (!isManualDelete) {
+    if (!isManualDelete && !isOrphanClear) {
         m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
                                          QStringLiteral("return-delete-pending"),
                                          QStringLiteral("DEL 重试第 %1/3 次：%2")

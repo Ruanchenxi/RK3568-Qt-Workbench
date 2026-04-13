@@ -65,6 +65,7 @@ private slots:
     // ---- 钥匙 Tab: 获取票列表按钮 ----
     void onGetSystemTicketList();
     void onReadKeyTicketList();
+    void onClearOrphanKeyTask();
 
     // ---- 串口报文 Tab ----
     void onExpertModeToggled(bool checked);
@@ -128,6 +129,7 @@ private:
     void updateSelectedSystemTicketCard(const SystemTicketDto &ticket);
     void populateKeyTicketTable(const QList<KeyTaskDto> &tasks);
     void updateAdminButtons();
+    void updateClearOrphanButton();
 
     void updateStatusBar(const QString &message);
 

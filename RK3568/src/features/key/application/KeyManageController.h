@@ -68,6 +68,8 @@ public:
     QString httpClientLogText() const;
     QVariantMap keySerialApplyStatus() const;
     bool canStartManualReturn(const QString &taskId, QString *blockedReason = nullptr) const;
+    void onClearOrphanKeyTaskClicked();
+    bool isSelectedKeyTaskOrphan() const;
 
 signals:
     void statusMessage(const QString &message);
@@ -131,6 +133,7 @@ private:
     void markReturnDeletePending(const QString &taskId, const QByteArray &taskIdRaw);
     void finalizePendingReturnDelete(const QList<KeyTaskDto> &tasks);
     bool retryPendingReturnDelete(const QString &reason);
+    void reconcileStaleOrphanTickets(const QList<KeyTaskDto> &tasks);
     void callTermination(const QString &taskId);
     void callTerminationThenRemove(const QString &taskId);
     bool isKeyPresenceFresh(const SystemTicketDto &ticket) const;
@@ -191,7 +194,7 @@ private:
     int m_keySessionSeed = 0;
     int m_activeTransferSessionId = 0;
     int m_activeReturnSessionId = 0;
-    enum class DeleteOrigin { None, ManualDelete, AutoReturnCleanup };
+    enum class DeleteOrigin { None, ManualDelete, AutoReturnCleanup, AdminClearOrphan };
     DeleteOrigin m_pendingDeleteOrigin = DeleteOrigin::None;
     int m_pendingDeleteSessionId = 0;
     int m_pendingCancelSessionId = 0;

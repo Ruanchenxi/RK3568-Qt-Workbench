@@ -18,6 +18,7 @@
 #include <QFileDialog>
 #include <QHideEvent>
 #include <QHeaderView>
+#include <QMessageBox>
 #include <QPalette>
 #include <QSignalBlocker>
 #include <QShowEvent>
@@ -154,6 +155,7 @@ void KeyManagePage::initUi()
     ui->lblCommSeatNo->setText(QStringLiteral("当前配置座号: --"));
     ui->btnQueryTaskCount->setToolTip(QStringLiteral("发送一次 Q_TASK 诊断查询；与“读取钥匙票列表”使用同一协议命令"));
     ui->btnDeleteTicket->setToolTip(QStringLiteral("删除钥匙中已存在的票，请先读取钥匙票列表并选中。"));
+    ui->btnClearOrphanKeyTask->setToolTip(QStringLiteral("清除钥匙中的未登记任务；需先读取钥匙票列表，选中孤儿任务后方可操作"));
     ui->lblReturnHint->setText(QStringLiteral("回传按任务独立触发；当前任务完成后可自动或手动回传；接口未配置时不会上传"));
 
     ui->serialLogTable->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -288,6 +290,7 @@ void KeyManagePage::initConnections()
 
     connect(ui->btnGetSystemTicketList, &QPushButton::clicked, this, &KeyManagePage::onGetSystemTicketList);
     connect(ui->btnReadKeyTicketList,   &QPushButton::clicked, this, &KeyManagePage::onReadKeyTicketList);
+    connect(ui->btnClearOrphanKeyTask,  &QPushButton::clicked, this, &KeyManagePage::onClearOrphanKeyTask);
     connect(ui->systemTicketTable, &QTableWidget::itemSelectionChanged,
             this, &KeyManagePage::onSystemTicketSelectionChanged);
     connect(ui->keyTicketTable, &QTableWidget::itemSelectionChanged,
@@ -435,6 +438,20 @@ void KeyManagePage::onReadKeyTicketList()
     updateStatusBar(QStringLiteral("读取钥匙票列表 (Q_TASK)"));
 }
 
+void KeyManagePage::onClearOrphanKeyTask()
+{
+    const QMessageBox::StandardButton reply = QMessageBox::warning(
+        this,
+        QStringLiteral("清除未登记任务"),
+        QStringLiteral("确认从钥匙中清除该未登记任务？\n\n此操作将直接发送 DEL 命令删除钥匙中的任务，无法撤销。"),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (reply != QMessageBox::Yes) {
+        return;
+    }
+    m_controller->onClearOrphanKeyTaskClicked();
+}
+
 // ====================================================================
 // 串口报文 Tab
 // ====================================================================
@@ -537,6 +554,7 @@ void KeyManagePage::onTasksUpdated(const QList<KeyTaskDto> &tasks)
     m_latestKeyTasks = tasks;
     m_pendingKeyTaskRefresh = true;
     scheduleUiFlush();
+    updateClearOrphanButton();
 }
 
 void KeyManagePage::onAckReceived(quint8 ackedCmd)
@@ -592,6 +610,7 @@ void KeyManagePage::onSystemTicketsUpdated(const QList<SystemTicketDto> &tickets
     Q_UNUSED(tickets);
     m_pendingSystemTicketRefresh = true;
     scheduleUiFlush();
+    updateClearOrphanButton();
 }
 
 void KeyManagePage::onSelectedSystemTicketChanged(const SystemTicketDto &ticket)
@@ -641,6 +660,7 @@ void KeyManagePage::onKeyTicketSelectionChanged()
 {
     const int row = ui->keyTicketTable->currentRow();
     m_controller->onKeyTaskSelected(row);
+    updateClearOrphanButton();
 
     if (row < 0 || row >= m_latestKeyTasks.size()) {
         return;
@@ -664,6 +684,13 @@ void KeyManagePage::onKeyTicketSelectionChanged()
     }
 
     if (matchedSystemRow < 0) {
+        // 选中的是未登记孤儿任务，系统票侧无对应行，主动清空系统票选区避免左侧显示残留
+        if (m_controller->isSelectedKeyTaskOrphan()) {
+            const QSignalBlocker blocker(ui->systemTicketTable);
+            ui->systemTicketTable->clearSelection();
+            m_controller->onSystemTicketSelected(-1);
+            updateSelectedSystemTicketCard(SystemTicketDto{});
+        }
         return;
     }
 
@@ -805,9 +832,13 @@ void KeyManagePage::populateSystemTicketTable(const QList<SystemTicketDto> &tick
     ui->systemTicketTable->setRowCount(0);
     for (int i = 0; i < tickets.size(); ++i) {
         const SystemTicketDto &ticket = tickets.at(i);
+        // 孤儿占位票不在系统票表中显示，仅在钥匙票表中标注
+        if (ticket.transferState == QLatin1String("orphan-recovered")) {
+            continue;
+        }
         const int row = ui->systemTicketTable->rowCount();
         ui->systemTicketTable->insertRow(row);
-        QTableWidgetItem *noItem = new QTableWidgetItem(QString::number(i + 1));
+        QTableWidgetItem *noItem = new QTableWidgetItem(QString::number(row + 1));
         noItem->setTextAlignment(Qt::AlignCenter);
         ui->systemTicketTable->setItem(row, 0, noItem);
         ui->systemTicketTable->setItem(row, 1, new QTableWidgetItem(ticket.ticketNo));
@@ -835,7 +866,7 @@ void KeyManagePage::populateSystemTicketTable(const QList<SystemTicketDto> &tick
             ui->systemTicketTable->selectRow(row);
     }
 
-    if (tickets.isEmpty()) {
+    if (ui->systemTicketTable->rowCount() == 0) {
         updateSelectedSystemTicketCard(SystemTicketDto{});
     } else if (ui->systemTicketTable->currentRow() >= 0) {
         m_controller->onSystemTicketSelected(ui->systemTicketTable->currentRow());
@@ -927,17 +958,32 @@ void KeyManagePage::updateSelectedSystemTicketCard(const SystemTicketDto &ticket
 
 void KeyManagePage::populateKeyTicketTable(const QList<KeyTaskDto> &tasks)
 {
+    const QList<SystemTicketDto> sysTickets = m_controller->systemTickets();
     ui->keyTicketTable->setRowCount(0);
     for (int i = 0; i < tasks.size(); ++i) {
         const KeyTaskDto &task = tasks.at(i);
         const int row = ui->keyTicketTable->rowCount();
         ui->keyTicketTable->insertRow(row);
 
+        const QString taskDecimalId = rawTaskIdToDecimalString(task.taskId);
+        bool isOrphan = false;
+        for (const SystemTicketDto &st : sysTickets) {
+            if (st.taskId == taskDecimalId
+                    && st.transferState == QLatin1String("orphan-recovered")) {
+                isOrphan = true;
+                break;
+            }
+        }
+
         const QString taskIdHex = QString(task.taskId.toHex().toUpper());
         QTableWidgetItem *noItem = new QTableWidgetItem(QString::number(i + 1));
         noItem->setTextAlignment(Qt::AlignCenter);
         ui->keyTicketTable->setItem(row, 0, noItem);
-        ui->keyTicketTable->setItem(row, 1, new QTableWidgetItem(taskIdHex.left(16)));
+        // 未登记任务在任务ID列追加标注
+        const QString taskIdDisplay = isOrphan
+                ? taskIdHex.left(16) + QStringLiteral(" [未登记]")
+                : taskIdHex.left(16);
+        ui->keyTicketTable->setItem(row, 1, new QTableWidgetItem(taskIdDisplay));
         QTableWidgetItem *typeItem = new QTableWidgetItem(QStringLiteral("类型%1").arg(task.type));
         typeItem->setTextAlignment(Qt::AlignCenter);
         ui->keyTicketTable->setItem(row, 2, typeItem);
@@ -947,6 +993,15 @@ void KeyManagePage::populateKeyTicketTable(const QList<KeyTaskDto> &tasks)
         QTableWidgetItem *stateItem = new QTableWidgetItem(keyTaskStatusText(task.status));
         stateItem->setTextAlignment(Qt::AlignCenter);
         ui->keyTicketTable->setItem(row, 4, stateItem);
+
+        // 未登记任务行用淡橙色背景与正常任务区分
+        if (isOrphan) {
+            const QColor orphanBg(0xFF, 0xF0, 0xE0);
+            for (int col = 0; col < ui->keyTicketTable->columnCount(); ++col) {
+                QTableWidgetItem *it = ui->keyTicketTable->item(row, col);
+                if (it) it->setBackground(orphanBg);
+            }
+        }
     }
 }
 
@@ -1339,6 +1394,13 @@ void KeyManagePage::updateAdminButtons()
     if (!m_isAdmin) {
         ui->btnReturnTicket->setEnabled(false);
     }
+    updateClearOrphanButton();
+}
+
+void KeyManagePage::updateClearOrphanButton()
+{
+    const bool canClear = m_isAdmin && m_controller->isSelectedKeyTaskOrphan();
+    ui->btnClearOrphanKeyTask->setEnabled(canClear);
 }
 
 void KeyManagePage::updateStatusBar(const QString &message)
