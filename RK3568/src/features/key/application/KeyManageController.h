@@ -70,6 +70,8 @@ public:
     bool canStartManualReturn(const QString &taskId, QString *blockedReason = nullptr) const;
     void onClearOrphanKeyTaskClicked();
     bool isSelectedKeyTaskOrphan() const;
+    void onForceCleanFailedTicketClicked();
+    bool isSelectedSystemTicketForceClearable() const;
 
 signals:
     void statusMessage(const QString &message);

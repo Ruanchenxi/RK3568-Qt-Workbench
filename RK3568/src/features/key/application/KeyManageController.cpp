@@ -914,6 +914,90 @@ void KeyManageController::onClearOrphanKeyTaskClicked()
     emit statusMessage(QStringLiteral("发送 DEL 命令，清除未登记任务：%1").arg(taskId));
 }
 
+bool KeyManageController::isSelectedSystemTicketForceClearable() const
+{
+    if (m_selectedSystemTicketId.isEmpty()) {
+        return false;
+    }
+    const SystemTicketDto ticket = m_ticketStore->ticketById(m_selectedSystemTicketId);
+    if (!ticket.valid) {
+        return false;
+    }
+    // 不允许对孤儿占位票使用强制清理（孤儿票由子步骤 3 处理）
+    if (ticket.transferState == QLatin1String("orphan-recovered")) {
+        return false;
+    }
+    // 允许强制清理的失败态：
+    // 1. transferState == "failed" — 传票失败，链路已终止，钥匙里无此任务
+    // 2. TerminationFailed — DEL 已确认成功，通知工作台失败，钥匙侧已干净
+    // 3. return-delete-failed — 回传删除验证达上限，链路已终止（钥匙任务可能仍存在）
+    // 4. manual-required — 回传上传失败或缺少 raw ID，链路已终止（钥匙任务可能仍存在）
+    const bool isTransferFailed =
+            (ticket.transferState == QLatin1String("failed"));
+    const bool isTerminationFailed =
+            (ticket.adminDeleteStage == SystemTicketDto::AdminDeleteStage::TerminationFailed);
+    const bool isReturnDeleteFailed =
+            (ticket.returnState == QLatin1String("return-delete-failed"));
+    const bool isManualRequired =
+            (ticket.returnState == QLatin1String("manual-required"));
+    return isTransferFailed || isTerminationFailed || isReturnDeleteFailed || isManualRequired;
+}
+
+void KeyManageController::onForceCleanFailedTicketClicked()
+{
+    if (m_selectedSystemTicketId.isEmpty()) {
+        emit statusMessage(QStringLiteral("未选中系统票，请先在系统票列表中选中需要强制清理的记录"));
+        return;
+    }
+
+    const SystemTicketDto ticket = m_ticketStore->ticketById(m_selectedSystemTicketId);
+    if (!ticket.valid) {
+        emit statusMessage(QStringLiteral("选中的系统票记录不存在"));
+        return;
+    }
+
+    if (ticket.transferState == QLatin1String("orphan-recovered")) {
+        emit statusMessage(QStringLiteral("未登记孤儿任务请使用\"清除未登记任务\"操作，不适用强制清理"));
+        return;
+    }
+
+    if (!isSelectedSystemTicketForceClearable()) {
+        emit statusMessage(QStringLiteral("当前选中的系统票状态不满足强制清理条件"));
+        return;
+    }
+
+    // in-flight 守卫：避免在业务链路进行中删除记录导致状态悬空
+    const QString taskId = m_selectedSystemTicketId;
+    if (taskId == m_pendingDeletedSystemTicketId) {
+        emit statusMessage(QStringLiteral("当前有删除操作在途，请稍后再试"));
+        return;
+    }
+    if (taskId == m_activeReturnTaskId || taskId == m_pendingReturnHandshakeTaskId) {
+        emit statusMessage(QStringLiteral("当前有回传操作在途，无法同时执行强制清理"));
+        return;
+    }
+    if (taskId == m_activeTransferTaskId || taskId == m_pendingTransferHandshakeTaskId) {
+        emit statusMessage(QStringLiteral("当前有传票操作在途，无法同时执行强制清理"));
+        return;
+    }
+    if (m_httpTransferTransactionActive && taskId == m_httpTransferTransactionTaskId) {
+        emit statusMessage(QStringLiteral("当前工作台传票事务未完成，无法同时执行强制清理"));
+        return;
+    }
+    if (taskId == m_pendingCancelSystemTicketId) {
+        emit statusMessage(QStringLiteral("当前有撤销操作在途，无法同时执行强制清理"));
+        return;
+    }
+
+    m_ticketStore->removeTicket(taskId);
+    qInfo().noquote()
+            << QStringLiteral("[KeyManageController] onForceCleanFailedTicketClicked: force-removed failed system ticket taskId=%1 transferState=%2 returnState=%3 adminDeleteStage=%4")
+                  .arg(taskId, ticket.transferState, ticket.returnState,
+                       QString::number(static_cast<int>(ticket.adminDeleteStage)));
+    emit statusMessage(QStringLiteral("已强制清理失败系统票：%1").arg(taskId));
+}
+
+
 void KeyManageController::requestApplyConfiguredKeyPort()
 {
     const QString configuredPort = ConfigManager::instance()->keySerialPort().trimmed();
@@ -1979,11 +2063,11 @@ void KeyManageController::finalizePendingReturnDelete(const QList<KeyTaskDto> &t
                 if (ticket.valid && (ticket.returnState == QLatin1String("return-delete-verifying")
                                      || ticket.returnState == QLatin1String("return-delete-pending")
                                      || ticket.returnState == QLatin1String("return-upload-success"))) {
-                    m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
-                                                     QStringLiteral("return-delete-success"));
-                    emit statusMessage(QStringLiteral("回传完成，钥匙任务已清理：%1")
+                    // finish-step-batch 已上传成功，工作台已收到完成数据会自己关票
+                    // 直接删除本地记录完成闭环，无需再调 callTermination
+                    m_ticketStore->removeTicket(m_pendingDeletedSystemTicketId);
+                    emit statusMessage(QStringLiteral("回传完成，本地记录已清除：%1")
                                            .arg(m_pendingDeletedSystemTicketId));
-                    emit workbenchRefreshRequested();
                 } else {
                     emit statusMessage(QStringLiteral("钥匙任务已删除"));
                 }

@@ -156,6 +156,7 @@ void KeyManagePage::initUi()
     ui->btnQueryTaskCount->setToolTip(QStringLiteral("发送一次 Q_TASK 诊断查询；与“读取钥匙票列表”使用同一协议命令"));
     ui->btnDeleteTicket->setToolTip(QStringLiteral("删除钥匙中已存在的票，请先读取钥匙票列表并选中。"));
     ui->btnClearOrphanKeyTask->setToolTip(QStringLiteral("清除钥匙中的未登记任务；需先读取钥匙票列表，选中孤儿任务后方可操作"));
+    ui->btnForceCleanFailedTicket->setToolTip(QStringLiteral("强制删除本地失败系统票记录；仅限 TerminationFailed / return-delete-failed / manual-required 状态；不会操作钥匙或通知工作台"));
     ui->lblReturnHint->setText(QStringLiteral("回传按任务独立触发；当前任务完成后可自动或手动回传；接口未配置时不会上传"));
 
     ui->serialLogTable->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -290,7 +291,8 @@ void KeyManagePage::initConnections()
 
     connect(ui->btnGetSystemTicketList, &QPushButton::clicked, this, &KeyManagePage::onGetSystemTicketList);
     connect(ui->btnReadKeyTicketList,   &QPushButton::clicked, this, &KeyManagePage::onReadKeyTicketList);
-    connect(ui->btnClearOrphanKeyTask,  &QPushButton::clicked, this, &KeyManagePage::onClearOrphanKeyTask);
+    connect(ui->btnClearOrphanKeyTask,    &QPushButton::clicked, this, &KeyManagePage::onClearOrphanKeyTask);
+    connect(ui->btnForceCleanFailedTicket, &QPushButton::clicked, this, &KeyManagePage::onForceCleanFailedTicket);
     connect(ui->systemTicketTable, &QTableWidget::itemSelectionChanged,
             this, &KeyManagePage::onSystemTicketSelectionChanged);
     connect(ui->keyTicketTable, &QTableWidget::itemSelectionChanged,
@@ -436,6 +438,41 @@ void KeyManagePage::onReadKeyTicketList()
 {
     m_controller->onQueryTasksClicked();
     updateStatusBar(QStringLiteral("读取钥匙票列表 (Q_TASK)"));
+}
+
+void KeyManagePage::onForceCleanFailedTicket()
+{
+    // 根据当前票的失败状态给出针对性的风险提示
+    QString extraWarning;
+    const SystemTicketDto &t = m_selectedSystemTicket;
+    if (t.valid) {
+        const bool keyTaskMayStillExist =
+                (t.returnState == QLatin1String("return-delete-failed"))
+                || (t.returnState == QLatin1String("manual-required"));
+        if (keyTaskMayStillExist) {
+            extraWarning = QStringLiteral(
+                "· 对应钥匙任务可能仍存在于钥匙中；\n"
+                "  下次读取钥匙后会重新出现为未登记任务，届时可使用\"清除未登记任务\"处理\n");
+        } else {
+            // transferState == "failed" 或 TerminationFailed：钥匙侧已无此任务
+            extraWarning = QStringLiteral(
+                "· 对应钥匙任务已不存在，不会重新出现为未登记任务\n");
+        }
+    }
+
+    const QMessageBox::StandardButton reply = QMessageBox::warning(
+        this,
+        QStringLiteral("强制清理失败系统票"),
+        QStringLiteral("确认要强制删除这条失败的系统票记录吗？\n\n注意：\n")
+            + QStringLiteral("· 此操作仅删除本地记录，不会通知工作台\n")
+            + extraWarning
+            + QStringLiteral("· 请确认已了解当前状态后再操作"),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (reply != QMessageBox::Yes) {
+        return;
+    }
+    m_controller->onForceCleanFailedTicketClicked();
 }
 
 void KeyManagePage::onClearOrphanKeyTask()
@@ -611,11 +648,14 @@ void KeyManagePage::onSystemTicketsUpdated(const QList<SystemTicketDto> &tickets
     m_pendingSystemTicketRefresh = true;
     scheduleUiFlush();
     updateClearOrphanButton();
+    updateForceCleanButton();
 }
 
 void KeyManagePage::onSelectedSystemTicketChanged(const SystemTicketDto &ticket)
 {
+    m_selectedSystemTicket = ticket;
     updateSelectedSystemTicketCard(ticket);
+    updateForceCleanButton();
 }
 
 void KeyManagePage::onHttpServerLogAppended(const QString &text)
@@ -654,6 +694,7 @@ void KeyManagePage::onSystemTicketSelectionChanged()
 {
     const int row = ui->systemTicketTable->currentRow();
     m_controller->onSystemTicketSelected(row);
+    updateForceCleanButton();
 }
 
 void KeyManagePage::onKeyTicketSelectionChanged()
@@ -1395,12 +1436,19 @@ void KeyManagePage::updateAdminButtons()
         ui->btnReturnTicket->setEnabled(false);
     }
     updateClearOrphanButton();
+    updateForceCleanButton();
 }
 
 void KeyManagePage::updateClearOrphanButton()
 {
     const bool canClear = m_isAdmin && m_controller->isSelectedKeyTaskOrphan();
     ui->btnClearOrphanKeyTask->setEnabled(canClear);
+}
+
+void KeyManagePage::updateForceCleanButton()
+{
+    const bool canForce = m_isAdmin && m_controller->isSelectedSystemTicketForceClearable();
+    ui->btnForceCleanFailedTicket->setEnabled(canForce);
 }
 
 void KeyManagePage::updateStatusBar(const QString &message)

@@ -758,6 +758,29 @@ QPushButton:pressed { background: #C8E6C9; }</string>
                      </property>
                     </widget>
                    </item>
+                   <item>
+                    <widget class="QPushButton" name="btnForceCleanFailedTicket">
+                     <property name="enabled">
+                      <bool>false</bool>
+                     </property>
+                     <property name="styleSheet">
+                      <string notr="true">QPushButton {
+  background: #FFFFFF;
+  border: 1px solid #D32F2F;
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: #D32F2F;
+}
+QPushButton:hover { background: #FFEBEE; }
+QPushButton:pressed { background: #FFCDD2; }
+QPushButton:disabled { border-color: #BDBDBD; color: #BDBDBD; }</string>
+                     </property>
+                     <property name="text">
+                      <string>强制清理失败系统票</string>
+                     </property>
+                    </widget>
+                   </item>
                   </layout>
                  </widget>
                 </item>

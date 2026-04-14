@@ -66,6 +66,7 @@ private slots:
     void onGetSystemTicketList();
     void onReadKeyTicketList();
     void onClearOrphanKeyTask();
+    void onForceCleanFailedTicket();
 
     // ---- 串口报文 Tab ----
     void onExpertModeToggled(bool checked);
@@ -130,6 +131,7 @@ private:
     void populateKeyTicketTable(const QList<KeyTaskDto> &tasks);
     void updateAdminButtons();
     void updateClearOrphanButton();
+    void updateForceCleanButton();
 
     void updateStatusBar(const QString &message);
 
@@ -141,6 +143,7 @@ private:
     QTimer *m_uiFlushTimer;
     QList<LogItem> m_pendingSerialLogs;
     QList<KeyTaskDto> m_latestKeyTasks;
+    SystemTicketDto m_selectedSystemTicket;
     bool m_pendingSystemTicketRefresh;
     bool m_pendingKeyTaskRefresh;
     bool m_pendingHttpClientRefresh;
