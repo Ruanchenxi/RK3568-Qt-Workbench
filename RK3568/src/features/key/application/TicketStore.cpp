@@ -31,9 +31,9 @@ TicketStore::TicketStore(QObject *parent)
 
 QString TicketStore::storePath()
 {
-    const QString logsDir = QCoreApplication::applicationDirPath() + QStringLiteral("/logs");
-    QDir().mkpath(logsDir);
-    return logsDir + QStringLiteral("/ticket_store.json");
+    const QString dataDir = QCoreApplication::applicationDirPath() + QStringLiteral("/data");
+    QDir().mkpath(dataDir);
+    return dataDir + QStringLiteral("/ticket_store.json");
 }
 
 static QJsonObject dtoToJson(const SystemTicketDto &dto)

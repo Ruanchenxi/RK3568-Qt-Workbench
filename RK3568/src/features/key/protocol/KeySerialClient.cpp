@@ -169,6 +169,13 @@ KeySerialClient::KeySerialClient(ISerialTransport *transport, QObject *parent)
     , m_lastProtocolFailureMs(0)
     , m_recoveryWindowActive(false)
     , m_batteryPercent(-1)
+    , m_bKeyPlaced(false)
+    , m_bBatteryPercent(-1)
+    , m_setComSeatInFlight(0x01)
+    , m_pendingAuxSeat(0x00)
+    , m_pendingAuxCommand(AuxNone)
+    , m_auxSequenceMode(AuxSequenceNone)
+    , m_auxSequenceOrigin(AuxOriginNone)
     , m_qtaskSawFrameHeader(false)
     , m_qtaskProbeInFlight(false)
     , m_resyncDropBytes(0)
@@ -419,24 +426,16 @@ void KeySerialClient::queryTasksAll()
     queryTasksAllInternal(false, false);
 }
 
-void KeySerialClient::queryBattery()
+void KeySerialClient::queryBattery(quint8 seat)
 {
-    if (!m_serial->isOpen()) {
-        emitNotice("Q_KEYEQ 失败：串口未连接");
-        return;
-    }
-    if (m_inFlight) {
-        emitNotice("Q_KEYEQ 失败：当前有命令在途");
-        return;
-    }
-    if (!m_keyPlaced || !m_keyStable || !m_sessionReady) {
-        emitNotice("Q_KEYEQ 失败：钥匙未就绪");
-        return;
-    }
+    startAuxSequence(seat, AuxSequenceBatteryOnly, AuxOriginManualButton,
+                     QStringLiteral("manual battery"));
+}
 
+void KeySerialClient::sendBatteryFrame()
+{
     log("发送 Q_KEYEQ(0x14) 查询钥匙电量...");
     drainBeforeBusinessSend("Q_KEYEQ");
-
     QByteArray addr2;
     addr2.append(static_cast<char>(KeyProtocol::Addr2DefaultLo));
     addr2.append(static_cast<char>(KeyProtocol::Addr2DefaultHi));
@@ -457,24 +456,16 @@ void KeySerialClient::refreshHandshake()
     sendSetComHandshake("manual refresh");
 }
 
-void KeySerialClient::syncDeviceTime()
+void KeySerialClient::syncDeviceTime(quint8 seat)
 {
-    if (!m_serial->isOpen()) {
-        emitNotice("SET_TIME 失败：串口未连接");
-        return;
-    }
-    if (m_inFlight) {
-        emitNotice("SET_TIME 失败：当前有命令在途");
-        return;
-    }
-    if (!m_keyPlaced || !m_keyStable || !m_sessionReady) {
-        emitNotice("SET_TIME 失败：钥匙未就绪");
-        return;
-    }
+    startAuxSequence(seat, AuxSequenceSyncOnly, AuxOriginManualButton,
+                     QStringLiteral("manual time"));
+}
 
+void KeySerialClient::sendSetTimeFrame()
+{
     // 原产品 2026-03-20 抓包已确认：SET_TIME(0x09) 的 payload 为 7 字节 BCD 时间：
-    // [century][year][month][day][hour][minute][second]，如 2026-03-20 16:15:10
-    // -> 20 26 03 20 16 15 10。
+    // [century][year][month][day][hour][minute][second]
     const QDateTime now = QDateTime::currentDateTime();
     QByteArray payload;
     payload.append(static_cast<char>(toBcdByte(now.date().year() / 100)));
@@ -484,15 +475,66 @@ void KeySerialClient::syncDeviceTime()
     payload.append(static_cast<char>(toBcdByte(now.time().hour())));
     payload.append(static_cast<char>(toBcdByte(now.time().minute())));
     payload.append(static_cast<char>(toBcdByte(now.time().second())));
-
     log(QString("发送 SET_TIME(0x09) 校时: %1").arg(now.toString("yyyy-MM-dd hh:mm:ss")));
     drainBeforeBusinessSend("SET_TIME");
-
     QByteArray addr2;
     addr2.append(static_cast<char>(KeyProtocol::Addr2DefaultLo));
     addr2.append(static_cast<char>(KeyProtocol::Addr2DefaultHi));
     const QByteArray frame = buildFrame(CMD_SET_TIME, payload, addr2);
     sendFrame(frame, CMD_ACK, INFLIGHT_SETTIME);
+}
+
+void KeySerialClient::startAuxSequence(quint8 seat,
+                                       AuxSequenceMode mode,
+                                       AuxSequenceOrigin origin,
+                                       const QString &reason)
+{
+    if (!m_serial->isOpen()) {
+        emitNotice(QStringLiteral("辅助命令失败：串口未连接"));
+        return;
+    }
+    if (m_inFlight) {
+        emitNotice(QStringLiteral("辅助命令跳过：当前有命令在途 (%1)").arg(reason));
+        return;
+    }
+
+    m_pendingAuxSeat = seat;
+    m_auxSequenceMode = mode;
+    m_auxSequenceOrigin = origin;
+
+    if (seat == 0x01) {
+        if (!m_keyPlaced || !m_keyStable || !m_sessionReady) {
+            const quint8 failCmd = (mode == AuxSequenceSyncOnly) ? CMD_SET_TIME : CMD_Q_KEYEQ;
+            finishAuxSequence(0x01, failCmd, false, QStringLiteral("A座未就绪"));
+            emitNotice(QStringLiteral("A座辅助命令失败：钥匙未就绪"));
+            return;
+        }
+        if (mode == AuxSequenceBatteryOnly || mode == AuxSequenceBatteryThenSync) {
+            sendBatteryFrame();
+        } else if (mode == AuxSequenceSyncOnly) {
+            sendSetTimeFrame();
+        }
+        return;
+    }
+
+    // seat == 0x02
+    if (!m_bKeyPlaced) {
+        finishAuxSequence(0x02, CMD_SET_COM, false, QStringLiteral("B座不在位"));
+        emitNotice(QStringLiteral("B座辅助命令失败：钥匙不在位"));
+        return;
+    }
+    // B座先握手，SET_COM ACK 后再按 mode 继续
+    m_pendingAuxCommand = (mode == AuxSequenceSyncOnly) ? AuxSyncTime : AuxBattery;
+    sendSetComHandshake(reason, 0x02);
+}
+
+void KeySerialClient::finishAuxSequence(quint8 seat, quint8 cmd, bool success, const QString &reason)
+{
+    m_pendingAuxSeat    = 0x00;
+    m_pendingAuxCommand = AuxNone;
+    m_auxSequenceMode   = AuxSequenceNone;
+    m_auxSequenceOrigin = AuxOriginNone;
+    emit auxCommandFinished(seat, cmd, success, reason);
 }
 
 void KeySerialClient::requestTaskLog(const QByteArray &taskId16)
@@ -1337,78 +1379,109 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
     // 收到合法协议帧（已通过 7E6C + CRC 校验）后，锁定验证端口。
     markPortVerified(QString("cmd=0x%1").arg(cmd, 2, 16, QChar('0')));
 
-    // --- 钥匙放上/拿走事件 (0x11) — 异步，不影响 inFlight ---
+    // --- 钥匙放上/拿走事件 (0x11) — 双座状态差分处理 ---
+    // data[0]=A座在位(0x01=在位,0x00=不在位), data[1]=B座在位
     if (cmd == CMD_KEY_EVENT) {
         if (dataLen == 4) {
-            quint8 b0 = static_cast<quint8>(data[0]);
-            quint8 b1 = static_cast<quint8>(data[1]);
-            if (b0 == 0x01 && b1 == 0x00) {
-                // 钥匙重新放上时若有命令在途，需通知 UI 该命令已被取消
+            const bool oldA = m_keyPlaced;
+            const bool oldB = m_bKeyPlaced;
+            const bool newA = (static_cast<quint8>(data[0]) == 0x01);
+            const bool newB = (static_cast<quint8>(data[1]) == 0x01);
+
+            // B座状态变化：只更新 m_bKeyPlaced，不影响 A座业务状态机
+            if (oldB != newB) {
+                m_bKeyPlaced = newB;
+                emit bKeyPresenceChanged(newB);
+                emit stateFlagsChanged();
+                emitLog(LogDir::EVENT, CMD_KEY_EVENT, lenField,
+                        QString("B_SEAT_%1").arg(newB ? "PLACED" : "REMOVED"), frame);
+
+                // B座放入时：仅在 A座不在位 且 无命令在途 时触发 B座自动维护链
+                if (newB && !m_keyPlaced && !m_inFlight) {
+                    startAuxSequence(0x02, AuxSequenceBatteryThenSync,
+                                     AuxOriginAutoSeat2Placed,
+                                     QStringLiteral("seat2 placed auto maintenance"));
+                } else if (newB && !m_keyPlaced && m_inFlight) {
+                    emitLog(LogDir::EVENT, 0, 0,
+                            "B座放入：有命令在途，跳过自动维护", {}, true, true);
+                }
+            }
+
+            // A座无变化，结束
+            if (oldA == newA) {
+                return;
+            }
+
+            if (newA) {
+                // A座放上：中断所有正在进行的命令，清理辅助链残留状态
                 const bool hadInFlight = m_inFlight;
                 stopRetryTimer();
                 clearInFlight();
+                // 清理辅助链残留，防止 A座 SET_COM ACK 被误路由到 B座辅助链
+                m_pendingAuxSeat    = 0x00;
+                m_pendingAuxCommand = AuxNone;
+                m_auxSequenceMode   = AuxSequenceNone;
+                m_auxSequenceOrigin = AuxOriginNone;
                 clearTicketTransferState();
                 clearDataTransferState();
                 clearTaskLogState();
-                setProtocolHealthy(false, QStringLiteral("key re-placed during in-flight command"));
+                setProtocolHealthy(false, QStringLiteral("A key re-placed during in-flight command"));
                 m_pendingAfterDelQuery = false;
                 m_qtaskRecoveryTimer->stop();
                 m_qtaskRecoveryRound = 0;
                 m_qtaskProbeInFlight = false;
                 if (hadInFlight) {
-                    emitNotice("钥匙重新放上，当前命令已取消，稳定后将重新握手");
+                    emitNotice(QStringLiteral("A座钥匙重新放上，当前命令已取消，稳定后将重新握手"));
                 }
                 const qint64 drained = drainSerialInput("KEY_PLACED", true);
                 m_keyPlaced = true;
                 m_sessionReady = false;
-                log("  >> [EVENT] KEY_PLACED (钥匙放上)");
                 emitLog(LogDir::EVENT, CMD_KEY_EVENT, lenField,
-                        QString("KEY_PLACED (钥匙放上), drainBytes=%1").arg(drained), frame);
+                        QString("A_SEAT_PLACED drainBytes=%1").arg(drained), frame);
                 emit keyPlacedChanged(true);
-                startKeyStabilityWindow("key placed");
+                emit stateFlagsChanged();
+                startKeyStabilityWindow(QStringLiteral("A key placed"));
                 QTimer::singleShot(KEY_PLACED_HANDSHAKE_DELAY_MS, this, [this]() {
                     if (!m_serial->isOpen() || !m_keyPlaced || m_inFlight) {
                         return;
                     }
-                    sendSetComHandshake("key placed settle delay");
+                    sendSetComHandshake(QStringLiteral("A key placed settle delay"), 0x01);
                 });
-            } else if (b0 == 0x00 && b1 == 0x00) {
-                // 拔钥匙时若有命令在途，必须立即取消，避免继续重试已拔走的设备
-                const bool hadInFlight = m_inFlight;
-                stopRetryTimer();
-                clearInFlight();
-                clearTicketTransferState();
-                clearDataTransferState();
-                clearTaskLogState();
-                setProtocolHealthy(false, QStringLiteral("key removed"));
-                m_pendingAfterDelQuery = false;
-                if (hadInFlight) {
-                    emitNotice("钥匙已拔走，当前命令已取消");
-                }
-                m_keyPlaced = false;
-                m_keyStable = false;
-                m_sessionReady = false;
-                m_keyStableTimer->stop();
-                m_qtaskRecoveryTimer->stop();
-                m_qtaskRecoveryRound = 0;
-                m_qtaskProbeInFlight = false;
-                m_deferredInFlightType = INFLIGHT_NONE;
-                m_deferredDeleteTaskId.clear();
-                m_batteryPercent = -1;
-                m_keyPlacedElapsed.invalidate();
-                m_lastNoiseElapsed.invalidate();
-                log("  >> [EVENT] KEY_REMOVED (钥匙拿走)");
-                emitLog(LogDir::EVENT, CMD_KEY_EVENT, lenField,
-                        "KEY_REMOVED (钥匙拿走)", frame);
-                emit keyPlacedChanged(false);
-                emit keyStableChanged(false);
-            } else {
-                log(QString("  >> [EVENT] KEY_EVENT_UNKNOWN data=%1")
-                        .arg(QString(data.toHex(' ').toUpper())));
-                emitLog(LogDir::EVENT, CMD_KEY_EVENT, lenField,
-                        QString("KEY_EVENT_UNKNOWN data=%1")
-                            .arg(QString(data.toHex(' ').toUpper())), frame);
+                return;
             }
+
+            // A座移走：重置 A座业务状态，清理辅助链残留
+            const bool hadInFlight = m_inFlight;
+            stopRetryTimer();
+            clearInFlight();
+            m_pendingAuxSeat    = 0x00;
+            m_pendingAuxCommand = AuxNone;
+            m_auxSequenceMode   = AuxSequenceNone;
+            m_auxSequenceOrigin = AuxOriginNone;
+            clearTicketTransferState();
+            clearDataTransferState();
+            clearTaskLogState();
+            setProtocolHealthy(false, QStringLiteral("A key removed"));
+            m_pendingAfterDelQuery = false;
+            if (hadInFlight) {
+                emitNotice(QStringLiteral("A座钥匙已拔走，当前命令已取消"));
+            }
+            m_keyPlaced = false;
+            m_keyStable = false;
+            m_sessionReady = false;
+            m_keyStableTimer->stop();
+            m_qtaskRecoveryTimer->stop();
+            m_qtaskRecoveryRound = 0;
+            m_qtaskProbeInFlight = false;
+            m_deferredInFlightType = INFLIGHT_NONE;
+            m_deferredDeleteTaskId.clear();
+            m_batteryPercent = -1;
+            m_keyPlacedElapsed.invalidate();
+            m_lastNoiseElapsed.invalidate();
+            emitLog(LogDir::EVENT, CMD_KEY_EVENT, lenField, "A_SEAT_REMOVED", frame);
+            emit keyPlacedChanged(false);
+            emit keyStableChanged(false);
+            emit stateFlagsChanged();
         }
         return;
     }
@@ -1435,18 +1508,38 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
             }
         }
 
-        m_batteryPercent = batteryPercent;
-        noteBusinessSuccess(QStringLiteral("Q_KEYEQ response"));
-        setProtocolHealthy(true, QStringLiteral("Q_KEYEQ response"));
-        emit stateFlagsChanged();
-
         const QString summary = (batteryPercent >= 0)
                 ? QString("Q_KEYEQ resp: battery=%1%").arg(batteryPercent)
                 : QStringLiteral("Q_KEYEQ resp: battery=invalid");
         emitLog(LogDir::RX, CMD_Q_KEYEQ, lenField, summary, frame);
-        emitNotice(batteryPercent >= 0
-                       ? QString("钥匙当前电量：%1%").arg(batteryPercent)
-                       : QStringLiteral("钥匙电量返回无效值"));
+
+        if (m_pendingAuxSeat == 0x02) {
+            // B座辅助命令：只写 B座电量，不更新 A座健康状态
+            m_bBatteryPercent = batteryPercent;
+            emit stateFlagsChanged();
+            emitNotice(batteryPercent >= 0
+                           ? QString("B座钥匙电量：%1%").arg(batteryPercent)
+                           : QStringLiteral("B座钥匙电量返回无效值"));
+            if (m_auxSequenceMode == AuxSequenceBatteryThenSync) {
+                sendSetTimeFrame();
+            } else {
+                finishAuxSequence(0x02, CMD_Q_KEYEQ, true, QStringLiteral("Q_KEYEQ response"));
+            }
+        } else {
+            // A座业务命令
+            m_batteryPercent = batteryPercent;
+            noteBusinessSuccess(QStringLiteral("Q_KEYEQ response"));
+            setProtocolHealthy(true, QStringLiteral("Q_KEYEQ response"));
+            emit stateFlagsChanged();
+            emitNotice(batteryPercent >= 0
+                           ? QString("A座钥匙电量：%1%").arg(batteryPercent)
+                           : QStringLiteral("A座钥匙电量返回无效值"));
+            if (m_pendingAuxSeat == 0x01 && m_auxSequenceMode == AuxSequenceBatteryThenSync) {
+                sendSetTimeFrame();
+            } else if (m_pendingAuxSeat == 0x01) {
+                finishAuxSequence(0x01, CMD_Q_KEYEQ, true, QStringLiteral("Q_KEYEQ response"));
+            }
+        }
         return;
     }
 
@@ -1501,11 +1594,33 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
         }
 
         if (ackedCmd == CMD_SET_COM) {
-            m_sessionReady = true;
-            markPortVerified("SET_COM ACK");
-            scheduleStartupProbeQTask();
+            if (m_setComSeatInFlight == 0x01) {
+                // A座握手：正常流程，建立业务会话
+                m_sessionReady = true;
+                markPortVerified(QStringLiteral("SET_COM ACK seat1"));
+                scheduleStartupProbeQTask();
+            } else {
+                // B座临时握手：ACK 后继续发辅助命令，不修改 A座会话状态
+                if (m_pendingAuxSeat == 0x02 && m_pendingAuxCommand == AuxBattery) {
+                    sendBatteryFrame();
+                } else if (m_pendingAuxSeat == 0x02 && m_pendingAuxCommand == AuxSyncTime) {
+                    sendSetTimeFrame();
+                } else {
+                    finishAuxSequence(0x02, CMD_SET_COM, false,
+                                      QStringLiteral("B座 SET_COM ACK: 无匹配辅助命令"));
+                }
+            }
         } else if (matched && ackedCmd == CMD_SET_TIME) {
-            emitNotice(QStringLiteral("钥匙校时完成"));
+            if (m_pendingAuxSeat == 0x02) {
+                // B座校时完成：不通知 A座健康状态
+                finishAuxSequence(0x02, CMD_SET_TIME, true, QStringLiteral("SET_TIME ack"));
+            } else {
+                // A座校时完成
+                emitNotice(QStringLiteral("钥匙校时完成"));
+                if (m_pendingAuxSeat == 0x01) {
+                    finishAuxSequence(0x01, CMD_SET_TIME, true, QStringLiteral("SET_TIME ack"));
+                }
+            }
         }
 
         if (matched
@@ -1628,7 +1743,21 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
     // --- NAK (0x00) ---
     if (cmd == CMD_NAK) {
         quint8 origCmd = dataLen > 0 ? static_cast<quint8>(data[0]) : 0xFF;
-        // NAK for SET_COM 意味着握手失败，不能标记会话就绪
+
+        // B座辅助命令 NAK：只清辅助链，不影响 A座会话状态
+        if (m_pendingAuxSeat == 0x02
+                && (origCmd == CMD_Q_KEYEQ || origCmd == CMD_SET_TIME
+                    || origCmd == CMD_SET_COM)) {
+            stopRetryTimer();
+            clearInFlight();
+            emitLog(LogDir::ERROR, CMD_NAK, lenField,
+                    QString("B座辅助命令 NAK for 0x%1").arg(origCmd, 2, 16, QChar('0')), frame);
+            emitNotice(QStringLiteral("B座辅助命令收到 NAK，A座业务不受影响"));
+            finishAuxSequence(0x02, origCmd, false, QStringLiteral("NAK"));
+            return;
+        }
+
+        // A座 NAK for SET_COM 意味着握手失败，不能标记会话就绪
         if (origCmd != CMD_SET_COM) {
             m_sessionReady = true;
         }
@@ -2254,7 +2383,7 @@ void KeySerialClient::tryDispatchDeferredCommand()
  *
  * @note 若有 inFlight 命令则跳过（避免冲突），仅记录告警日志。
  */
-void KeySerialClient::sendSetComHandshake(const QString &reason)
+void KeySerialClient::sendSetComHandshake(const QString &reason, quint8 seat)
 {
     if (!m_serial->isOpen()) {
         return;
@@ -2266,9 +2395,11 @@ void KeySerialClient::sendSetComHandshake(const QString &reason)
         return;
     }
 
-    log(QString("发送 SET_COM(0x0F) 握手... (%1)").arg(reason));
+    m_setComSeatInFlight = seat;
+    log(QString("发送 SET_COM(0x0F) 握手 seat=0x%1 (%2)")
+            .arg(seat, 2, 16, QChar('0')).arg(reason));
     QByteArray data;
-    data.append(static_cast<char>(0x01));
+    data.append(static_cast<char>(seat));
     QByteArray addr2;
     addr2.append(static_cast<char>(KeyProtocol::Addr2DefaultLo));
     addr2.append(static_cast<char>(KeyProtocol::Addr2DefaultHi));
@@ -2640,6 +2771,19 @@ void KeySerialClient::onRetryTimeout()
             cmdName = QString("TICKET frame %1/%2")
                     .arg(m_ticketFrameIndex + 1)
                     .arg(m_ticketFrames.size());
+        }
+
+        // B座辅助命令超时：只清辅助链，不影响 A座会话状态
+        if ((timeoutInFlight == INFLIGHT_QKEYEQ || timeoutInFlight == INFLIGHT_SETTIME
+                || timeoutInFlight == INFLIGHT_SETCOM)
+                && m_pendingAuxSeat == 0x02) {
+            stopRetryTimer();
+            clearInFlight();
+            emitLog(LogDir::ERROR, timeoutCmd, 0,
+                    QString("B座辅助命令超时 %1 after %2 retries").arg(cmdName).arg(MAX_RETRIES));
+            emitNotice(QStringLiteral("B座辅助命令超时，A座业务不受影响"));
+            finishAuxSequence(0x02, timeoutCmd, false, QStringLiteral("timeout"));
+            return;
         }
 
         if (timeoutInFlight == INFLIGHT_QTASK && m_qtaskProbeInFlight) {

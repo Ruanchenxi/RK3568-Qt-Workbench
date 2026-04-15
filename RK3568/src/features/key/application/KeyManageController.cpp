@@ -27,6 +27,7 @@
 #include "features/key/application/TicketReturnHttpClient.h"
 #include "features/auth/infra/password/AuthServiceAdapter.h"
 #include "features/key/protocol/KeyProtocolDefs.h"
+#include "features/key/protocol/KeySerialClient.h"
 
 namespace {
 
@@ -559,6 +560,21 @@ void KeyManageController::start()
 
     m_ticketCancelCoordinator->start();
     tryAutoConnectKeyPort();
+
+    // A座：5 分钟定期刷新电量（只在 A座就绪且无命令在途时执行）
+    m_autoBatteryRefreshTimer = new QTimer(this);
+    m_autoBatteryRefreshTimer->setInterval(300000);
+    connect(m_autoBatteryRefreshTimer, &QTimer::timeout,
+            this, &KeyManageController::onAutoBatteryRefreshTimeout);
+    m_autoBatteryRefreshTimer->start();
+
+    // B座：10 分钟定期刷新电量（完全独立于 A座业务，只要 B座在位即执行）
+    m_autoBatteryRefreshTimerB = new QTimer(this);
+    m_autoBatteryRefreshTimerB->setInterval(600000);
+    connect(m_autoBatteryRefreshTimerB, &QTimer::timeout,
+            this, &KeyManageController::onAutoBatteryRefreshTimeoutB);
+    m_autoBatteryRefreshTimerB->start();
+
     if (!m_ticketIngress->start()) {
         emit statusMessage(m_ticketIngress->lastError());
     }
@@ -623,12 +639,16 @@ void KeyManageController::onQueryBatteryClicked()
         emit statusMessage(QStringLiteral("串口未连接，无法查询钥匙电量"));
         return;
     }
-
+    if (!snapshot.keyPresent || !snapshot.keyStable || !snapshot.sessionReady) {
+        emit statusMessage(QStringLiteral("A座钥匙未就绪，无法查询电量"));
+        return;
+    }
     CommandRequest req;
-    req.id = CommandId::QueryBattery;
     req.opId = nextOpId();
+    req.id = CommandId::QueryBattery;
+    req.options.insert(QStringLiteral("seat"), static_cast<uint>(0x01));
     m_session->execute(req);
-    emit statusMessage(QStringLiteral("执行获取电量 (Q_KEYEQ)"));
+    emit statusMessage(QStringLiteral("执行获取电量 (Q_KEYEQ)，目标=A座"));
 }
 
 void KeyManageController::onSyncDeviceTimeClicked()
@@ -638,12 +658,16 @@ void KeyManageController::onSyncDeviceTimeClicked()
         emit statusMessage(QStringLiteral("串口未连接，无法执行钥匙校时"));
         return;
     }
-
+    if (!snapshot.keyPresent || !snapshot.keyStable || !snapshot.sessionReady) {
+        emit statusMessage(QStringLiteral("A座钥匙未就绪，无法执行校时"));
+        return;
+    }
     CommandRequest req;
-    req.id = CommandId::SyncDeviceTime;
     req.opId = nextOpId();
+    req.id = CommandId::SyncDeviceTime;
+    req.options.insert(QStringLiteral("seat"), static_cast<uint>(0x01));
     m_session->execute(req);
-    emit statusMessage(QStringLiteral("执行钥匙校时 (SET_TIME)"));
+    emit statusMessage(QStringLiteral("执行钥匙校时 (SET_TIME)，目标=A座"));
 }
 
 void KeyManageController::onQueryTasksClicked()
@@ -1370,8 +1394,15 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
         if (!httpTransactionControlledEvent && ready && (!tasks.isEmpty() || m_activeTransferTaskId.isEmpty())) {
             tryAutoTransferPendingTicket();
         }
+        // A座所有业务处理完成后，若无命令在途，触发 A座自动维护链（电量+校时）
+        if (!httpTransactionControlledEvent && ready) {
+            tryAutoSeat1MaintenanceAfterTasksUpdated(snapshot, tasks);
+        }
         break;
     }
+    case KeySessionEvent::AuxCommandFinished:
+        // 辅助命令完成，UI 状态由 snapshot 驱动，无需额外处理
+        break;
     case KeySessionEvent::TaskLogReady: {
         if (m_suppressSessionAutomation) {
             qInfo().noquote()
@@ -3672,4 +3703,69 @@ QList<KeyTaskDto> KeyManageController::toTaskDtos(const QVariantList &taskList) 
     }
 
     return tasks;
+}
+
+// ─── 双座辅助链 ────────────────────────────────────────────────────────────────
+
+void KeyManageController::tryAutoSeat1MaintenanceAfterTasksUpdated(
+        const KeySessionSnapshot &snapshot,
+        const QList<KeyTaskDto> &tasks)
+{
+    Q_UNUSED(tasks);
+    if (!snapshot.keyPresent || !snapshot.keyStable || !snapshot.sessionReady) {
+        return;
+    }
+    if (snapshot.commandInFlight) {
+        return;
+    }
+    if (!m_activeTransferTaskId.isEmpty()
+            || !m_activeReturnTaskId.isEmpty()
+            || !m_pendingReturnHandshakeTaskId.isEmpty()
+            || !m_pendingDeletedSystemTicketId.isEmpty()
+            || !m_pendingCancelSystemTicketId.isEmpty()) {
+        return;
+    }
+    m_session->startAuxSequence(0x01,
+                                static_cast<int>(KeySerialClient::AuxSequenceBatteryThenSync),
+                                static_cast<int>(KeySerialClient::AuxOriginAutoAfterTasks),
+                                QStringLiteral("auto_after_tasks"));
+}
+
+void KeyManageController::onAutoBatteryRefreshTimeout()
+{
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    if (!snapshot.connected || !snapshot.keyPresent
+            || !snapshot.keyStable || !snapshot.sessionReady) {
+        return;
+    }
+    if (snapshot.commandInFlight) {
+        return;
+    }
+    if (!m_activeTransferTaskId.isEmpty()
+            || !m_activeReturnTaskId.isEmpty()
+            || !m_pendingReturnHandshakeTaskId.isEmpty()
+            || !m_pendingDeletedSystemTicketId.isEmpty()
+            || !m_pendingCancelSystemTicketId.isEmpty()) {
+        return;
+    }
+    m_session->startAuxSequence(0x01,
+                                static_cast<int>(KeySerialClient::AuxSequenceBatteryOnly),
+                                static_cast<int>(KeySerialClient::AuxOriginPeriodicRefresh),
+                                QStringLiteral("periodic_refresh"));
+}
+
+void KeyManageController::onAutoBatteryRefreshTimeoutB()
+{
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    // B座刷新完全独立于 A座业务：只要 B座在位且无命令在途即执行
+    if (!snapshot.connected || !snapshot.bKeyPresent) {
+        return;
+    }
+    if (snapshot.commandInFlight) {
+        return;
+    }
+    m_session->startAuxSequence(0x02,
+                                static_cast<int>(KeySerialClient::AuxSequenceBatteryOnly),
+                                static_cast<int>(KeySerialClient::AuxOriginPeriodicRefresh),
+                                QStringLiteral("b_periodic_refresh"));
 }

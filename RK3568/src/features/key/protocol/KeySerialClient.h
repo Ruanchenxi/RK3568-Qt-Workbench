@@ -193,17 +193,44 @@ public:
     void clearVerifiedPort();
 
     void queryTasksAll();
-    void queryBattery();
+    void queryBattery(quint8 seat = 0x01);
     void refreshHandshake();
     void requestTaskLog(const QByteArray &taskId16);
     void deleteTask(const QByteArray &taskId16);
     void deleteFirstTask();
-    void syncDeviceTime();
+    void syncDeviceTime(quint8 seat = 0x01);
     void sendInitPayload(const QByteArray &payload);
     void sendRfidPayload(const QByteArray &payload);
     void transferTicketJson(const QByteArray &jsonBytes,
                             quint8 stationId = 0x01,
                             int debugFrameChunkSize = 0);
+
+    // --- 双座辅助链 ---
+    enum AuxCommandAfterSetCom {
+        AuxNone = 0,
+        AuxBattery,
+        AuxSyncTime
+    };
+
+    enum AuxSequenceMode {
+        AuxSequenceNone = 0,
+        AuxSequenceBatteryOnly,
+        AuxSequenceSyncOnly,
+        AuxSequenceBatteryThenSync
+    };
+
+    enum AuxSequenceOrigin {
+        AuxOriginNone = 0,
+        AuxOriginManualButton,
+        AuxOriginAutoAfterTasks,
+        AuxOriginAutoSeat2Placed,
+        AuxOriginPeriodicRefresh
+    };
+
+    void startAuxSequence(quint8 seat,
+                          AuxSequenceMode mode,
+                          AuxSequenceOrigin origin,
+                          const QString &reason);
 
     const QList<KeyTaskInfo> &tasks() const { return m_tasks; }
     bool hasVerifiedPort() const { return m_hasVerifiedPort; }
@@ -218,6 +245,8 @@ public:
     qint64 lastProtocolFailureMs() const { return m_lastProtocolFailureMs; }
     bool recoveryWindowActive() const { return m_recoveryWindowActive; }
     int batteryPercent() const { return m_batteryPercent; }
+    bool isBKeyPresent() const { return m_bKeyPlaced; }
+    int bBatteryPercent() const { return m_bBatteryPercent; }
 
     /**
      * @brief 设置当前操作ID（由 UI 层在用户点击按钮时调用）
@@ -281,6 +310,10 @@ signals:
     void timeoutOccurred(const QString &what);
     /// 用户友好通知（如"钥匙已就绪"），供 UI 层 statusBar 或 toast 显示
     void notice(const QString &what);
+    /// B 座在位状态变化
+    void bKeyPresenceChanged(bool placed);
+    /// 辅助链（电量查询/校时）完成通知
+    void auxCommandFinished(quint8 seat, quint8 cmd, bool success, const QString &reason);
 
 private slots:
     void onReadyRead();            ///< QSerialPort::readyRead 回调，驱动数据接收和拆包
@@ -315,7 +348,10 @@ private:
     void startKeyStabilityWindow(const QString &reason);      ///< 启动钥匙稳定性观察窗口
     void markNoiseDuringStabilizing(const QByteArray &noise, const QString &reason); ///< 标记稳定期间的噪声
     void tryDispatchDeferredCommand();                        ///< 尝试派发延迟的业务命令
-    void sendSetComHandshake(const QString &reason);          ///< 发送 SET_COM 握手帧
+    void sendSetComHandshake(const QString &reason, quint8 seat = 0x01); ///< 发送 SET_COM 握手帧
+    void sendBatteryFrame();                                 ///< 发送 Q_KEYEQ 电量查询帧
+    void sendSetTimeFrame();                                 ///< 发送 SET_TIME 校时帧
+    void finishAuxSequence(quint8 seat, quint8 cmd, bool success, const QString &reason); ///< 完成辅助链
     void clearTicketTransferState();                         ///< 清理传票发送状态
     void clearTaskLogState();                                ///< 清理回传日志状态
     void clearDataTransferState();                           ///< 清理 INIT/RFID 发送状态
@@ -388,7 +424,18 @@ private:
     qint64         m_lastBusinessSuccessMs; ///< 最近一次业务成功响应时间戳（ms since epoch）
     qint64         m_lastProtocolFailureMs; ///< 最近一次协议失败时间戳（ms since epoch）
     bool           m_recoveryWindowActive;  ///< 最近是否处于恢复窗口内
-    int            m_batteryPercent;        ///< 最近一次查询到的电量百分比；-1=未知/无效
+    int            m_batteryPercent;        ///< A座最近一次查询到的电量百分比；-1=未知/无效
+
+    // B 座状态（只被动追踪，不进入业务状态机）
+    bool           m_bKeyPlaced;            ///< B座钥匙在位标志
+    int            m_bBatteryPercent;       ///< B座电量百分比；-1=未知/无效
+
+    // 辅助链状态（双座电量/校时命令的临时执行上下文）
+    quint8         m_setComSeatInFlight;    ///< 当前 SET_COM 握手目标座位（0x01 或 0x02）
+    quint8         m_pendingAuxSeat;        ///< 当前辅助链目标座位（0x00=无，0x01=A座，0x02=B座）
+    AuxCommandAfterSetCom m_pendingAuxCommand; ///< B座 SET_COM ACK 后下一步命令
+    AuxSequenceMode   m_auxSequenceMode;    ///< 当前辅助序列模式
+    AuxSequenceOrigin m_auxSequenceOrigin;  ///< 当前辅助序列来源
 
     // 钥匙稳定性检测
     QElapsedTimer  m_keyPlacedElapsed;     ///< 钥匙放上时刻计时器（用于稳定性窗口判定）

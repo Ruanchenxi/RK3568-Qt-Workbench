@@ -58,13 +58,11 @@ void LogPage::flushBufferedLogs()
         return;
     }
 
-    ui->logDisplay->setUpdatesEnabled(false);
-    for (const QString &text : qAsConst(m_pendingLogs)) {
-        ui->logDisplay->appendPlainText(text);
-    }
-    ui->logDisplay->setUpdatesEnabled(true);
+    // 合并为一次 appendPlainText，避免逐行追加在 ARM 上卡顿
+    const QString batch = m_pendingLogs.join('\n');
     m_pendingLogs.clear();
 
+    ui->logDisplay->appendPlainText(batch);
     scrollToEnd(ui->logDisplay);
 }
 
@@ -82,6 +80,11 @@ void LogPage::appendOrBufferLog(const QString &text)
 
     if (!isVisible()) {
         m_pendingLogs.append(text);
+        // 限制缓冲区，只保留最近 300 条，防止长时间隐藏后 flush 卡顿
+        constexpr int kMaxPending = 300;
+        if (m_pendingLogs.size() > kMaxPending) {
+            m_pendingLogs.removeFirst();
+        }
         return;
     }
 

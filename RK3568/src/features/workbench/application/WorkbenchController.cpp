@@ -62,18 +62,18 @@ bool WorkbenchController::buildTargetUrl(QUrl *url, QString *safeSummary, QStrin
 
     if (!accessToken.isEmpty() && !refreshToken.isEmpty()) {
         *url = baseUrl;
-        url->setPath("/pad/pages/oauth/third-login");
+        url->setPath(QStringLiteral("/pad/pages/oauth/third-login"));
         QUrlQuery query;
-        query.addQueryItem("accessToken", accessToken);
-        query.addQueryItem("refreshToken", refreshToken);
-        query.addQueryItem("tenantId", tenantId);
+        query.addQueryItem(QStringLiteral("accessToken"), accessToken);
+        query.addQueryItem(QStringLiteral("refreshToken"), refreshToken);
+        query.addQueryItem(QStringLiteral("tenantId"), tenantId);
         url->setQuery(query);
 
         if (safeSummary) {
-            *safeSummary = QString("%1://%2:%3/pad/pages/oauth/third-login")
+            *safeSummary = QStringLiteral("%1://%2:%3/pad/pages/oauth/third-login")
                                .arg(url->scheme())
                                .arg(url->host())
-                               .arg(url->port(url->scheme() == "https" ? 443 : 80));
+                               .arg(url->port(url->scheme() == QStringLiteral("https") ? 443 : 80));
         }
     } else {
         *url = baseUrl;

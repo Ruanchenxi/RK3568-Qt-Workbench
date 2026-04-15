@@ -98,6 +98,8 @@ private slots:
 
 signals:
     void workbenchRefreshNeeded();
+    /// 透传 snapshot 到 MainWindow，供 A/B 座状态标签更新
+    void sessionSnapshotForwarded(const KeySessionSnapshot &snapshot);
 
 private:
     void initUi();

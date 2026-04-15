@@ -185,6 +185,11 @@ void MainWindow::setupPages()
         connect(m_keyManagePage, &KeyManagePage::workbenchRefreshNeeded,
                 m_workbenchPage, &WorkbenchPage::reloadWorkbench);
     }
+    // A/B 座状态透传：KeyManagePage → MainWindow 状态标签
+    if (m_keyManagePage) {
+        connect(m_keyManagePage, &KeyManagePage::sessionSnapshotForwarded,
+                this, &MainWindow::onKeySessionSnapshotChanged);
+    }
 
     // ========== 创建系统设置页面 ==========
     m_systemPage = new SystemPage(this);
@@ -632,59 +637,68 @@ void MainWindow::updateUserDisplay()
  */
 void MainWindow::updateStatusBar()
 {
-    applyReaderStatus(static_cast<int>(CardSerialSource::Idle), QString());
-    applyFingerprintStatusDisconnected();
+    updateKeySlotStatusLabels(m_lastKeySnapshot);
 }
 
 void MainWindow::applyReaderStatus(int status, const QString &message)
 {
+    // 读卡器状态变化：cardStatusLabel/Dot 已复用为 A座钥匙状态，不再在此写入
+    // 保留此函数入口供 SystemPage 信号调用，仅做 tooltip 更新
     const QString detail = message.trimmed();
-    const CardSerialSource::ReaderStatus readerStatus =
-        static_cast<CardSerialSource::ReaderStatus>(status);
-
-    if (ui->cardStatusWidget)
-    {
-        ui->cardStatusWidget->setToolTip(detail);
-    }
-    if (ui->cardStatusLabel)
-    {
-        ui->cardStatusLabel->setToolTip(detail);
-    }
-    if (ui->cardStatusDot)
-    {
-        ui->cardStatusDot->setToolTip(detail);
-    }
-
-    switch (readerStatus)
-    {
-    case CardSerialSource::Ready:
-        setStatusDot(ui->cardStatusDot, QStringLiteral("#2E7D32"));
-        ui->cardStatusLabel->setText(QStringLiteral("刷卡登录：可用"));
-        break;
-    case CardSerialSource::Detecting:
-        setStatusDot(ui->cardStatusDot, QStringLiteral("#F9A825"));
-        ui->cardStatusLabel->setText(QStringLiteral("刷卡登录：检测中"));
-        break;
-    case CardSerialSource::Error:
-        setStatusDot(ui->cardStatusDot, QStringLiteral("#D84315"));
-        ui->cardStatusLabel->setText(QStringLiteral("刷卡登录：异常"));
-        break;
-    case CardSerialSource::Unconfigured:
-        setNeutralStatusDot(ui->cardStatusDot);
-        ui->cardStatusLabel->setText(QStringLiteral("刷卡登录：不可用"));
-        break;
-    case CardSerialSource::Idle:
-    default:
-        setNeutralStatusDot(ui->cardStatusDot);
-        ui->cardStatusLabel->setText(QStringLiteral("刷卡登录：不可用"));
-        break;
+    Q_UNUSED(status);
+    if (!detail.isEmpty()) {
+        if (ui->cardStatusWidget) { ui->cardStatusWidget->setToolTip(detail); }
+        if (ui->cardStatusLabel)  { ui->cardStatusLabel->setToolTip(detail); }
+        if (ui->cardStatusDot)    { ui->cardStatusDot->setToolTip(detail); }
     }
 }
 
 void MainWindow::applyFingerprintStatusDisconnected()
 {
-    setNeutralStatusDot(ui->fingerStatusDot);
-    ui->fingerStatusLabel->setText(QStringLiteral("指纹仪状态：未接入"));
+    // fingerStatusLabel/Dot 已复用为 B座钥匙状态，不再在此写入
+}
+
+void MainWindow::onKeySessionSnapshotChanged(const KeySessionSnapshot &snapshot)
+{
+    m_lastKeySnapshot = snapshot;
+    updateKeySlotStatusLabels(snapshot);
+}
+
+void MainWindow::updateKeySlotStatusLabels(const KeySessionSnapshot &snapshot)
+{
+    if (!snapshot.connected) {
+        setNeutralStatusDot(ui->cardStatusDot);
+        ui->cardStatusLabel->setText(QStringLiteral("A座：未连接"));
+        setNeutralStatusDot(ui->fingerStatusDot);
+        ui->fingerStatusLabel->setText(QStringLiteral("B座：不在位"));
+        return;
+    }
+
+    // A座状态
+    if (!snapshot.keyPresent) {
+        setStatusDot(ui->cardStatusDot, QStringLiteral("#F9A825"));
+        ui->cardStatusLabel->setText(QStringLiteral("A座：已连接"));
+    } else if (snapshot.batteryPercent >= 0) {
+        setStatusDot(ui->cardStatusDot, QStringLiteral("#2E7D32"));
+        ui->cardStatusLabel->setText(
+            QStringLiteral("A座：在线  %1%").arg(snapshot.batteryPercent));
+    } else {
+        setStatusDot(ui->cardStatusDot, QStringLiteral("#2E7D32"));
+        ui->cardStatusLabel->setText(QStringLiteral("A座：在线"));
+    }
+
+    // B座状态
+    if (!snapshot.bKeyPresent) {
+        setNeutralStatusDot(ui->fingerStatusDot);
+        ui->fingerStatusLabel->setText(QStringLiteral("B座：不在位"));
+    } else if (snapshot.bBatteryPercent >= 0) {
+        setStatusDot(ui->fingerStatusDot, QStringLiteral("#2E7D32"));
+        ui->fingerStatusLabel->setText(
+            QStringLiteral("B座：在位  %1%").arg(snapshot.bBatteryPercent));
+    } else {
+        setStatusDot(ui->fingerStatusDot, QStringLiteral("#2E7D32"));
+        ui->fingerStatusLabel->setText(QStringLiteral("B座：在位"));
+    }
 }
 
 void MainWindow::onCardReaderStatusChanged(int status, const QString &message)

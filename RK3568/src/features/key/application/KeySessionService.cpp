@@ -177,6 +177,21 @@ KeySessionService::KeySessionService(QObject *parent)
         stampEvent(event);
         emit eventOccurred(event);
     });
+    connect(m_client, &KeySerialClient::bKeyPresenceChanged, this, [this](bool) {
+        emitStateChanged();
+    });
+    connect(m_client, &KeySerialClient::auxCommandFinished, this,
+            [this](quint8 seat, quint8 cmd, bool success, const QString &reason) {
+        KeySessionEvent event;
+        event.kind = KeySessionEvent::AuxCommandFinished;
+        event.data.insert("seat", static_cast<int>(seat));
+        event.data.insert("cmd", static_cast<int>(cmd));
+        event.data.insert("success", success);
+        event.data.insert("reason", reason);
+        stampEvent(event);
+        emit eventOccurred(event);
+        emitStateChanged();
+    });
     connect(m_client, &KeySerialClient::logItemEmitted, this, &KeySessionService::logItemEmitted);
 }
 
@@ -219,6 +234,8 @@ KeySessionSnapshot KeySessionService::snapshot() const
     s.batteryPercent = m_client->batteryPercent();
     s.portName = m_client->currentPortName();
     s.verifiedPortName = m_client->hasVerifiedPort() ? m_client->verifiedPortName() : QString();
+    s.bKeyPresent = m_client->isBKeyPresent();
+    s.bBatteryPercent = m_client->bBatteryPercent();
     return s;
 }
 
@@ -235,12 +252,16 @@ void KeySessionService::execute(const CommandRequest &request)
     case CommandId::InitKey:
         m_client->sendInitPayload(request.payload);
         break;
-    case CommandId::QueryBattery:
-        m_client->queryBattery();
+    case CommandId::QueryBattery: {
+        const quint8 seat = static_cast<quint8>(request.options.value("seat", 0x01).toUInt());
+        m_client->queryBattery(seat);
         break;
-    case CommandId::SyncDeviceTime:
-        m_client->syncDeviceTime();
+    }
+    case CommandId::SyncDeviceTime: {
+        const quint8 seat = static_cast<quint8>(request.options.value("seat", 0x01).toUInt());
+        m_client->syncDeviceTime(seat);
         break;
+    }
     case CommandId::QueryTasks:
         m_client->queryTasksAll();
         break;
@@ -260,6 +281,14 @@ void KeySessionService::execute(const CommandRequest &request)
     case CommandId::Custom:
         break;
     }
+}
+
+void KeySessionService::startAuxSequence(quint8 seat, int mode, int origin, const QString &reason)
+{
+    m_client->startAuxSequence(seat,
+                               static_cast<KeySerialClient::AuxSequenceMode>(mode),
+                               static_cast<KeySerialClient::AuxSequenceOrigin>(origin),
+                               reason);
 }
 
 void KeySessionService::transferTicket(const TicketTransferRequest &request)

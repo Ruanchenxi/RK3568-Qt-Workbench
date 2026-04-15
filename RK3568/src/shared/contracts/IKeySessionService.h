@@ -53,9 +53,12 @@ struct KeySessionSnapshot
     qint64 lastBusinessSuccessMs = 0;
     qint64 lastProtocolFailureMs = 0;
     bool recoveryWindowActive = false;
-    int batteryPercent = -1;  ///< -1=未知/无效；0~100=钥匙当前电量百分比
+    int batteryPercent = -1;  ///< A座电量；-1=未知/无效；0~100=钥匙当前电量百分比
     QString portName;
     QString verifiedPortName;  ///< 已验证的端口名（收到合法协议帧后锁定），空=未验证
+    // B座状态（只被动追踪）
+    bool bKeyPresent = false;
+    int  bBatteryPercent = -1;  ///< B座电量；-1=未知/无效
 };
 
 struct KeySessionEvent
@@ -72,7 +75,8 @@ struct KeySessionEvent
         RawProtocol,
         TicketTransferProgress,
         TicketTransferFinished,
-        TicketTransferFailed
+        TicketTransferFailed,
+        AuxCommandFinished  ///< 辅助命令（电量/校时）完成；data: seat/cmd/success/reason
     };
 
     Kind kind = Notice;
@@ -93,6 +97,7 @@ public:
     virtual KeySessionSnapshot snapshot() const = 0;
     virtual void execute(const CommandRequest &request) = 0;
     virtual void transferTicket(const TicketTransferRequest &request) = 0;
+    virtual void startAuxSequence(quint8 seat, int mode, int origin, const QString &reason) = 0;
 
 signals:
     void eventOccurred(const KeySessionEvent &event);

@@ -1361,7 +1361,7 @@ QFrame#logShellDetailCard {
        <item>
         <widget class="QLabel" name="companyLabel">
          <property name="text">
-          <string>珠海云望科技有限公司</string>
+          <string>珠海市云望科技有限公司</string>
          </property>
         </widget>
        </item>

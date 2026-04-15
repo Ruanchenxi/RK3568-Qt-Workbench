@@ -15,6 +15,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDateTime>
+#include <QDir>
 #include <QFileDialog>
 #include <QHideEvent>
 #include <QHeaderView>
@@ -532,9 +533,16 @@ void KeyManagePage::onExportSerialLog()
 {
     const QString defaultName = QStringLiteral("serial_log_%1.txt")
                                     .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"));
+#ifdef Q_OS_LINUX
+    const QString exportDir = QCoreApplication::applicationDirPath() + QStringLiteral("/logs/serial");
+    QDir().mkpath(exportDir);
+    const QString defaultPath = exportDir + QChar('/') + defaultName;
+#else
+    const QString defaultPath = defaultName;
+#endif
     const QString path = QFileDialog::getSaveFileName(this,
                                                       QStringLiteral("导出串口日志"),
-                                                      defaultName,
+                                                      defaultPath,
                                                       QStringLiteral("Text Files (*.txt)"));
     if (path.isEmpty()) {
         return;
@@ -583,6 +591,7 @@ void KeyManagePage::onSerialLogCellDoubleClicked(int row, int column)
 void KeyManagePage::onSessionSnapshotChanged(const KeySessionSnapshot &snapshot)
 {
     updateCommIndicators(snapshot);
+    emit sessionSnapshotForwarded(snapshot);
 }
 
 void KeyManagePage::onTasksUpdated(const QList<KeyTaskDto> &tasks)
@@ -1176,15 +1185,23 @@ void KeyManagePage::updateCommIndicators(const KeySessionSnapshot &snapshot)
     if (!snapshot.keyPresent) {
         ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#EF6C00'>待钥匙</font>"));
         ui->lblKeyPosition->setText(QStringLiteral("在位: <font color='#EF6C00'>未插</font>"));
-        ui->lblBatteryInfo->setText(QStringLiteral("电量: --"));
+        // A座不在位时，按 B座优先显示电量
+        if (snapshot.bKeyPresent) {
+            ui->lblBatteryInfo->setText(snapshot.bBatteryPercent >= 0
+                ? QStringLiteral("电量(B): %1%").arg(snapshot.bBatteryPercent)
+                : QStringLiteral("电量(B): --"));
+        } else {
+            ui->lblBatteryInfo->setText(QStringLiteral("电量: --"));
+        }
         ui->lblTaskInfo->setText(QStringLiteral("任务数: --"));
         ui->lblCommStatus->setToolTip(QStringLiteral("串口已连接，底座在线，但当前未检测到钥匙在位"));
         return;
     }
 
+    // A座在位时，显示 A座电量
     ui->lblBatteryInfo->setText(snapshot.batteryPercent >= 0
-                                    ? QStringLiteral("电量: %1%").arg(snapshot.batteryPercent)
-                                    : QStringLiteral("电量: --"));
+                                    ? QStringLiteral("电量(A): %1%").arg(snapshot.batteryPercent)
+                                    : QStringLiteral("电量(A): --"));
 
     if (!snapshot.keyStable) {
         ui->lblCommStatus->setText(QStringLiteral("通讯: <font color='#EF6C00'>稳定中</font>"));

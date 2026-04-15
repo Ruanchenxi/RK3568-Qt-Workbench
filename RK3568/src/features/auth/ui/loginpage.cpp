@@ -662,11 +662,7 @@ void LoginPage::startServiceReadyProbe()
         if (reply->error() != QNetworkReply::NoError)
         {
             const bool timedOut = reply->property("probeTimedOut").toBool();
-            setServiceReady(false,
-                            timedOut
-                                ? QStringLiteral("后台服务启动中，请稍候...")
-                                : QStringLiteral("后台服务启动中，请稍候... 当前账号列表探测未就绪：%1")
-                                      .arg(reply->errorString()));
+            setServiceReady(false, QStringLiteral("后台服务连接中，请稍候..."));
             reply->deleteLater();
             return;
         }
@@ -674,10 +670,7 @@ void LoginPage::startServiceReadyProbe()
         if (httpStatus < 200 || httpStatus >= 300)
         {
             const QString bodyText = QString::fromUtf8(responseData).trimmed();
-            setServiceReady(false,
-                            bodyText.isEmpty()
-                                ? QStringLiteral("后台服务启动中，请稍候... 当前探测状态 HTTP %1").arg(httpStatus)
-                                : bodyText);
+            setServiceReady(false, QStringLiteral("后台服务连接中，请稍候..."));
             reply->deleteLater();
             return;
         }

@@ -167,6 +167,15 @@ private:
     int nextOpId();
     QList<KeyTaskDto> toTaskDtos(const QVariantList &taskList) const;
 
+    // --- 双座辅助链 ---
+    void tryAutoSeat1MaintenanceAfterTasksUpdated(const KeySessionSnapshot &snapshot,
+                                                  const QList<KeyTaskDto> &tasks);
+    void onAutoBatteryRefreshTimeout();   ///< A座 5 分钟定期电量刷新
+    void onAutoBatteryRefreshTimeoutB();  ///< B座 10 分钟定期电量刷新
+
+    QTimer *m_autoBatteryRefreshTimer  = nullptr;  ///< A座定时器（5 min）
+    QTimer *m_autoBatteryRefreshTimerB = nullptr;  ///< B座定时器（10 min）
+
     IKeySessionService *m_session;
     SerialLogManager *m_logManager;
     TicketStore *m_ticketStore;

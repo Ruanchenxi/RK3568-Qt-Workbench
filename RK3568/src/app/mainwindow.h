@@ -19,6 +19,7 @@
 #include <QTimer>
 #include <QDateTime>
 #include "app/MainWindowController.h"
+#include "shared/contracts/IKeySessionService.h"
 
 // 前向声明
 class LoginPage;
@@ -129,9 +130,13 @@ private:
     void updateKeyboardButtonState();        ///< 根据当前页面能力更新键盘按钮状态
     void updateUserDisplay();                ///< 更新用户显示信息
     void updateStatusBar();                  ///< 更新状态栏
-    void applyReaderStatus(int status, const QString &message); ///< 更新读卡器状态展示
-    void applyFingerprintStatusDisconnected(); ///< 当前阶段指纹仪未接入
+    void applyReaderStatus(int status, const QString &message); ///< 更新读卡器状态展示（保留信号入口，不再写 label）
+    void applyFingerprintStatusDisconnected(); ///< 指纹仪断开（保留信号入口，不再写 label）
+    void onKeySessionSnapshotChanged(const KeySessionSnapshot &snapshot); ///< A/B 座状态 label 更新
+    void updateKeySlotStatusLabels(const KeySessionSnapshot &snapshot);   ///< 写 card/finger status label
     bool pageRequiresLogin(PageIndex page) const; ///< 判断页面是否需要登录
+
+    KeySessionSnapshot m_lastKeySnapshot;
     bool checkLoginRequired(PageIndex page); ///< 检查是否需要登录
 
 protected:
