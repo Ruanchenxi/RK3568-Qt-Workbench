@@ -5,6 +5,7 @@
 #include "features/key/application/KeyManageController.h"
 
 #include <QDateTime>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -2096,6 +2097,17 @@ void KeyManageController::finalizePendingReturnDelete(const QList<KeyTaskDto> &t
                                      || ticket.returnState == QLatin1String("return-upload-success"))) {
                     // finish-step-batch 已上传成功，工作台已收到完成数据会自己关票
                     // 直接删除本地记录完成闭环，无需再调 callTermination
+                    if (!ticket.jsonPath.isEmpty()) {
+                        if (QFile::remove(ticket.jsonPath)) {
+                            qInfo().noquote()
+                                    << QStringLiteral("[KeyManageController] 回传完成，已删除原始票据文件：%1")
+                                          .arg(ticket.jsonPath);
+                        } else {
+                            qWarning().noquote()
+                                    << QStringLiteral("[KeyManageController] 票据文件删除失败（可能已不存在）：%1")
+                                          .arg(ticket.jsonPath);
+                        }
+                    }
                     m_ticketStore->removeTicket(m_pendingDeletedSystemTicketId);
                     emit statusMessage(QStringLiteral("回传完成，本地记录已清除：%1")
                                            .arg(m_pendingDeletedSystemTicketId));
@@ -2103,6 +2115,15 @@ void KeyManageController::finalizePendingReturnDelete(const QList<KeyTaskDto> &t
                     emit statusMessage(QStringLiteral("钥匙任务已删除"));
                 }
             }
+            emit workbenchRefreshRequested();
+            // 回传删除完成后延迟触发一次检查，覆盖多票场景下下一张票的自动回传
+            // （removeTicket 触发的嵌套 handleSystemTicketsChanged 里 pendingDelete 尚未清除，
+            //  外层调用结束后若无新 Q_TASK 事件，剩余票会永远等待）
+            QTimer::singleShot(400, this, [this, tasks]() {
+                if (activeReturnChainTaskId().isEmpty()) {
+                    tryAutoReturnCompletedTicket(tasks);
+                }
+            });
         }
         m_pendingDeletedSystemTicketId.clear();
         m_pendingDeletedKeyTaskRaw.clear();

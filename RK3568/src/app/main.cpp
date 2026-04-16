@@ -38,7 +38,8 @@ void configureLinuxBoardGraphics()
         qputenv("QTWEBENGINE_CHROMIUM_FLAGS",
                 "--no-sandbox --disable-gpu --disable-gpu-compositing "
                 "--disable-es3-gl-context --ignore-gpu-blocklist "
-                "--enable-accelerated-video-decode=false");
+                "--enable-accelerated-video-decode=false "
+                "--single-process --no-zygote-sandbox --disable-setuid-sandbox");
     }
 
     const QString graphicsMode = linuxGraphicsMode();

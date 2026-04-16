@@ -363,7 +363,7 @@ QByteArray TicketIngressService::buildJsonResponseBody(bool success,
 {
     QJsonObject obj;
     obj.insert(QStringLiteral("success"), success);
-    obj.insert(QStringLiteral("status"), statusCode);
+    obj.insert(QStringLiteral("status"), success ? 0 : statusCode); // 0=成功（Java API 约定），与前端对齐
     obj.insert(QStringLiteral("msg"), message);
     if (!taskId.trimmed().isEmpty()) {
         obj.insert(QStringLiteral("taskId"), taskId);
@@ -373,7 +373,7 @@ QByteArray TicketIngressService::buildJsonResponseBody(bool success,
 
 QString TicketIngressService::saveBodyToFile(const QByteArray &body) const
 {
-    const QString logsDir = QCoreApplication::applicationDirPath() + "/logs";
+    const QString logsDir = QCoreApplication::applicationDirPath() + "/logs/tickets";
     QDir().mkpath(logsDir);
     const QString filePath = logsDir + "/http_ticket_"
             + QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz") + ".json";

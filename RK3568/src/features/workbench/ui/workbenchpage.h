@@ -18,6 +18,7 @@
 #include <QWidget>
 #include <QWebEngineView>
 #include <QShowEvent>
+#include <QResizeEvent>
 #include "features/workbench/application/WorkbenchController.h"
 
 class KeyboardContainer;
@@ -44,7 +45,8 @@ public slots:
     void reloadWorkbench();
 
 protected:
-    void showEvent(QShowEvent *event) override; // 页面显示时按需加载（首次或令牌变化）
+    void showEvent(QShowEvent *event) override;   // 页面显示时按需加载（首次或令牌变化）
+    void resizeEvent(QResizeEvent *event) override; // 窗口几何修正时同步 Chromium 视口
 
 private:
     Ui::WorkbenchPage *ui;

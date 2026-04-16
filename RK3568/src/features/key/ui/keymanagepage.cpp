@@ -258,10 +258,7 @@ void KeyManagePage::initUi()
     if (QTableWidgetItem *h = ui->keyTicketTable->horizontalHeaderItem(4)) h->setTextAlignment(Qt::AlignCenter);
 
     ui->lblTicketPosition->setWordWrap(true);
-    ui->lblTicketPosition->setMinimumHeight(54);
     ui->lblTicketReturnStatus->setWordWrap(true);
-    ui->lblTicketReturnStatus->setMinimumHeight(60);
-    ui->ticketInfoCard->setMinimumHeight(220);
 
     ui->lblBatteryInfo->setText(QStringLiteral("电量: --"));
     ui->lblTaskInfo->setText(QStringLiteral("任务数: --"));
@@ -1017,10 +1014,12 @@ void KeyManagePage::populateKeyTicketTable(const QList<KeyTaskDto> &tasks)
 
         const QString taskDecimalId = rawTaskIdToDecimalString(task.taskId);
         bool isOrphan = false;
+        QString ticketNo;
         for (const SystemTicketDto &st : sysTickets) {
-            if (st.taskId == taskDecimalId
-                    && st.transferState == QLatin1String("orphan-recovered")) {
-                isOrphan = true;
+            if (st.taskId == taskDecimalId) {
+                if (st.transferState == QLatin1String("orphan-recovered"))
+                    isOrphan = true;
+                ticketNo = st.ticketNo;
                 break;
             }
         }
@@ -1029,10 +1028,11 @@ void KeyManagePage::populateKeyTicketTable(const QList<KeyTaskDto> &tasks)
         QTableWidgetItem *noItem = new QTableWidgetItem(QString::number(i + 1));
         noItem->setTextAlignment(Qt::AlignCenter);
         ui->keyTicketTable->setItem(row, 0, noItem);
-        // 未登记任务在任务ID列追加标注
+        // 优先显示系统票号，未关联时回退到任务ID hex；未登记任务追加标注
+        const QString baseDisplay = ticketNo.isEmpty() ? taskIdHex.left(16) : ticketNo;
         const QString taskIdDisplay = isOrphan
-                ? taskIdHex.left(16) + QStringLiteral(" [未登记]")
-                : taskIdHex.left(16);
+                ? baseDisplay + QStringLiteral(" [未登记]")
+                : baseDisplay;
         ui->keyTicketTable->setItem(row, 1, new QTableWidgetItem(taskIdDisplay));
         QTableWidgetItem *typeItem = new QTableWidgetItem(QStringLiteral("类型%1").arg(task.type));
         typeItem->setTextAlignment(Qt::AlignCenter);

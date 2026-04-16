@@ -167,8 +167,8 @@ void WorkbenchPage::ensureWebViewInitialized()
 
 void WorkbenchPage::initWebView()
 {
-    // 创建 QWebEngineView
-    m_webView = new QWebEngineView(this);
+    // 创建 QWebEngineView，父对象直接给容器，让 Chromium 进程从初始化起就拿到正确的视口大小
+    m_webView = new QWebEngineView(ui->webViewContainer);
     attachDebugPage(false);
 
     // 将 WebView 添加到容器中
@@ -222,6 +222,248 @@ void WorkbenchPage::initWebView()
             } else {
                 qWarning() << "[WorkbenchPage] 网页加载失败, finalUrl=" << maskedUrl(m_webView->url());
             }
+        }
+
+        // 触摸拖拽滚动 shim：补全 Qt 触摸合成器在 QT_XCB_NO_XI2=1 下丢失的滚动能力
+        // 根因：XI2 关闭后拖拽只发 buttons=1 的 pointermove，不发 pointerdown，
+        //       uni-app scroll-view 等不到 pointerdown 无法识别滚动手势。
+        //       shim 直接监听 buttons=1 的 move，找最近可滚动祖先，操作其 scrollTop。
+        // 安全：buttons=0（hover/接近）时重置状态；真实拖拽后压制 click 防误触；tap 有 pointerdown 负责重置，不干预单击。
+        if (ok && m_webView && m_webView->page()) {
+            static const QString shim = QStringLiteral(R"JS(
+(function(){
+    if (window.__rk_scroll_shim_installed) return 'already';
+    window.__rk_scroll_shim_installed = true;
+
+    var IDLE_MS  = 350; // ms，超过此间隔视为新手势
+    var DRAG_PX  = 10;  // px，累计位移超过此值才算真实拖拽，用于压制手指抬起时的误触 click
+
+    var last      = null;
+    var scroller  = null;
+    var dragStartX = 0, dragStartY = 0;
+    var dragMoved  = false; // 本次手势是否发生了真实位移
+
+    function findScrollable(el) {
+        while (el && el !== document.documentElement) {
+            var oy = getComputedStyle(el).overflowY;
+            if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight) {
+                return el;
+            }
+            el = el.parentElement;
+        }
+        return null;
+    }
+
+    document.addEventListener('pointermove', function(e) {
+        if (e.buttons === 0) {
+            // 手指接近但未按压，重置手势状态
+            last = null; scroller = null;
+            return;
+        }
+
+        // buttons=1：手指按压移动，Qt 合成器不发 pointerdown，直接靠 buttons=1 识别拖拽
+        var now = e.timeStamp;
+
+        if (!last || (now - last.t) > IDLE_MS) {
+            last = { x: e.clientX, y: e.clientY, t: now };
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            scroller = findScrollable(e.target);
+            return;
+        }
+
+        var dy = e.clientY - last.y;
+        var dx = e.clientX - last.x;
+
+        // 累计位移超过阈值：标记为真实拖拽，抬手时压制 click 防止误入详情页
+        if (!dragMoved &&
+            (Math.abs(e.clientY - dragStartY) > DRAG_PX ||
+             Math.abs(e.clientX - dragStartX) > DRAG_PX)) {
+            dragMoved = true;
+        }
+
+        if (scroller) {
+            scroller.scrollTop -= dy;
+            scroller.scrollLeft -= dx;
+        }
+
+        last.x = e.clientX;
+        last.y = e.clientY;
+        last.t = now;
+    }, { capture: true, passive: true });
+
+    // 拖拽结束后抬手会触发 click，压制它防止误触列表项进入详情页
+    document.addEventListener('click', function(e) {
+        if (dragMoved) {
+            e.preventDefault();
+            e.stopPropagation();
+            dragMoved = false;
+        }
+    }, { capture: true }); // 不能 passive，需要 preventDefault
+
+    // tap 有 pointerdown，重置手势状态和拖拽标记
+    document.addEventListener('pointerdown', function() {
+        last = null; scroller = null;
+        dragMoved = false;
+    }, { capture: true, passive: true });
+
+    return 'installed';
+})();
+)JS");
+            m_webView->page()->runJavaScript(shim, [](const QVariant &r){
+                qDebug() << "[WorkbenchPage] 触摸滚动shim注入结果:" << r.toString();
+            });
+        }
+
+        // API 操作反馈 shim：H5 某些 POST 接口返回 {success:true} 但无 msg，导致页面无任何提示。
+        // 拦截 fetch，检测到 success=true 且无 msg 时主动弹 toast。
+        if (ok && m_webView && m_webView->page()) {
+            static const QString feedbackShim = QStringLiteral(R"JS(
+(function(){
+    if (window.__rk_api_feedback_installed) return 'already';
+    window.__rk_api_feedback_installed = true;
+
+    function showToast(msg) {
+        if (typeof uni !== 'undefined' && uni.showToast) {
+            uni.showToast({ title: msg, icon: 'success', duration: 2000 });
+            return;
+        }
+        var div = document.createElement('div');
+        div.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);'
+            + 'background:rgba(0,0,0,0.72);color:#fff;padding:12px 28px;border-radius:8px;'
+            + 'z-index:99999;font-size:16px;pointer-events:none;';
+        div.textContent = msg;
+        document.body.appendChild(div);
+        setTimeout(function(){ div.parentNode && div.parentNode.removeChild(div); }, 2000);
+    }
+
+    var _fetch = window.fetch;
+    window.fetch = function(input, init) {
+        var method = (init && init.method) ? init.method.toUpperCase() : 'GET';
+        return _fetch.apply(this, arguments).then(function(resp) {
+            if (method !== 'POST') return resp;
+            return resp.clone().text().then(function(text) {
+                try {
+                    var json = JSON.parse(text);
+                    if (json.success === true && !json.msg) {
+                        showToast('\u64cd\u4f5c\u6210\u529f');
+                    }
+                } catch(e) {}
+                return resp;
+            }).catch(function() { return resp; });
+        });
+    };
+
+    return 'installed';
+})();
+)JS");
+            m_webView->page()->runJavaScript(feedbackShim, [](const QVariant &r){
+                qDebug() << "[WorkbenchPage] API反馈shim注入结果:" << r.toString();
+            });
+        }
+
+        // 触摸拖拽诊断：仅在 RK3568_WEB_DEBUG=1 时注入，定位 Chromium 是否收到 touch 事件
+        if (ok && workbenchWebDebugEnabled() && m_webView && m_webView->page()) {
+            static const QString diag = QStringLiteral(R"JS(
+(function(){
+    if (window.__rk_touch_diag_installed) return 'already-installed';
+    window.__rk_touch_diag_installed = true;
+
+    var counters = { touchstart:0, touchmove:0, touchend:0,
+                     mousedown:0, mousemove:0, mouseup:0,
+                     pointerdown:0, pointermove:0, pointerup:0 };
+    var dragDumped = false;
+
+    function log(tag, e) {
+        var t = (e.touches && e.touches[0]) || e;
+        var path = (e.composedPath && e.composedPath()[0]) || e.target;
+        var tag2 = path && path.tagName ? path.tagName : '?';
+        console.log('[RK_TOUCH]', tag,
+                    'x=' + (t.clientX|0), 'y=' + (t.clientY|0),
+                    'buttons=' + e.buttons,
+                    'target=' + tag2,
+                    'cancelable=' + e.cancelable,
+                    'defaultPrevented=' + e.defaultPrevented);
+    }
+
+    // 找出第一个可滚动的祖先
+    window.__rk_dump_scrollable = function(x, y){
+        var el = document.elementFromPoint(x, y);
+        var depth = 0;
+        while (el && depth < 20) {
+            var cs = getComputedStyle(el);
+            var oy = cs.overflowY, ox = cs.overflowX;
+            var canScroll = (oy === 'auto' || oy === 'scroll' || ox === 'auto' || ox === 'scroll');
+            console.log('[RK_SCROLL] ancestor#' + depth,
+                        el.tagName + (el.id ? '#' + el.id : '') +
+                        (el.className ? '.' + String(el.className).replace(/\s+/g,'.').slice(0,40) : ''),
+                        'overflowY=' + oy, 'scrollH=' + el.scrollHeight, 'clientH=' + el.clientHeight,
+                        canScroll && el.scrollHeight > el.clientHeight ? '<<< 可滚动' : '');
+            el = el.parentElement;
+            depth++;
+        }
+    };
+
+    ['touchstart','touchmove','touchend',
+     'mousedown','mousemove','mouseup',
+     'pointerdown','pointermove','pointerup'].forEach(function(name){
+        document.addEventListener(name, function(e){
+            counters[name]++;
+            if (counters[name] <= 3 || counters[name] % 30 === 0) {
+                log(name + '#' + counters[name], e);
+            }
+            // [测试A] pointermove 第 10 次时自动扫描祖先链（此时大概率正在拖拽）
+            if (name === 'pointermove' && counters[name] === 10 && !dragDumped) {
+                dragDumped = true;
+                console.log('[RK_SCROLL] === 拖拽自动触发祖先扫描 x=' + (e.clientX|0) + ' y=' + (e.clientY|0) + ' ===');
+                window.__rk_dump_scrollable(e.clientX, e.clientY);
+            }
+        }, { capture: true, passive: true });
+    });
+
+    // [测试B] 页面加载 1 秒后，测试 scrollTop 赋值是否对各容器有效
+    setTimeout(function(){
+        var cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+        // 找屏幕中心点最近的可滚动祖先
+        var el = document.elementFromPoint(cx, cy);
+        var scrollTarget = null;
+        while (el) {
+            var oy = getComputedStyle(el).overflowY;
+            if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight) {
+                scrollTarget = el;
+                break;
+            }
+            el = el.parentElement;
+        }
+
+        var targets = [
+            { name: 'document.scrollingElement', el: document.scrollingElement },
+            { name: 'document.body',             el: document.body },
+            { name: 'center最近可滚动div',        el: scrollTarget }
+        ];
+
+        targets.forEach(function(t){
+            if (!t.el) {
+                console.log('[RK_SCROLL] ' + t.name + ' = null，跳过');
+                return;
+            }
+            var before = t.el.scrollTop;
+            t.el.scrollTop = before + 80;
+            var after = t.el.scrollTop;
+            console.log('[RK_SCROLL] scrollTop测试 ' + t.name +
+                        ' before=' + before + ' after=' + after +
+                        (after !== before ? '  ✓ 有效，shim 可用此节点' : '  ✗ 无效'));
+            setTimeout(function(){ t.el.scrollTop = before; }, 400);
+        });
+    }, 1000);
+
+    console.log('[RK_TOUCH] 诊断v2已安装。拖拽触发祖先扫描(测试A)，1秒后自动scrollTop测试(测试B)。');
+    return 'installed';
+})();
+)JS");
+            m_webView->page()->runJavaScript(diag, [](const QVariant &r){
+                qDebug() << "[WorkbenchPage] 触摸诊断注入结果:" << r.toString();
+            });
         } });
 
 }
@@ -294,6 +536,17 @@ void WorkbenchPage::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
     ensureWebViewInitialized();
+    // 每次切换到工作台时，强制同步 Chromium 视口与容器实际尺寸，防止视口高度算错导致底部按钮被遮挡
+    if (m_webView && ui->webViewContainer) {
+        m_webView->resize(ui->webViewContainer->size());
+    }
+    // 新登录会话：token 变化时重置熔断器，允许重新加载
+    if (m_controller->shouldLoadNow()) {
+        m_reloadAttemptCount = 0;
+        m_renderProcessTerminated = false;
+        loadWorkbench();
+        return;
+    }
     if (m_renderProcessTerminated) {
         qWarning() << "[WorkbenchPage] 页面重新显示时检测到渲染异常，准备重新加载工作台";
         scheduleWorkbenchReload();
@@ -305,19 +558,26 @@ void WorkbenchPage::showEvent(QShowEvent *event)
         return;
     }
 
-    if (m_controller->shouldLoadNow()) {
-        loadWorkbench();
-        return;
-    }
-
     if (m_webView) {
         m_webView->show();
         m_webView->update();
     }
 }
 
+void WorkbenchPage::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    // 窗口几何修正（fitWindowToAvailableGeometry 多次 pass）期间同步 Chromium 视口
+    if (m_webView && ui->webViewContainer) {
+        m_webView->resize(ui->webViewContainer->size());
+    }
+}
+
 void WorkbenchPage::reloadWorkbench()
 {
+    // 业务刷新（回传完成/登录切换等）：重置熔断器，允许全新加载
+    m_reloadAttemptCount = 0;
+    m_renderProcessTerminated = false;
     if (isVisible()) {
         loadWorkbench();
     } else {
