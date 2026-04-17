@@ -385,13 +385,13 @@ QString TicketIngressService::saveBodyToFile(const QByteArray &body) const
     return filePath;
 }
 
-void TicketIngressService::completeDeferredResponse(const QString &taskId,
+bool TicketIngressService::completeDeferredResponse(const QString &taskId,
                                                     bool success,
                                                     const QString &message)
 {
     auto it = m_deferredRequests.find(taskId);
     if (it == m_deferredRequests.end())
-        return;
+        return false;
 
     DeferredRequest req = it.value();
     m_deferredRequests.erase(it);
@@ -402,7 +402,7 @@ void TicketIngressService::completeDeferredResponse(const QString &taskId,
     }
 
     if (!req.socket || req.socket->state() != QAbstractSocket::ConnectedState)
-        return;
+        return false;
 
     const QString msg = message.isEmpty()
             ? (success ? QStringLiteral("传票成功，已确认钥匙中存在任务")
@@ -417,6 +417,7 @@ void TicketIngressService::completeDeferredResponse(const QString &taskId,
 
     sendResponse(req.socket, 200, QByteArrayLiteral("OK"),
                  buildJsonResponseBody(success, msg, taskId, 200));
+    return true;
 }
 
 void TicketIngressService::expireDeferredRequest(const QString &taskId)
