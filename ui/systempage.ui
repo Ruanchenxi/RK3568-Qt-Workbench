@@ -55,6 +55,47 @@
     border-radius: 12px;
 }
 
+#contentStack {
+    background: transparent;
+    border: none;
+}
+
+#basicPage, #advancedPage {
+    background: transparent;
+}
+
+#basicIntroCard {
+    background-color: #F8FAFB;
+    border: 1px solid #E8E4DE;
+    border-radius: 12px;
+}
+
+#basicHintLabel {
+    color: #5D6B7A;
+    font-size: 13px;
+    background: transparent;
+    border: none;
+}
+
+#advancedIntroCard {
+    background-color: #F8FAFB;
+    border: 1px solid #E8E4DE;
+    border-radius: 12px;
+}
+
+#advancedHintLabel {
+    color: #5D6B7A;
+    font-size: 13px;
+    background: transparent;
+    border: none;
+}
+
+#advancedContentHost {
+    background-color: #FFFFFF;
+    border: 1px dashed #C8D1D9;
+    border-radius: 12px;
+}
+
 /* 表单标题 */
 #formTitle {
     color: #2C3E50;
@@ -117,6 +158,12 @@ QComboBox::drop-down {
 
 QComboBox::down-arrow {
     image: none;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #FFFFFF;
+    border: 1px solid #E8E4DE;
+    selection-background-color: #E8F5E9;
 }
 
 /* 刷新按钮 - 点击效果 */
@@ -342,314 +389,479 @@ QComboBox::down-arrow {
        </widget>
       </item>
       <item>
-       <widget class="QScrollArea" name="formScrollArea">
-        <property name="styleSheet">
-         <string notr="true">QScrollArea { border: none; background: transparent; }</string>
+       <widget class="QStackedWidget" name="contentStack">
+        <property name="currentIndex">
+         <number>0</number>
         </property>
-        <property name="widgetResizable">
-         <bool>true</bool>
-        </property>
-        <widget class="QWidget" name="formBody">
-         <property name="geometry">
-          <rect>
-           <x>0</x>
-           <y>0</y>
-           <width>1230</width>
-           <height>442</height>
-          </rect>
+        <widget class="QWidget" name="basicPage">
+         <property name="styleSheet">
+          <string notr="true">background: transparent;</string>
          </property>
-         <layout class="QGridLayout" name="gridLayout">
-          <item row="0" column="0">
-           <layout class="QVBoxLayout" name="verticalLayout">
-            <item>
-             <widget class="QLabel" name="field1Label">
-              <property name="styleSheet">
-               <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
-              </property>
-              <property name="text">
-               <string>首页地址</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QLineEdit" name="homeUrlEdit">
-              <property name="text">
-               <string>http://192.168.1.100:8080</string>
-              </property>
-             </widget>
-            </item>
-           </layout>
-          </item>
-          <item row="0" column="1">
-           <layout class="QVBoxLayout" name="field2Layout">
+         <layout class="QVBoxLayout" name="basicPageLayout">
+          <property name="spacing">
+           <number>0</number>
+          </property>
+          <property name="leftMargin">
+           <number>0</number>
+          </property>
+          <property name="topMargin">
+           <number>0</number>
+          </property>
+          <property name="rightMargin">
+           <number>0</number>
+          </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <widget class="QFrame" name="basicIntroCard">
+           <layout class="QVBoxLayout" name="basicIntroLayout">
             <property name="spacing">
-             <number>8</number>
+             <number>6</number>
+            </property>
+            <property name="leftMargin">
+             <number>16</number>
+            </property>
+            <property name="topMargin">
+             <number>16</number>
+            </property>
+            <property name="rightMargin">
+             <number>16</number>
+            </property>
+            <property name="bottomMargin">
+             <number>16</number>
             </property>
             <item>
-             <widget class="QLabel" name="field2Label">
-              <property name="styleSheet">
-               <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
-              </property>
+             <widget class="QLabel" name="basicHintLabel">
               <property name="text">
-               <string>接口地址</string>
+               <string>基础配置页保留现有业务控件契约，后续 Designer 调整时优先改这里的布局和间距。</string>
               </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QLineEdit" name="apiUrlEdit">
-              <property name="text">
-               <string>http://192.168.1.100:8080/api</string>
+              <property name="wordWrap">
+               <bool>true</bool>
               </property>
              </widget>
             </item>
            </layout>
-          </item>
-          <item row="1" column="0">
-           <layout class="QVBoxLayout" name="field3Layout">
-            <property name="spacing">
-             <number>8</number>
+          </widget>
+         </item>
+         <item>
+          <widget class="QScrollArea" name="formScrollArea">
+            <property name="styleSheet">
+             <string notr="true">QScrollArea { border: none; background: transparent; }</string>
             </property>
-            <item>
-             <widget class="QLabel" name="field3Label">
-              <property name="styleSheet">
-               <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
-              </property>
-              <property name="text">
-               <string>当前站号</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QLineEdit" name="stationIdEdit">
-              <property name="text">
-               <string>001</string>
-              </property>
-             </widget>
-            </item>
-           </layout>
-          </item>
-          <item row="1" column="1">
-           <layout class="QVBoxLayout" name="field4Layout">
-            <property name="spacing">
-             <number>8</number>
+            <property name="widgetResizable">
+             <bool>true</bool>
             </property>
-            <item>
-             <widget class="QLabel" name="field4Label">
-              <property name="styleSheet">
-               <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
-              </property>
-              <property name="text">
-               <string>租户编码</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QLineEdit" name="tenantCodeEdit">
-              <property name="text">
-               <string>TENANT001</string>
-              </property>
-             </widget>
-            </item>
-           </layout>
+            <widget class="QWidget" name="formBody">
+             <property name="geometry">
+              <rect>
+               <x>0</x>
+               <y>0</y>
+               <width>1230</width>
+               <height>436</height>
+              </rect>
+             </property>
+             <layout class="QGridLayout" name="gridLayout">
+              <item row="0" column="0">
+               <layout class="QVBoxLayout" name="verticalLayout">
+                <item>
+                 <widget class="QLabel" name="field1Label">
+                  <property name="styleSheet">
+                   <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
+                  </property>
+                  <property name="text">
+                   <string>首页地址</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLineEdit" name="homeUrlEdit">
+                  <property name="text">
+                   <string>http://192.168.1.100:8080</string>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
+              </item>
+              <item row="0" column="1">
+               <layout class="QVBoxLayout" name="field2Layout">
+                <property name="spacing">
+                 <number>8</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="field2Label">
+                  <property name="styleSheet">
+                   <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
+                  </property>
+                  <property name="text">
+                   <string>接口地址</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLineEdit" name="apiUrlEdit">
+                  <property name="text">
+                   <string>http://192.168.1.100:8080/api</string>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
+              </item>
+              <item row="1" column="0">
+               <layout class="QVBoxLayout" name="field3Layout">
+                <property name="spacing">
+                 <number>8</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="field3Label">
+                  <property name="styleSheet">
+                   <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
+                  </property>
+                  <property name="text">
+                   <string>当前站号</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLineEdit" name="stationIdEdit">
+                  <property name="text">
+                   <string>001</string>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
+              </item>
+              <item row="1" column="1">
+               <layout class="QVBoxLayout" name="field4Layout">
+                <property name="spacing">
+                 <number>8</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="field4Label">
+                  <property name="styleSheet">
+                   <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
+                  </property>
+                  <property name="text">
+                   <string>租户编码</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLineEdit" name="tenantCodeEdit">
+                  <property name="text">
+                   <string>TENANT001</string>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
+              </item>
+              <item row="2" column="0" colspan="2">
+               <widget class="QFrame" name="divider1">
+                <property name="minimumSize">
+                 <size>
+                  <width>0</width>
+                  <height>1</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>16777215</width>
+                  <height>1</height>
+                 </size>
+                </property>
+                <property name="styleSheet">
+                 <string notr="true">background-color: #E8E4DE;</string>
+                </property>
+                <property name="frameShape">
+                 <enum>QFrame::HLine</enum>
+                </property>
+               </widget>
+              </item>
+              <item row="3" column="0" colspan="2">
+               <widget class="QLabel" name="sectionTitle1">
+                <property name="styleSheet">
+                 <string notr="true">color: #2C3E50; font-size: 14px; font-weight: bold; background: transparent; border: none;</string>
+                </property>
+                <property name="text">
+                 <string>串口配置</string>
+                </property>
+               </widget>
+              </item>
+              <item row="4" column="0">
+               <layout class="QVBoxLayout" name="field5Layout">
+                <property name="spacing">
+                 <number>8</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="field5Label">
+                  <property name="styleSheet">
+                   <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
+                  </property>
+                  <property name="text">
+                   <string>钥匙串口</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QComboBox" name="keySerialCombo">
+                  <property name="editable">
+                   <bool>false</bool>
+                  </property>
+                  <item>
+                   <property name="text">
+                    <string>COM1</string>
+                   </property>
+                  </item>
+                  <item>
+                   <property name="text">
+                    <string>COM2</string>
+                   </property>
+                  </item>
+                  <item>
+                   <property name="text">
+                    <string>COM3</string>
+                   </property>
+                  </item>
+                  <item>
+                   <property name="text">
+                    <string>COM4</string>
+                   </property>
+                  </item>
+                 </widget>
+                </item>
+               </layout>
+              </item>
+              <item row="4" column="1">
+               <layout class="QVBoxLayout" name="field6Layout">
+                <property name="spacing">
+                 <number>8</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="field6Label">
+                  <property name="styleSheet">
+                   <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
+                  </property>
+                  <property name="text">
+                   <string>读卡串口</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QComboBox" name="cardSerialCombo">
+                  <property name="styleSheet">
+                   <string notr="true">background-color: rgb(255, 255, 255);</string>
+                  </property>
+                  <property name="editable">
+                   <bool>false</bool>
+                  </property>
+                  <item>
+                   <property name="text">
+                    <string>COM1</string>
+                   </property>
+                  </item>
+                  <item>
+                   <property name="text">
+                    <string>COM2</string>
+                   </property>
+                  </item>
+                  <item>
+                   <property name="text">
+                    <string>COM3</string>
+                   </property>
+                  </item>
+                  <item>
+                   <property name="text">
+                    <string>COM4</string>
+                   </property>
+                  </item>
+                 </widget>
+                </item>
+               </layout>
+              </item>
+              <item row="5" column="0">
+               <layout class="QVBoxLayout" name="field7Layout">
+                <property name="spacing">
+                 <number>8</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="field7Label">
+                  <property name="styleSheet">
+                   <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
+                  </property>
+                  <property name="text">
+                   <string>固定波特率</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QComboBox" name="baudRateCombo">
+                  <item>
+                   <property name="text">
+                    <string>9600</string>
+                   </property>
+                  </item>
+                  <item>
+                   <property name="text">
+                    <string>19200</string>
+                   </property>
+                  </item>
+                  <item>
+                   <property name="text">
+                    <string>38400</string>
+                   </property>
+                  </item>
+                  <item>
+                   <property name="text">
+                    <string>115200</string>
+                   </property>
+                  </item>
+                 </widget>
+                </item>
+               </layout>
+              </item>
+              <item row="5" column="1">
+               <layout class="QVBoxLayout" name="field8Layout">
+                <property name="spacing">
+                 <number>8</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="field8Label">
+                  <property name="styleSheet">
+                   <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
+                  </property>
+                  <property name="text">
+                   <string>固定数据位</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QComboBox" name="dataBitsCombo">
+                  <item>
+                   <property name="text">
+                    <string>7</string>
+                   </property>
+                  </item>
+                  <item>
+                   <property name="text">
+                    <string>8</string>
+                   </property>
+                  </item>
+                 </widget>
+                </item>
+               </layout>
+              </item>
+              <item row="6" column="0" colspan="2">
+               <spacer name="formBottomSpacer">
+                <property name="orientation">
+                 <enum>Qt::Vertical</enum>
+                </property>
+                <property name="sizeHint" stdset="0">
+                 <size>
+                  <width>20</width>
+                  <height>40</height>
+                 </size>
+                </property>
+               </spacer>
+              </item>
+             </layout>
+            </widget>
+           </widget>
           </item>
-          <item row="2" column="0" colspan="2">
-           <widget class="QFrame" name="divider1">
+         </layout>
+        </widget>
+        <widget class="QWidget" name="advancedPage">
+         <property name="styleSheet">
+          <string notr="true">background: transparent;</string>
+         </property>
+         <layout class="QVBoxLayout" name="advancedPageLayout">
+          <property name="spacing">
+           <number>16</number>
+          </property>
+          <property name="leftMargin">
+           <number>24</number>
+          </property>
+          <property name="topMargin">
+           <number>24</number>
+          </property>
+          <property name="rightMargin">
+           <number>24</number>
+          </property>
+          <property name="bottomMargin">
+           <number>24</number>
+          </property>
+          <item>
+           <widget class="QFrame" name="advancedIntroCard">
+            <layout class="QVBoxLayout" name="advancedIntroLayout">
+             <property name="spacing">
+              <number>6</number>
+             </property>
+             <property name="leftMargin">
+              <number>16</number>
+             </property>
+             <property name="topMargin">
+              <number>16</number>
+             </property>
+             <property name="rightMargin">
+              <number>16</number>
+             </property>
+             <property name="bottomMargin">
+              <number>16</number>
+             </property>
+             <item>
+              <widget class="QLabel" name="advancedHintLabel">
+               <property name="text">
+                <string>用户身份采集页只保留静态骨架，后续由 Designer 直接维护表格与操作区。</string>
+               </property>
+               <property name="wordWrap">
+                <bool>true</bool>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item>
+           <widget class="QFrame" name="advancedContentHost">
             <property name="minimumSize">
              <size>
               <width>0</width>
-              <height>1</height>
+              <height>320</height>
              </size>
-            </property>
-            <property name="maximumSize">
-             <size>
-              <width>16777215</width>
-              <height>1</height>
-             </size>
-            </property>
-            <property name="styleSheet">
-             <string notr="true">background-color: #E8E4DE;</string>
             </property>
             <property name="frameShape">
-             <enum>QFrame::HLine</enum>
+             <enum>QFrame::StyledPanel</enum>
             </property>
+            <layout class="QVBoxLayout" name="advancedContentHostLayout">
+             <property name="spacing">
+              <number>0</number>
+             </property>
+             <property name="leftMargin">
+              <number>0</number>
+             </property>
+             <property name="topMargin">
+              <number>0</number>
+             </property>
+             <property name="rightMargin">
+              <number>0</number>
+             </property>
+             <property name="bottomMargin">
+              <number>0</number>
+             </property>
+             <item>
+              <spacer name="advancedContentSpacer">
+               <property name="orientation">
+                <enum>Qt::Vertical</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>20</width>
+                 <height>40</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+            </layout>
            </widget>
-          </item>
-          <item row="3" column="0" colspan="2">
-           <widget class="QLabel" name="sectionTitle1">
-            <property name="styleSheet">
-             <string notr="true">color: #2C3E50; font-size: 14px; font-weight: bold; background: transparent; border: none;</string>
-            </property>
-            <property name="text">
-             <string>串口配置</string>
-            </property>
-           </widget>
-          </item>
-          <item row="4" column="0">
-           <layout class="QVBoxLayout" name="field5Layout">
-            <property name="spacing">
-             <number>8</number>
-            </property>
-            <item>
-             <widget class="QLabel" name="field5Label">
-              <property name="styleSheet">
-               <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
-              </property>
-              <property name="text">
-               <string>钥匙串口</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QComboBox" name="keySerialCombo">
-              <item>
-               <property name="text">
-                <string>COM1</string>
-               </property>
-              </item>
-              <item>
-               <property name="text">
-                <string>COM2</string>
-               </property>
-              </item>
-              <item>
-               <property name="text">
-                <string>COM3</string>
-               </property>
-              </item>
-              <item>
-               <property name="text">
-                <string>COM4</string>
-               </property>
-              </item>
-             </widget>
-            </item>
-           </layout>
-          </item>
-          <item row="4" column="1">
-           <layout class="QVBoxLayout" name="field6Layout">
-            <property name="spacing">
-             <number>8</number>
-            </property>
-            <item>
-             <widget class="QLabel" name="field6Label">
-              <property name="styleSheet">
-               <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
-              </property>
-              <property name="text">
-               <string>读卡串口</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QComboBox" name="cardSerialCombo">
-              <item>
-               <property name="text">
-                <string>COM1</string>
-               </property>
-              </item>
-              <item>
-               <property name="text">
-                <string>COM2</string>
-               </property>
-              </item>
-              <item>
-               <property name="text">
-                <string>COM3</string>
-               </property>
-              </item>
-              <item>
-               <property name="text">
-                <string>COM4</string>
-               </property>
-              </item>
-             </widget>
-            </item>
-           </layout>
-          </item>
-          <item row="5" column="0">
-           <layout class="QVBoxLayout" name="field7Layout">
-            <property name="spacing">
-             <number>8</number>
-            </property>
-            <item>
-             <widget class="QLabel" name="field7Label">
-              <property name="styleSheet">
-               <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
-              </property>
-              <property name="text">
-               <string>波特率</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QComboBox" name="baudRateCombo">
-              <item>
-               <property name="text">
-                <string>9600</string>
-               </property>
-              </item>
-              <item>
-               <property name="text">
-                <string>19200</string>
-               </property>
-              </item>
-              <item>
-               <property name="text">
-                <string>38400</string>
-               </property>
-              </item>
-              <item>
-               <property name="text">
-                <string>115200</string>
-               </property>
-              </item>
-             </widget>
-            </item>
-           </layout>
-          </item>
-          <item row="5" column="1">
-           <layout class="QVBoxLayout" name="field8Layout">
-            <property name="spacing">
-             <number>8</number>
-            </property>
-            <item>
-             <widget class="QLabel" name="field8Label">
-              <property name="styleSheet">
-               <string notr="true">color: #5D6B7A; font-size: 13px; background: transparent; border: none;</string>
-              </property>
-              <property name="text">
-               <string>数据位</string>
-              </property>
-             </widget>
-            </item>
-            <item>
-             <widget class="QComboBox" name="dataBitsCombo">
-              <item>
-               <property name="text">
-                <string>7</string>
-               </property>
-              </item>
-              <item>
-               <property name="text">
-                <string>8</string>
-               </property>
-              </item>
-             </widget>
-            </item>
-           </layout>
-          </item>
-          <item row="6" column="0" colspan="2">
-           <spacer name="formBottomSpacer">
-            <property name="orientation">
-             <enum>Qt::Vertical</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>20</width>
-              <height>40</height>
-             </size>
-            </property>
-           </spacer>
           </item>
          </layout>
         </widget>

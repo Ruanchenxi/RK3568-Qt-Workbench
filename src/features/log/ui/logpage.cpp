@@ -1,122 +1,93 @@
 /**
  * @file logpage.cpp
- * @brief 服务日志页面（仅负责日志渲染）
+ * @brief 服务日志页面（静态骨架在 .ui，动态逻辑在 .cpp）
  */
 
 #include "logpage.h"
 #include "ui_logpage.h"
 
 #include "features/log/application/LogController.h"
-#include "core/ConfigManager.h"
+#include "shared/contracts/IProcessService.h"
 
-#include <QPlainTextEdit>
 #include <QShowEvent>
+#include <QPlainTextEdit>
 #include <QTextCursor>
+#include <QTextOption>
 
-LogPage::LogPage(QWidget *parent)
+namespace
+{
+void scrollToEnd(QPlainTextEdit *logDisplay)
+{
+    if (!logDisplay) {
+        return;
+    }
+
+    QTextCursor cursor = logDisplay->textCursor();
+    cursor.movePosition(QTextCursor::End);
+    logDisplay->setTextCursor(cursor);
+}
+}
+
+LogPage::LogPage(IProcessService *processService, QWidget *parent)
     : QWidget(parent),
       ui(new Ui::LogPage),
-      m_logDisplay(nullptr),
-      m_controller(new LogController(nullptr, this)),
-      m_started(false),
-      m_visibleOnce(false)
+      m_controller(new LogController(processService, this))
 {
     ui->setupUi(this);
-    initServiceLog();
+    ui->logDisplay->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+    ui->logDisplay->setWordWrapMode(QTextOption::WrapAnywhere);
 
     connect(m_controller, &LogController::logGenerated,
             this, &LogPage::onServiceLogGenerated);
-
-    bool startImmediately = true;
-#ifdef Q_OS_LINUX
-    const QString startMode = ConfigManager::instance()
-            ->value("service/startMode", QStringLiteral("remote"))
-            .toString()
-            .trimmed()
-            .toLower();
-    if (startMode == QLatin1String("remote")) {
-        startImmediately = false;
-    }
-#endif
-    if (startImmediately) {
-        ensureStarted();
-    }
 }
 
 LogPage::~LogPage()
 {
-    if (m_controller && m_started)
-    {
-        m_controller->stop();
-    }
     delete ui;
 }
 
 void LogPage::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
-    m_visibleOnce = true;
-    ensureStarted();
-    flushPendingLogs();
+    flushBufferedLogs();
 }
 
-void LogPage::ensureStarted()
+void LogPage::flushBufferedLogs()
 {
-    if (m_started || !m_controller) {
+    if (!ui || !ui->logDisplay || !isVisible() || m_pendingLogs.isEmpty()) {
         return;
     }
 
-    m_controller->start();
-    m_started = true;
-}
-
-void LogPage::flushPendingLogs()
-{
-    if (!m_logDisplay || !isVisible() || m_pendingLogs.isEmpty()) {
-        return;
-    }
-
-    m_logDisplay->setUpdatesEnabled(false);
-    for (const QString &text : qAsConst(m_pendingLogs)) {
-        m_logDisplay->appendPlainText(text);
-    }
-    m_logDisplay->setUpdatesEnabled(true);
+    // 合并为一次 appendPlainText，避免逐行追加在 ARM 上卡顿
+    const QString batch = m_pendingLogs.join('\n');
     m_pendingLogs.clear();
 
-    QTextCursor cursor = m_logDisplay->textCursor();
-    cursor.movePosition(QTextCursor::End);
-    m_logDisplay->setTextCursor(cursor);
-}
-
-void LogPage::initServiceLog()
-{
-    m_logDisplay = ui->logDisplay;
-    if (!m_logDisplay) {
-        return;
-    }
-
-    m_logDisplay->setMaximumBlockCount(5000);
+    ui->logDisplay->appendPlainText(batch);
+    scrollToEnd(ui->logDisplay);
 }
 
 void LogPage::onServiceLogGenerated(const QString &text)
 {
-    appendLog(text);
+    appendOrBufferLog(text);
 }
 
-void LogPage::appendLog(const QString &text)
+void LogPage::appendOrBufferLog(const QString &text)
 {
-    if (!m_logDisplay)
+    if (!ui || !ui->logDisplay)
     {
         return;
     }
 
     if (!isVisible()) {
         m_pendingLogs.append(text);
+        // 限制缓冲区，只保留最近 300 条，防止长时间隐藏后 flush 卡顿
+        constexpr int kMaxPending = 300;
+        if (m_pendingLogs.size() > kMaxPending) {
+            m_pendingLogs.removeFirst();
+        }
         return;
     }
 
-    m_logDisplay->appendPlainText(text);
-    QTextCursor cursor = m_logDisplay->textCursor();
-    cursor.movePosition(QTextCursor::End);
-    m_logDisplay->setTextCursor(cursor);
+    ui->logDisplay->appendPlainText(text);
+    scrollToEnd(ui->logDisplay);
 }
