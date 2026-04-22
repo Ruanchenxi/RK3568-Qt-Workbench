@@ -22,6 +22,7 @@ public:
 
     virtual void login(const QString &userName, const QString &password, const QString &tenantId = "000000") = 0;
     virtual void loginByCard(const QString &cardNo, const QString &tenantId = "000000") = 0;
+    virtual void loginByFingerprint(const QByteArray &templateData, const QString &tenantId = "000000") = 0;
     virtual QJsonObject userInfo() const = 0;
     virtual QString accessToken() const = 0;
     virtual QString refreshToken() const = 0;

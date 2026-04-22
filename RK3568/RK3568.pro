@@ -66,3 +66,5 @@ RESOURCES += \
         resources/branding.qrc \
         resources/keyboard_dict.qrc
 
+linux: LIBS += -ldl
+

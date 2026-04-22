@@ -716,6 +716,8 @@ void KeyManageController::onDeleteClicked()
             && (mappedTicket.returnState.isEmpty() || mappedTicket.returnState == QLatin1String("idle"));
     m_pendingDeleteSessionId = m_keySessionId;
     m_pendingDeleteRetryCount = 0;
+    m_pendingDeleteReconcileCount = 0;
+    m_pendingDeleteInFlightStallCount = 0;
     m_pendingDeleteOrigin = DeleteOrigin::ManualDelete;
 
     CommandRequest req;
@@ -926,6 +928,8 @@ void KeyManageController::onClearOrphanKeyTaskClicked()
     m_pendingDeleteAllowsRetransfer = false;
     m_pendingDeleteSessionId = m_keySessionId;
     m_pendingDeleteRetryCount = 0;
+    m_pendingDeleteReconcileCount = 0;
+    m_pendingDeleteInFlightStallCount = 0;
     m_pendingDeleteOrigin = DeleteOrigin::AdminClearOrphan;
 
     CommandRequest req;
@@ -957,6 +961,7 @@ bool KeyManageController::isSelectedSystemTicketForceClearable() const
     // 2. TerminationFailed — DEL 已确认成功，通知工作台失败，钥匙侧已干净
     // 3. return-delete-failed — 回传删除验证达上限，链路已终止（钥匙任务可能仍存在）
     // 4. manual-required — 回传上传失败或缺少 raw ID，链路已终止（钥匙任务可能仍存在）
+    // 5. return-delete-verifying — 对账死循环（DEL超时+钥匙拔插导致pendingDelete永不清除）
     const bool isTransferFailed =
             (ticket.transferState == QLatin1String("failed"));
     const bool isTerminationFailed =
@@ -965,7 +970,9 @@ bool KeyManageController::isSelectedSystemTicketForceClearable() const
             (ticket.returnState == QLatin1String("return-delete-failed"));
     const bool isManualRequired =
             (ticket.returnState == QLatin1String("manual-required"));
-    return isTransferFailed || isTerminationFailed || isReturnDeleteFailed || isManualRequired;
+    const bool isDeleteVerifyingStuck =
+            (ticket.returnState == QLatin1String("return-delete-verifying"));
+    return isTransferFailed || isTerminationFailed || isReturnDeleteFailed || isManualRequired || isDeleteVerifyingStuck;
 }
 
 void KeyManageController::onForceCleanFailedTicketClicked()
@@ -994,8 +1001,18 @@ void KeyManageController::onForceCleanFailedTicketClicked()
     // in-flight 守卫：避免在业务链路进行中删除记录导致状态悬空
     const QString taskId = m_selectedSystemTicketId;
     if (taskId == m_pendingDeletedSystemTicketId) {
-        emit statusMessage(QStringLiteral("当前有删除操作在途，请稍后再试"));
-        return;
+        // 强制清理：先清除 pendingDelete 死锁，再执行 removeTicket
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] onForceCleanFailedTicketClicked: clearing pendingDelete deadlock for taskId=%1")
+                      .arg(taskId);
+        m_pendingDeletedSystemTicketId.clear();
+        m_pendingDeletedKeyTaskRaw.clear();
+        m_pendingDeleteAllowsRetransfer = false;
+        m_pendingDeleteSessionId = 0;
+        m_pendingDeleteRetryCount = 0;
+        m_pendingDeleteReconcileCount = 0;
+        m_pendingDeleteInFlightStallCount = 0;
+        m_pendingDeleteOrigin = DeleteOrigin::None;
     }
     if (taskId == m_activeReturnTaskId || taskId == m_pendingReturnHandshakeTaskId) {
         emit statusMessage(QStringLiteral("当前有回传操作在途，无法同时执行强制清理"));
@@ -1139,6 +1156,8 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
                     m_pendingDeleteAllowsRetransfer = false;
                     m_pendingDeleteSessionId = 0;
                     m_pendingDeleteRetryCount = 0;
+                    m_pendingDeleteReconcileCount = 0;
+                    m_pendingDeleteInFlightStallCount = 0;
                     m_pendingDeleteOrigin = DeleteOrigin::None;
                     emit statusMessage(QStringLiteral("未登记任务清理未完成（DEL 超时），请确认钥匙状态后再次点击清除：%1").arg(taskId));
                 } else {
@@ -1258,6 +1277,8 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
                     m_pendingDeleteAllowsRetransfer = false;
                     m_pendingDeleteSessionId = 0;
                     m_pendingDeleteRetryCount = 0;
+                    m_pendingDeleteReconcileCount = 0;
+                    m_pendingDeleteInFlightStallCount = 0;
                     m_pendingDeleteOrigin = DeleteOrigin::None;
                     emit statusMessage(QStringLiteral("未登记任务清理未完成（DEL 被拒绝），请确认钥匙状态后再次点击清除：%1").arg(taskId));
                 } else {
@@ -1424,7 +1445,8 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
         QJsonArray items;
         const QVariantList rawItems = event.data.value("items").toList();
         for (const QVariant &itemVar : rawItems) {
-            items.append(QJsonObject::fromVariantMap(itemVar.toMap()));
+            const QVariantMap itemMap = itemVar.toMap();
+            items.append(QJsonObject::fromVariantMap(itemMap));
         }
         payload.insert("taskLogItems", items);
 
@@ -1665,6 +1687,8 @@ void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
                     m_pendingDeleteAllowsRetransfer = false;
                     m_pendingDeleteSessionId = 0;
                     m_pendingDeleteRetryCount = 0;
+                    m_pendingDeleteReconcileCount = 0;
+                    m_pendingDeleteInFlightStallCount = 0;
                     m_pendingDeleteOrigin = DeleteOrigin::None;
                     emit statusMessage(QStringLiteral("未登记任务清理中断（钥匙已移除），请重新放回钥匙后再次点击清除：%1").arg(taskId));
                 } else {
@@ -1997,6 +2021,8 @@ void KeyManageController::markReturnDeletePending(const QString &taskId, const Q
     m_pendingDeleteAllowsRetransfer = false;
     m_pendingDeleteSessionId = m_activeReturnSessionId;
     m_pendingDeleteRetryCount = 0;
+    m_pendingDeleteReconcileCount = 0;
+    m_pendingDeleteInFlightStallCount = 0;
     m_pendingDeleteOrigin = DeleteOrigin::AutoReturnCleanup;
 }
 
@@ -2006,11 +2032,35 @@ void KeyManageController::finalizePendingReturnDelete(const QList<KeyTaskDto> &t
         return;
     }
     if (m_pendingDeleteSessionId > 0 && !isCurrentKeySession(m_pendingDeleteSessionId)) {
+        // D3 修复：stale session 说明钥匙已断重连，session 单调递增不可能恢复。
+        // 如果回传数据已上传成功（HTTP 已安全），DEL 仅清理钥匙端，直接视为完成。
+        // 否则也必须清除 pending 状态，避免死锁。
         qInfo().noquote()
-                << QStringLiteral("[KeyManageController] finalizePendingReturnDelete skipped stale session pendingDeleteSession=%1 currentSession=%2 taskId=%3")
+                << QStringLiteral("[KeyManageController] finalizePendingReturnDelete stale session pendingDeleteSession=%1 currentSession=%2 taskId=%3 — clearing pending to avoid deadlock")
                       .arg(QString::number(m_pendingDeleteSessionId),
                            QString::number(m_keySessionId),
                            m_pendingDeletedSystemTicketId.isEmpty() ? QStringLiteral("<none>") : m_pendingDeletedSystemTicketId);
+        const QString taskId = m_pendingDeletedSystemTicketId;
+        const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
+        const bool uploadDone = ticket.valid && (ticket.returnState == QLatin1String("return-delete-verifying")
+                                                 || ticket.returnState == QLatin1String("return-upload-success")
+                                                 || ticket.returnState == QLatin1String("return-delete-pending"));
+        m_pendingDeletedSystemTicketId.clear();
+        m_pendingDeletedKeyTaskRaw.clear();
+        m_pendingDeleteAllowsRetransfer = false;
+        m_pendingDeleteSessionId = 0;
+        m_pendingDeleteRetryCount = 0;
+        m_pendingDeleteReconcileCount = 0;
+        m_pendingDeleteInFlightStallCount = 0;
+        m_pendingDeleteOrigin = DeleteOrigin::None;
+        if (uploadDone && ticket.valid) {
+            if (!ticket.jsonPath.isEmpty()) QFile::remove(ticket.jsonPath);
+            m_ticketStore->removeTicket(taskId);
+            emit statusMessage(QStringLiteral("会话已变更，回传数据已上传，本地记录已清除：%1").arg(taskId));
+            emit workbenchRefreshRequested();
+        } else {
+            emit statusMessage(QStringLiteral("会话已变更，删除验证已中止：%1").arg(taskId));
+        }
         return;
     }
 
@@ -2033,16 +2083,61 @@ void KeyManageController::finalizePendingReturnDelete(const QList<KeyTaskDto> &t
             m_pendingDeleteAllowsRetransfer = false;
             m_pendingDeleteSessionId = 0;
             m_pendingDeleteRetryCount = 0;
+            m_pendingDeleteReconcileCount = 0;
+            m_pendingDeleteInFlightStallCount = 0;
             m_pendingDeleteOrigin = DeleteOrigin::None;
             emit statusMessage(QStringLiteral("未登记任务清理中断（会话已中断），孤儿记录保留待下次 Q_TASK 确认：%1").arg(taskId));
+            return;
+        }
+        // D1/D2 修复：连续 N 次 Q_TASK 都确认新钥匙里没有该任务 → 视为删除完成
+        ++m_pendingDeleteReconcileCount;
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] finalizePendingReturnDelete sessionUnknown && !stillExists reconcileCount=%1/3 taskId=%2")
+                      .arg(m_pendingDeleteReconcileCount)
+                      .arg(m_pendingDeletedSystemTicketId);
+        if (m_pendingDeleteReconcileCount >= 3) {
+            // 连续 3 轮 Q_TASK 在新钥匙中都未发现该任务，视为删除效果已达成
+            const QString taskId = m_pendingDeletedSystemTicketId;
+            const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
+            const bool uploadDone = ticket.valid && (ticket.returnState == QLatin1String("return-delete-verifying")
+                                                     || ticket.returnState == QLatin1String("return-upload-success")
+                                                     || ticket.returnState == QLatin1String("return-delete-pending"));
+            m_pendingDeletedSystemTicketId.clear();
+            m_pendingDeletedKeyTaskRaw.clear();
+            m_pendingDeleteAllowsRetransfer = false;
+            m_pendingDeleteSessionId = 0;
+            m_pendingDeleteRetryCount = 0;
+            m_pendingDeleteReconcileCount = 0;
+            m_pendingDeleteInFlightStallCount = 0;
+            m_pendingDeleteOrigin = DeleteOrigin::None;
+            if (uploadDone && ticket.valid) {
+                if (!ticket.jsonPath.isEmpty()) QFile::remove(ticket.jsonPath);
+                m_ticketStore->removeTicket(taskId);
+                emit statusMessage(QStringLiteral("对账完成（连续3次未观测到任务），回传已上传，本地记录已清除：%1").arg(taskId));
+                emit workbenchRefreshRequested();
+            } else if (m_pendingDeleteOrigin == DeleteOrigin::ManualDelete) {
+                m_ticketStore->markKeyTaskDeleted(taskId);
+                emit statusMessage(QStringLiteral("手工删除对账完成（连续3次未观测到任务）：%1").arg(taskId));
+            } else {
+                emit statusMessage(QStringLiteral("对账完成（连续3次未观测到任务），删除已确认：%1").arg(taskId));
+            }
             return;
         }
         if (m_pendingDeleteOrigin != DeleteOrigin::ManualDelete) {
             m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
                                              QStringLiteral("return-delete-verifying"),
-                                             QStringLiteral("删除链路曾被钥匙移除打断，当前钥匙未观测到该任务，继续等待原钥匙回位后再确认"));
+                                             QStringLiteral("删除链路曾被钥匙移除打断，对账中(%1/3)：当前钥匙未观测到该任务").arg(m_pendingDeleteReconcileCount));
         }
-        emit statusMessage(QStringLiteral("删除链路曾被钥匙移除打断，当前未确认到原任务，继续等待原钥匙回位"));
+        emit statusMessage(QStringLiteral("对账中(%1/3)：当前未确认到原任务").arg(m_pendingDeleteReconcileCount));
+        // 主动调度下一次 Q_TASK，否则没有触发源导致计数永远停在当前值
+        QTimer::singleShot(2000, this, [this]() {
+            if (m_pendingDeletedSystemTicketId.isEmpty()) return; // 已被其他路径清除
+            const KeySessionSnapshot snap = m_session->snapshot();
+            if (!snap.connected || !snap.keyPresent || !snap.keyStable || !snap.sessionReady) return;
+            if (m_autoQuerySessionId == m_keySessionId && m_keySessionId > 0) return; // 已有查询在途
+            m_autoQuerySessionId = m_keySessionId;
+            onQueryTasksClicked();
+        });
         return;
     }
     if (stillExists || sessionUnknown) {
@@ -2130,6 +2225,8 @@ void KeyManageController::finalizePendingReturnDelete(const QList<KeyTaskDto> &t
         m_pendingDeleteAllowsRetransfer = false;
         m_pendingDeleteSessionId = 0;
         m_pendingDeleteRetryCount = 0;
+        m_pendingDeleteReconcileCount = 0;
+        m_pendingDeleteInFlightStallCount = 0;
         m_pendingDeleteOrigin = DeleteOrigin::None;
     } else {
         if (m_pendingDeleteOrigin != DeleteOrigin::ManualDelete
@@ -2187,6 +2284,15 @@ bool KeyManageController::retryPendingReturnDelete(const QString &reason)
         return false;
     }
     if (snapshot.commandInFlight || snapshot.recoveryWindowActive) {
+        // R1 修复：commandInFlight 持续卡住时也要有上限脱出
+        ++m_pendingDeleteInFlightStallCount;
+        if (m_pendingDeleteInFlightStallCount >= 10) {
+            qWarning().noquote()
+                    << QStringLiteral("[KeyManageController] retryPendingReturnDelete: commandInFlight stall limit reached (%1), forcing retry count to limit taskId=%2")
+                          .arg(m_pendingDeleteInFlightStallCount)
+                          .arg(m_pendingDeletedSystemTicketId);
+            m_pendingDeleteRetryCount = 3; // 触发下次进入时的 retryCount>=3 终止分支
+        }
         if (!isManualDelete && !isOrphanClear) {
             m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
                                              QStringLiteral("return-delete-verifying"),
@@ -2222,6 +2328,8 @@ bool KeyManageController::retryPendingReturnDelete(const QString &reason)
         m_pendingDeleteAllowsRetransfer = false;
         m_pendingDeleteSessionId = 0;
         m_pendingDeleteRetryCount = 0;
+        m_pendingDeleteReconcileCount = 0;
+        m_pendingDeleteInFlightStallCount = 0;
         m_pendingDeleteOrigin = DeleteOrigin::None;
         return false;
     }
@@ -2588,11 +2696,28 @@ void KeyManageController::finalizePendingCancelDelete(const QList<KeyTaskDto> &t
         return;
     }
     if (m_pendingCancelSessionId > 0 && !isCurrentKeySession(m_pendingCancelSessionId)) {
+        // C1 修复：stale session 时清除 pending 状态避免死锁，而非空 return
         qInfo().noquote()
-                << QStringLiteral("[KeyManageController] finalizePendingCancelDelete skipped stale session pendingCancelSession=%1 currentSession=%2 taskId=%3")
+                << QStringLiteral("[KeyManageController] finalizePendingCancelDelete stale session pendingCancelSession=%1 currentSession=%2 taskId=%3 — clearing pending to avoid deadlock")
                       .arg(QString::number(m_pendingCancelSessionId),
                            QString::number(m_keySessionId),
                            m_pendingCancelSystemTicketId);
+        const QString taskId = m_pendingCancelSystemTicketId;
+        const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
+        m_pendingCancelSystemTicketId.clear();
+        m_pendingCancelKeyTaskRaw.clear();
+        m_pendingCancelSessionId = 0;
+        if (ticket.valid) {
+            m_ticketStore->updateCancelTracking(taskId,
+                                                QStringLiteral("cancel-pending"),
+                                                QStringLiteral("workbench-http"),
+                                                ticket.residentSlotId.isEmpty() ? QStringLiteral("slot-1") : ticket.residentSlotId,
+                                                ticket.residentKeyId,
+                                                ticket.cancelRequestedAt.isValid() ? ticket.cancelRequestedAt : QDateTime::currentDateTime(),
+                                                true,
+                                                QStringLiteral("会话已变更，撤销删除验证已中断，等待下一次安全窗口继续清理"));
+        }
+        schedulePendingCancelReconcile(QStringLiteral("stale-session-cleared"), 1500);
         return;
     }
 
@@ -2678,9 +2803,12 @@ void KeyManageController::reconcileSystemTicketsFromKeyTasks(const QList<KeyTask
         confirmedTaskIds.append(taskId);
 
         // Q_TASK 证实此任务在钥匙中 → 回包给挂起的 socket（不管当前 transferState 是否已是 success）
-        m_ticketIngress->completeDeferredResponse(
-            taskId, true,
-            QStringLiteral("传票成功，已确认任务存在于钥匙中"));
+        if (m_ticketIngress->completeDeferredResponse(
+                taskId, true,
+                QStringLiteral("传票成功，已确认任务存在于钥匙中"))) {
+            // 传票确认回包成功，刷新工作台页面以显示最新状态
+            emit workbenchRefreshRequested();
+        }
 
         const bool needsReconcile = ticket.transferState == QLatin1String("received")
                 || ticket.transferState == QLatin1String("auto-pending")
@@ -2791,6 +2919,8 @@ void KeyManageController::tryAutoCleanupReturnedTicket(const QList<KeyTaskDto> &
         m_pendingDeleteAllowsRetransfer = false;
         m_pendingDeleteSessionId = m_keySessionId;
         m_pendingDeleteRetryCount = 0;
+        m_pendingDeleteReconcileCount = 0;
+        m_pendingDeleteInFlightStallCount = 0;
         m_pendingDeleteOrigin = DeleteOrigin::AutoReturnCleanup;
 
         CommandRequest req;
@@ -2855,32 +2985,66 @@ void KeyManageController::tryStartTicketReturn(const QString &taskId, bool autom
 
 void KeyManageController::tryAutoReturnCompletedTicket(const QList<KeyTaskDto> &tasks)
 {
-    if (!activeReturnChainTaskId().isEmpty()) {
+    const QString busyChain = activeReturnChainTaskId();
+    if (!busyChain.isEmpty()) {
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] tryAutoReturnCompletedTicket SKIPPED busyChain=%1 activeReturn=%2 pendingHandshake=%3 pendingDelete=%4")
+                      .arg(busyChain,
+                           m_activeReturnTaskId.isEmpty() ? QStringLiteral("<none>") : m_activeReturnTaskId,
+                           m_pendingReturnHandshakeTaskId.isEmpty() ? QStringLiteral("<none>") : m_pendingReturnHandshakeTaskId,
+                           m_pendingDeletedSystemTicketId.isEmpty() ? QStringLiteral("<none>") : m_pendingDeletedSystemTicketId);
         return;
     }
     if (!m_ticketReturnClient->isConfigured()) {
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] tryAutoReturnCompletedTicket SKIPPED returnClient not configured");
         return;
     }
 
+    qInfo().noquote()
+            << QStringLiteral("[KeyManageController] tryAutoReturnCompletedTicket ENTER taskCount=%1 m_lastQueryTasksAtMs=%2")
+                  .arg(QString::number(tasks.size()), QString::number(m_lastQueryTasksAtMs));
+
     for (const KeyTaskDto &task : tasks) {
+        const QString taskId = taskIdFromRaw(task.taskId);
         if (task.status != 0x02) {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] tryAutoReturnCompletedTicket SKIP taskId=%1 hwStatus=0x%2 (not 0x02)")
+                          .arg(taskId,
+                               QString::number(task.status, 16).toUpper().rightJustified(2, QLatin1Char('0')));
             continue;
         }
 
-        const QString taskId = taskIdFromRaw(task.taskId);
         const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
         if (!ticket.valid) {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] tryAutoReturnCompletedTicket REJECT taskId=%1 reason=ticket_not_valid_in_store")
+                          .arg(taskId);
             continue;
         }
         // 已受理撤销的票不参与自动回传
         if (!ticket.cancelState.isEmpty()
                 && ticket.cancelState != QLatin1String("none")) {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] tryAutoReturnCompletedTicket REJECT taskId=%1 reason=cancelState=%2")
+                          .arg(taskId, ticket.cancelState);
             continue;
         }
         if (!isKeyPresenceFresh(ticket)) {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] tryAutoReturnCompletedTicket REJECT taskId=%1 reason=keyPresenceNotFresh transferState=%2 keyConfirmedAtMs=%3 m_lastQueryTasksAtMs=%4 delta=%5")
+                          .arg(taskId,
+                               ticket.transferState,
+                               QString::number(ticket.keyConfirmedAtMs),
+                               QString::number(m_lastQueryTasksAtMs),
+                               QString::number(m_lastQueryTasksAtMs - ticket.keyConfirmedAtMs));
             continue;
         }
         if (shouldSkipAutoReturnForState(ticket.returnState)) {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] tryAutoReturnCompletedTicket REJECT taskId=%1 reason=returnStateSkipped returnState=%2")
+                          .arg(taskId,
+                               ticket.returnState.isEmpty() ? QStringLiteral("idle") : ticket.returnState);
             continue;
         }
 
@@ -2892,6 +3056,9 @@ void KeyManageController::tryAutoReturnCompletedTicket(const QList<KeyTaskDto> &
         tryStartTicketReturn(taskId, true);
         return;
     }
+    qInfo().noquote()
+            << QStringLiteral("[KeyManageController] tryAutoReturnCompletedTicket NO_CANDIDATE taskCount=%1")
+                  .arg(QString::number(tasks.size()));
 }
 
 bool KeyManageController::canStartTicketReturn(const QString &taskId,
@@ -2954,7 +3121,8 @@ bool KeyManageController::canStartTicketReturn(const QString &taskId,
         return false;
     }
     if (keyTaskStatus != 0x02) {
-        setBlockedReason(QStringLiteral("该系统票在钥匙中的状态未完成，当前任务完成后才允许回传"));
+        setBlockedReason(QStringLiteral("该系统票在钥匙中的状态未完成（hwStatus=0x%1），当前任务完成后才允许回传")
+                         .arg(QString::number(keyTaskStatus, 16).toUpper().rightJustified(2, QLatin1Char('0'))));
         return false;
     }
 
@@ -3627,6 +3795,8 @@ void KeyManageController::invalidateCurrentKeySession(const QString &reason)
     // 会话失效时清空钥匙任务缓存，防止陈旧数据影响下次 success 状态判断
     m_lastKeyTasks.clear();
     m_pendingDeleteRetryCount = 0;
+    m_pendingDeleteReconcileCount = 0;
+    m_pendingDeleteInFlightStallCount = 0;
 
     emit statusMessage(
             reason.trimmed().isEmpty()

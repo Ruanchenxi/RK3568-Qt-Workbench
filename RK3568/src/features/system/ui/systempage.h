@@ -17,6 +17,7 @@
 
 class QLineEdit;
 class CardSerialSource;
+class FingerprintSource;
 namespace Ui
 {
     class SystemPage;
@@ -29,6 +30,9 @@ class SystemPage : public QWidget
 public:
     explicit SystemPage(QWidget *parent = nullptr);
     ~SystemPage();
+
+protected:
+    void showEvent(QShowEvent *event) override;
 
 signals:
     void cardReaderStatusChanged(int status, const QString &message);
@@ -53,6 +57,13 @@ private slots:
     void onCardNoUpdated(const QString &userId, const QString &cardNo);
     void onCardNoUpdateFailed(const QString &message);
     void onCardNoUpdateStateChanged(bool inProgress);
+    void onCollectFingerprintClicked();
+    void onDeleteFingerprintClicked();
+    void onFingerprintCapturedForEnroll(const FingerprintCredential &credential);
+    void onFingerprintSourceError(const QString &message);
+    void onFingerprintUpdated(const QString &userId, const QString &fingerprint);
+    void onFingerprintUpdateFailed(const QString &message);
+    void onFingerprintUpdateStateChanged(bool inProgress);
 
 private:
     void setupConnections();
@@ -64,6 +75,7 @@ private:
     void loadUserList();              // 加载用户列表
     void repopulateUserTable();
     void resetCardCollectionState();
+    void resetFingerprintCollectionState();
     void resetIdentityViewForSessionChange();
     void updateCollectButtonState();
     void updateIdentityPermissionState();
@@ -76,6 +88,7 @@ private:
     Ui::SystemPage *ui;
     SystemController *m_controller;
     CardSerialSource *m_cardSource;
+    FingerprintSource *m_fingerprintSource;
     QPointer<QLineEdit> m_keyboardTarget;
     bool m_keyboardVisible;
     int m_keyboardHeight;
@@ -87,6 +100,8 @@ private:
     bool m_identityReadOnlyPromptShown;
     bool m_clearingCard;
     bool m_collectingCard;
+    bool m_collectingFingerprint;
+    bool m_clearingFingerprint;
     QString m_collectingUserId;
     QString m_collectingDisplayName;
     QList<SystemIdentityUserDto> m_users;

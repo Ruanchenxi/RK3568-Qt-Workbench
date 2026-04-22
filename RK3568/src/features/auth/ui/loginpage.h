@@ -23,6 +23,7 @@ namespace Ui
 }
 
 class CardSerialSource;
+class FingerprintSource;
 class QNetworkAccessManager;
 class QNetworkReply;
 
@@ -54,6 +55,8 @@ private slots:
     void onSelectAccountClicked();
     void onCardCaptured(const CardCredential &credential);
     void onCardSourceError(const QString &message);
+    void onFingerprintCaptured(const FingerprintCredential &credential);
+    void onFingerprintSourceError(const QString &message);
     void onConfigChanged(const QString &key, const QVariant &value);
     void refreshServiceReadyState();
 
@@ -88,6 +91,7 @@ private:
     QString m_pendingAccountListKey;
     LoginController *m_controller;
     CardSerialSource *m_cardSource;
+    FingerprintSource *m_fingerprintSource;
     QNetworkAccessManager *m_probeManager;
     QNetworkReply *m_probeReply;
     bool m_probeInFlight;

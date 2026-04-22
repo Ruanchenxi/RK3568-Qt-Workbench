@@ -86,8 +86,10 @@ SystemController::SystemController(QObject *parent)
     , m_networkManager(AuthService::instance()->networkAccessManager())
     , m_pendingUserListReply(nullptr)
     , m_pendingUpdateCardReply(nullptr)
+    , m_pendingUpdateFingerprintReply(nullptr)
     , m_userListLoading(false)
     , m_cardUpdateInProgress(false)
+    , m_fingerprintUpdateInProgress(false)
 {
 }
 
@@ -245,6 +247,17 @@ void SystemController::clearUserCardNo(const QString &userId)
     submitUserCardNo(userId, QString());
 }
 
+void SystemController::updateUserFingerprint(const QString &userId, const QByteArray &templateData)
+{
+    const QString base64 = QString::fromUtf8(templateData.toBase64());
+    submitUserFingerprint(userId, base64);
+}
+
+void SystemController::clearUserFingerprint(const QString &userId)
+{
+    submitUserFingerprint(userId, QString());
+}
+
 bool SystemController::isUserListLoading() const
 {
     return m_userListLoading;
@@ -253,6 +266,11 @@ bool SystemController::isUserListLoading() const
 bool SystemController::isCardUpdateInProgress() const
 {
     return m_cardUpdateInProgress;
+}
+
+bool SystemController::isFingerprintUpdateInProgress() const
+{
+    return m_fingerprintUpdateInProgress;
 }
 
 QString SystemController::resolveTenantId() const
@@ -303,6 +321,26 @@ QString SystemController::resolveUpdateCardNoUrl() const
         apiBaseUrl.chop(1);
     }
     return apiBaseUrl + QStringLiteral("/update-card-no");
+}
+
+QString SystemController::resolveUpdateFingerprintUrl() const
+{
+    QString requestUrl = ConfigManager::instance()->value(QStringLiteral("system/updateFingerprintUrl"), QString()).toString().trimmed();
+    if (!requestUrl.isEmpty())
+    {
+        return requestUrl;
+    }
+
+    QString apiBaseUrl = ConfigManager::instance()->apiUrl().trimmed();
+    if (apiBaseUrl.isEmpty())
+    {
+        apiBaseUrl = QStringLiteral("http://localhost/api/kids-outage/third-api");
+    }
+    while (apiBaseUrl.endsWith('/'))
+    {
+        apiBaseUrl.chop(1);
+    }
+    return apiBaseUrl + QStringLiteral("/update-fingerprint");
 }
 
 void SystemController::applyCommonHeaders(QNetworkRequest *request) const
@@ -579,4 +617,129 @@ void SystemController::submitUserCardNo(const QString &userId, const QString &ca
         // 页面会在 cardNoUpdated 回调里刷新本地表格，
         // 这里不再额外发 userListChanged，避免覆盖成功提示。
         emit cardNoUpdated(normalizedUserId, normalizedCardNo); });
+}
+
+void SystemController::submitUserFingerprint(const QString &userId, const QString &fingerprintBase64)
+{
+    const QString normalizedUserId = userId.trimmed();
+    if (normalizedUserId.isEmpty())
+    {
+        emit fingerprintUpdateFailed(QStringLiteral("用户ID为空，无法保存指纹"));
+        return;
+    }
+    if (m_fingerprintUpdateInProgress)
+    {
+        emit fingerprintUpdateFailed(QStringLiteral("正在保存指纹，请稍候"));
+        return;
+    }
+
+    const QString requestUrl = resolveUpdateFingerprintUrl();
+    if (requestUrl.isEmpty())
+    {
+        emit fingerprintUpdateFailed(QStringLiteral("未配置指纹保存接口"));
+        return;
+    }
+
+    const QJsonObject requestBody{
+        {QStringLiteral("userId"), normalizedUserId},
+        {QStringLiteral("fingerprint"), fingerprintBase64}
+    };
+
+    QNetworkRequest request{QUrl(requestUrl)};
+    applyCommonHeaders(&request);
+    qDebug() << "[SystemController] 保存指纹请求 URL:" << requestUrl
+             << "userId:" << normalizedUserId
+             << "dataLen:" << fingerprintBase64.size();
+
+    QNetworkReply *reply = m_networkManager->post(
+        request, QJsonDocument(requestBody).toJson(QJsonDocument::Compact));
+    m_pendingUpdateFingerprintReply = reply;
+    m_fingerprintUpdateInProgress = true;
+    emit fingerprintUpdateStateChanged(true);
+
+    int timeoutMs = ConfigManager::instance()->connectionTimeout() * 1000;
+    if (timeoutMs < 3000)
+    {
+        timeoutMs = 3000;
+    }
+
+    QTimer::singleShot(timeoutMs, this, [this, reply]()
+                       {
+        if (m_pendingUpdateFingerprintReply != reply || !reply->isRunning()) {
+            return;
+        }
+        reply->setProperty("timeoutAbort", true);
+        reply->abort(); });
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, normalizedUserId, fingerprintBase64]()
+            {
+        reply->deleteLater();
+
+        if (m_pendingUpdateFingerprintReply != reply) {
+            return;
+        }
+
+        const QByteArray responseData = reply->readAll();
+
+        if (reply->error() != QNetworkReply::NoError) {
+            const bool timeoutAbort = reply->property("timeoutAbort").toBool();
+            const QString errorMessage = timeoutAbort
+                    ? QStringLiteral("保存指纹请求超时")
+                    : extractApiErrorMessage(responseData,
+                                             QStringLiteral("保存指纹失败：%1").arg(reply->errorString()));
+            finishFingerprintUpdateRequest(reply);
+            emit fingerprintUpdateFailed(errorMessage);
+            return;
+        }
+
+        const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (httpStatus < 200 || httpStatus >= 300) {
+            finishFingerprintUpdateRequest(reply);
+            emit fingerprintUpdateFailed(extractApiErrorMessage(
+                responseData, QStringLiteral("保存指纹接口返回异常：HTTP %1").arg(httpStatus)));
+            return;
+        }
+
+        const QJsonDocument responseDoc = QJsonDocument::fromJson(responseData);
+        if (responseDoc.isNull() || !responseDoc.isObject()) {
+            finishFingerprintUpdateRequest(reply);
+            emit fingerprintUpdateFailed(QStringLiteral("保存指纹响应格式错误"));
+            return;
+        }
+
+        const QJsonObject responseObj = responseDoc.object();
+        const int code = responseObj.value(QStringLiteral("code")).toInt();
+        const bool success = responseObj.value(QStringLiteral("success")).toBool();
+        const QString message = responseObj.value(QStringLiteral("msg")).toString().trimmed();
+
+        if (!success || (code != 0 && code != 200)) {
+            finishFingerprintUpdateRequest(reply);
+            emit fingerprintUpdateFailed(message.isEmpty() ? QStringLiteral("保存指纹失败") : message);
+            return;
+        }
+
+        for (SystemIdentityUserDto &user : m_users)
+        {
+            if (user.userId == normalizedUserId)
+            {
+                user.fingerprint = fingerprintBase64;
+                break;
+            }
+        }
+
+        finishFingerprintUpdateRequest(reply);
+        emit fingerprintUpdated(normalizedUserId, fingerprintBase64); });
+}
+
+void SystemController::finishFingerprintUpdateRequest(QNetworkReply *reply)
+{
+    if (m_pendingUpdateFingerprintReply == reply)
+    {
+        m_pendingUpdateFingerprintReply = nullptr;
+    }
+    if (m_fingerprintUpdateInProgress)
+    {
+        m_fingerprintUpdateInProgress = false;
+        emit fingerprintUpdateStateChanged(false);
+    }
 }

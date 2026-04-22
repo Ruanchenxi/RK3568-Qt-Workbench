@@ -33,8 +33,11 @@ public:
     void requestUserList();
     void updateUserCardNo(const QString &userId, const QString &cardNo);
     void clearUserCardNo(const QString &userId);
+    void updateUserFingerprint(const QString &userId, const QByteArray &templateData);
+    void clearUserFingerprint(const QString &userId);
     bool isUserListLoading() const;
     bool isCardUpdateInProgress() const;
+    bool isFingerprintUpdateInProgress() const;
 
 signals:
     void userListChanged();
@@ -43,24 +46,32 @@ signals:
     void cardNoUpdated(const QString &userId, const QString &cardNo);
     void cardNoUpdateFailed(const QString &errorMessage);
     void cardNoUpdateStateChanged(bool inProgress);
+    void fingerprintUpdated(const QString &userId, const QString &fingerprint);
+    void fingerprintUpdateFailed(const QString &errorMessage);
+    void fingerprintUpdateStateChanged(bool inProgress);
 
 private:
     QString resolveTenantId() const;
     QString resolveUserListUrl() const;
     QString resolveUpdateCardNoUrl() const;
+    QString resolveUpdateFingerprintUrl() const;
     void applyCommonHeaders(QNetworkRequest *request) const;
     QString extractApiErrorMessage(const QByteArray &responseData, const QString &fallbackMessage) const;
     QList<SystemIdentityUserDto> parseUserList(const QByteArray &responseData, QString *errorMessage) const;
     void submitUserCardNo(const QString &userId, const QString &cardNo);
+    void submitUserFingerprint(const QString &userId, const QString &fingerprintBase64);
     void finishUserListRequest(QNetworkReply *reply);
     void finishCardUpdateRequest(QNetworkReply *reply);
+    void finishFingerprintUpdateRequest(QNetworkReply *reply);
 
     QNetworkAccessManager *m_networkManager;
     QList<SystemIdentityUserDto> m_users;
     QPointer<QNetworkReply> m_pendingUserListReply;
     QPointer<QNetworkReply> m_pendingUpdateCardReply;
+    QPointer<QNetworkReply> m_pendingUpdateFingerprintReply;
     bool m_userListLoading;
     bool m_cardUpdateInProgress;
+    bool m_fingerprintUpdateInProgress;
 };
 
 #endif // SYSTEMCONTROLLER_H

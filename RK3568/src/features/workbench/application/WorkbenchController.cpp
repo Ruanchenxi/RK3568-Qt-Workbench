@@ -60,7 +60,7 @@ bool WorkbenchController::buildTargetUrl(QUrl *url, QString *safeSummary, QStrin
         return false;
     }
 
-    if (!accessToken.isEmpty() && !refreshToken.isEmpty()) {
+     if (!accessToken.isEmpty() && !refreshToken.isEmpty()) {
         *url = baseUrl;
         url->setPath(QStringLiteral("/pad/pages/oauth/third-login"));
         QUrlQuery query;

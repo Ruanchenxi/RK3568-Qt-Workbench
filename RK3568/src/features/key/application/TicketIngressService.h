@@ -40,7 +40,8 @@ public:
     void setCancelHandler(CancelHandler handler);
 
     // 串口确认后回包给挂起的 socket；success=false 时立即返回失败
-    void completeDeferredResponse(const QString &taskId, bool success, const QString &message);
+    // 返回 true 表示确实有挂起的 socket 且已成功回包
+    bool completeDeferredResponse(const QString &taskId, bool success, const QString &message);
 
 signals:
     void httpServerLogAppended(const QString &text);

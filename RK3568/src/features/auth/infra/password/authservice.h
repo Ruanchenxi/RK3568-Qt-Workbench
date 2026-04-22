@@ -24,6 +24,7 @@ public:
     // 登录（发送登录请求）
     void login(const QString &userName, const QString &password, const QString &tenantId = "000000");
     void loginByCard(const QString &cardNo, const QString &tenantId = "000000");
+    void loginByFingerprint(const QByteArray &templateData, const QString &tenantId = "000000");
     void fetchAccountList(const QString &tenantId = "000000");
 
     // 保存 token 和用户信息
@@ -81,6 +82,7 @@ private:
     // 发送登录网络请求
     void sendLoginRequest(const QString &userName, const QString &encryptedPassword, const QString &tenantId);
     void sendCardLoginRequest(const QString &cardNo, const QString &tenantId);
+    void sendFingerprintLoginRequest(const QByteArray &templateData, const QString &tenantId);
     void sendAccountListRequest(const QString &tenantId);
 
     // 结束当前登录请求状态

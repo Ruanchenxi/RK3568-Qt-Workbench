@@ -155,6 +155,28 @@ void AuthService::loginByCard(const QString &cardNo, const QString &tenantId)
     sendCardLoginRequest(normalizedCardNo, normalizedTenantId);
 }
 
+void AuthService::loginByFingerprint(const QByteArray &templateData, const QString &tenantId)
+{
+    if (templateData.isEmpty())
+    {
+        emit loginFailed(QStringLiteral("指纹模板数据为空"));
+        return;
+    }
+    if (m_loginInProgress)
+    {
+        emit loginFailed(QStringLiteral("登录请求处理中，请稍候..."));
+        return;
+    }
+
+    QString normalizedTenantId = tenantId.trimmed();
+    if (normalizedTenantId.isEmpty())
+    {
+        normalizedTenantId = QStringLiteral("000000");
+    }
+
+    sendFingerprintLoginRequest(templateData, normalizedTenantId);
+}
+
 void AuthService::fetchAccountList(const QString &tenantId)
 {
     if (m_accountListInProgress)
@@ -574,6 +596,136 @@ void AuthService::sendCardLoginRequest(const QString &cardNo, const QString &ten
         finishLoginRequest(reply);
 
         qDebug() << "[AuthService] 刷卡登录成功，卡号:" << cardNo;
+        emit loginSuccess(data); });
+}
+
+void AuthService::sendFingerprintLoginRequest(const QByteArray &templateData, const QString &tenantId)
+{
+    QString apiBaseUrl = ConfigManager::instance()->apiUrl().trimmed();
+    if (apiBaseUrl.isEmpty())
+    {
+        apiBaseUrl = QStringLiteral("http://localhost/api/kids-outage/third-api");
+    }
+    while (apiBaseUrl.endsWith('/'))
+    {
+        apiBaseUrl.chop(1);
+    }
+
+    const QString loginUrl = apiBaseUrl + QStringLiteral("/login-by-fingerprint");
+    const QString fingerprint = QString::fromUtf8(templateData.toBase64());
+
+    qDebug() << "[AuthService] 指纹登录请求 URL:" << loginUrl;
+    qDebug() << "[AuthService] 模板长度:" << templateData.size() << "Base64长度:" << fingerprint.size();
+
+    QJsonObject requestBody;
+    requestBody[QStringLiteral("tenantId")] = tenantId;
+    requestBody[QStringLiteral("fingerprint")] = fingerprint;
+
+    const QByteArray requestData = QJsonDocument(requestBody).toJson(QJsonDocument::Compact);
+
+    QNetworkRequest request;
+    request.setUrl(QUrl(loginUrl));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    request.setRawHeader("Authorization", "Basic cmlkZXI6cmlkZXJfc2VjcmV0");
+
+    QNetworkReply *reply = m_networkManager->post(request, requestData);
+    m_pendingLoginReply = reply;
+    m_loginInProgress = true;
+    emit loginStateChanged(true);
+
+    int timeoutMs = ConfigManager::instance()->connectionTimeout() * 1000;
+    if (timeoutMs < 3000)
+    {
+        timeoutMs = 3000;
+    }
+    QTimer::singleShot(timeoutMs, this, [this, reply]()
+                       {
+        if (m_pendingLoginReply != reply || !reply->isRunning()) {
+            return;
+        }
+        reply->setProperty("timeoutAbort", true);
+        reply->abort(); });
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply]()
+            {
+        reply->deleteLater();
+
+        if (m_pendingLoginReply != reply) {
+            return;
+        }
+
+        if (reply->error() != QNetworkReply::NoError) {
+            const bool timeoutAbort = reply->property("timeoutAbort").toBool();
+            const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            const QByteArray responseData = reply->readAll();
+            QString errorMsg;
+
+            if (timeoutAbort) {
+                errorMsg = QStringLiteral("指纹登录请求超时，请重试");
+            } else if (httpStatus == 400 || httpStatus == 401 || httpStatus == 403) {
+                errorMsg = extractResponseMessage(responseData);
+                if (errorMsg.isEmpty()) {
+                    errorMsg = QStringLiteral("指纹未注册或不匹配");
+                }
+            } else if (httpStatus >= 500) {
+                errorMsg = QStringLiteral("指纹登录服务异常，请稍后重试");
+            } else {
+                errorMsg = QStringLiteral("指纹登录服务不可用，请检查网络");
+            }
+
+            finishLoginRequest(reply);
+            qDebug() << "[AuthService] 指纹登录失败:" << errorMsg;
+            emit loginFailed(errorMsg);
+            return;
+        }
+
+        const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (httpStatus < 200 || httpStatus >= 300) {
+            const QString errorMsg = (httpStatus == 400 || httpStatus == 401 || httpStatus == 403)
+                    ? QStringLiteral("指纹未注册或不匹配")
+                    : QStringLiteral("指纹登录服务异常，请稍后重试");
+            finishLoginRequest(reply);
+            qDebug() << "[AuthService] 指纹登录失败:" << errorMsg;
+            emit loginFailed(errorMsg);
+            return;
+        }
+
+        const QByteArray responseData = reply->readAll();
+        const QJsonDocument responseDoc = QJsonDocument::fromJson(responseData);
+        if (responseDoc.isNull() || !responseDoc.isObject()) {
+            finishLoginRequest(reply);
+            emit loginFailed(QStringLiteral("服务器响应格式错误"));
+            return;
+        }
+
+        const QJsonObject responseObj = responseDoc.object();
+        const int code = responseObj.value("code").toInt();
+        const bool success = responseObj.value("success").toBool();
+        const QString msg = responseObj.value("msg").toString();
+
+        qDebug() << "[AuthService] 指纹登录响应 - code:" << code << "success:" << success << "msg:" << msg;
+
+        if (!success || (code != 0 && code != 200)) {
+            const QString errorMsg = msg.isEmpty() ? QStringLiteral("指纹登录失败") : msg;
+            finishLoginRequest(reply);
+            emit loginFailed(errorMsg);
+            return;
+        }
+
+        const QJsonObject data = responseObj.value("data").toObject();
+        const QString accessToken = data.value("access_token").toString();
+        const QString refreshToken = data.value("refresh_token").toString();
+
+        if (accessToken.isEmpty()) {
+            finishLoginRequest(reply);
+            emit loginFailed(QStringLiteral("服务器未返回访问令牌"));
+            return;
+        }
+
+        saveToken(accessToken, refreshToken, data);
+        finishLoginRequest(reply);
+
+        qDebug() << "[AuthService] 指纹登录成功";
         emit loginSuccess(data); });
 }
 

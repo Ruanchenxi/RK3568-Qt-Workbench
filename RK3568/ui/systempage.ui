@@ -179,14 +179,52 @@
     border-color: #E8E4DE;
 }
 
-#deleteFingerprintBtn, #collectFingerprintPlaceholderBtn {
-    background-color: #FAFAFA;
-    color: #9AA4AF;
+#deleteFingerprintBtn {
+    background-color: #FFFFFF;
+    color: #C62828;
     font-size: 16px;
-    border: 1px solid #D9DDE2;
+    border: 1px solid #E0B6B6;
     border-radius: 8px;
     padding: 12px 22px;
     min-width: 132px;
+}
+
+#deleteFingerprintBtn:hover {
+    background-color: #FFF2F2;
+}
+
+#deleteFingerprintBtn:pressed {
+    background-color: #F6DCDC;
+}
+
+#deleteFingerprintBtn:disabled {
+    background-color: #FAFAFA;
+    color: #CCB7B7;
+    border-color: #E8E4DE;
+}
+
+#collectFingerprintPlaceholderBtn {
+    background-color: #FFFFFF;
+    color: #2E7D32;
+    font-size: 16px;
+    border: 1px solid #2E7D32;
+    border-radius: 8px;
+    padding: 12px 22px;
+    min-width: 132px;
+}
+
+#collectFingerprintPlaceholderBtn:hover {
+    background-color: #E8F5E9;
+}
+
+#collectFingerprintPlaceholderBtn:pressed {
+    background-color: #C8E6C9;
+}
+
+#collectFingerprintPlaceholderBtn:disabled {
+    background-color: #FAFAFA;
+    color: #B9C2BB;
+    border: 1px solid #E8E4DE;
 }
 
 #userTable {

@@ -14,6 +14,7 @@
 #include "systempage.h"
 #include "ui_systempage.h"
 #include "features/auth/infra/device/CardSerialSource.h"
+#include "features/auth/infra/device/FingerprintSource.h"
 #include "features/auth/infra/password/authservice.h"
 #include <QFrame>
 #include <QLineEdit>
@@ -21,6 +22,7 @@
 #include <QListView>
 #include <QLabel>
 #include <QStyle>
+#include <QShowEvent>
 
 namespace {
 constexpr int kFixedBaudRate = 115200;
@@ -36,6 +38,7 @@ SystemPage::SystemPage(QWidget *parent) : QWidget(parent),
                                           ui(new Ui::SystemPage),
                                           m_controller(new SystemController(this)),
                                           m_cardSource(new CardSerialSource(this)),
+                                          m_fingerprintSource(new FingerprintSource(this)),
                                           m_keyboardTarget(nullptr),
                                           m_keyboardVisible(false),
                                           m_keyboardHeight(0),
@@ -46,7 +49,9 @@ SystemPage::SystemPage(QWidget *parent) : QWidget(parent),
                                           m_canManageSerialPorts(false),
                                           m_identityReadOnlyPromptShown(false),
                                           m_clearingCard(false),
-                                          m_collectingCard(false)
+                                          m_collectingCard(false),
+                                          m_collectingFingerprint(false),
+                                          m_clearingFingerprint(false)
 {
     ui->setupUi(this);
 
@@ -175,15 +180,13 @@ SystemPage::SystemPage(QWidget *parent) : QWidget(parent),
     }
     if (ui->deleteFingerprintBtn)
     {
-        ui->deleteFingerprintBtn->setCursor(Qt::ArrowCursor);
+        ui->deleteFingerprintBtn->setCursor(Qt::PointingHandCursor);
         ui->deleteFingerprintBtn->setMinimumHeight(46);
-        ui->deleteFingerprintBtn->setEnabled(false);
     }
     if (ui->collectFingerprintPlaceholderBtn)
     {
-        ui->collectFingerprintPlaceholderBtn->setCursor(Qt::ArrowCursor);
+        ui->collectFingerprintPlaceholderBtn->setCursor(Qt::PointingHandCursor);
         ui->collectFingerprintPlaceholderBtn->setMinimumHeight(46);
-        ui->collectFingerprintPlaceholderBtn->setEnabled(false);
     }
 
     configureUserTable();
@@ -211,6 +214,15 @@ SystemPage::~SystemPage()
     delete ui;
 }
 
+void SystemPage::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    if (!m_userListLoaded && ui->tabAdvanced->isChecked()
+        && !m_controller->isUserListLoading()) {
+        loadUserList();
+    }
+}
+
 /**
  * @brief 设置信号槽连接
  */
@@ -227,16 +239,28 @@ void SystemPage::setupConnections()
     connect(ui->userTable, &QTableWidget::itemSelectionChanged, this, &SystemPage::onUserTableSelectionChanged);
     connect(ui->deleteCardBtn, &QPushButton::clicked, this, &SystemPage::onDeleteCardClicked);
     connect(ui->collectFingerprintBtn, &QPushButton::clicked, this, &SystemPage::onCollectCardClicked);
+    connect(ui->collectFingerprintPlaceholderBtn, &QPushButton::clicked, this, &SystemPage::onCollectFingerprintClicked);
+    connect(ui->deleteFingerprintBtn, &QPushButton::clicked, this, &SystemPage::onDeleteFingerprintClicked);
     connect(m_controller, &SystemController::userListChanged, this, &SystemPage::onUserListChanged);
     connect(m_controller, &SystemController::userListLoadFailed, this, &SystemPage::onUserListLoadFailed);
     connect(m_controller, &SystemController::userListLoadingChanged, this, &SystemPage::onUserListLoadingChanged);
     connect(m_controller, &SystemController::cardNoUpdated, this, &SystemPage::onCardNoUpdated);
     connect(m_controller, &SystemController::cardNoUpdateFailed, this, &SystemPage::onCardNoUpdateFailed);
     connect(m_controller, &SystemController::cardNoUpdateStateChanged, this, &SystemPage::onCardNoUpdateStateChanged);
+    connect(m_controller, &SystemController::fingerprintUpdated, this, &SystemPage::onFingerprintUpdated);
+    connect(m_controller, &SystemController::fingerprintUpdateFailed, this, &SystemPage::onFingerprintUpdateFailed);
+    connect(m_controller, &SystemController::fingerprintUpdateStateChanged, this, &SystemPage::onFingerprintUpdateStateChanged);
     connect(m_cardSource, &CardSerialSource::cardCaptured, this, &SystemPage::onCardCaptured);
     connect(m_cardSource, &CardSerialSource::sourceError, this, &SystemPage::onCardSourceError);
     connect(m_cardSource, &CardSerialSource::readerStatusChanged,
             this, &SystemPage::cardReaderStatusChanged);
+    connect(m_fingerprintSource, &FingerprintSource::fingerprintCaptured, this, &SystemPage::onFingerprintCapturedForEnroll);
+    connect(m_fingerprintSource, &FingerprintSource::sourceError, this, &SystemPage::onFingerprintSourceError);
+    connect(m_fingerprintSource, &FingerprintSource::enrollProgress, this, [this](int step, const QString &hint) {
+        if (ui && ui->advancedActionHintLabel && m_collectingFingerprint) {
+            ui->advancedActionHintLabel->setText(hint);
+        }
+    });
     connect(AuthService::instance(), &AuthService::loginSuccess, this, [this](const QJsonObject &) {
         resetIdentityViewForSessionChange();
         updateIdentityPermissionState();
@@ -337,6 +361,10 @@ void SystemPage::loadUserList()
     {
         resetCardCollectionState();
     }
+    if (m_collectingFingerprint)
+    {
+        resetFingerprintCollectionState();
+    }
 
     if (ui->advancedActionHintLabel)
     {
@@ -365,7 +393,7 @@ void SystemPage::onCollectCardClicked()
     if (!m_canManageIdentityMedia)
     {
         QMessageBox::warning(this, QStringLiteral("权限不足"),
-                             QStringLiteral("当前账号仅可查看用户身份信息，卡号维护需管理员账号操作。"));
+                             QStringLiteral("当前账号仅可查看用户身份信息，卡号和指纹维护需管理员账号操作。"));
         return;
     }
 
@@ -409,7 +437,7 @@ void SystemPage::onDeleteCardClicked()
     if (!m_canManageIdentityMedia)
     {
         QMessageBox::warning(this, QStringLiteral("权限不足"),
-                             QStringLiteral("当前账号仅可查看用户身份信息，卡号维护需管理员账号操作。"));
+                             QStringLiteral("当前账号仅可查看用户身份信息，卡号和指纹维护需管理员账号操作。"));
         return;
     }
 
@@ -465,6 +493,10 @@ void SystemPage::onTabBasicClicked()
     if (m_collectingCard)
     {
         resetCardCollectionState();
+    }
+    if (m_collectingFingerprint)
+    {
+        resetFingerprintCollectionState();
     }
 
     ui->tabBasic->setChecked(true);
@@ -632,8 +664,8 @@ void SystemPage::onUserListChanged()
     {
         ui->advancedActionHintLabel->setText(
             m_canManageIdentityMedia
-                ? QStringLiteral("请选择一个用户，然后点击“采集卡号”并刷卡。")
-                : QStringLiteral("当前账号仅可查看用户身份信息，卡号维护需管理员账号操作。"));
+                ? QStringLiteral("请选择一个用户，然后点击“采集卡号”或“采集指纹”。")
+                : QStringLiteral("当前账号仅可查看用户身份信息，卡号和指纹维护需管理员账号操作。"));
     }
 }
 
@@ -790,6 +822,203 @@ void SystemPage::onCardNoUpdateStateChanged(bool inProgress)
     updateCollectButtonState();
 }
 
+void SystemPage::onCollectFingerprintClicked()
+{
+    if (!ui || !ui->userTable)
+        return;
+
+    if (!m_canManageIdentityMedia)
+    {
+        QMessageBox::warning(this, QStringLiteral("权限不足"),
+                             QStringLiteral("当前账号仅可查看用户身份信息，指纹维护需管理员账号操作。"));
+        return;
+    }
+
+    const int row = selectedUserRow();
+    if (row < 0 || row >= m_users.size())
+    {
+        QMessageBox::warning(this, QStringLiteral("提示"), QStringLiteral("请先选择一个用户！"));
+        return;
+    }
+
+    const SystemIdentityUserDto &user = m_users[row];
+    if (user.userId.trimmed().isEmpty())
+    {
+        QMessageBox::warning(this, QStringLiteral("提示"),
+                             QStringLiteral("当前用户列表未返回 userId，暂无法采集指纹。"));
+        return;
+    }
+
+    m_collectingFingerprint = true;
+    m_clearingFingerprint = false;
+    m_collectingUserId = user.userId;
+    m_collectingDisplayName = displayNameForUser(user);
+
+    if (ui->advancedActionHintLabel)
+    {
+        ui->advancedActionHintLabel->setText(
+            QStringLiteral("正在为 %1 采集指纹，请将手指按在指纹仪上。").arg(m_collectingDisplayName));
+    }
+
+    updateCollectButtonState();
+    m_fingerprintSource->startEnroll();
+}
+
+void SystemPage::onDeleteFingerprintClicked()
+{
+    if (!ui || !ui->userTable)
+        return;
+
+    if (!m_canManageIdentityMedia)
+    {
+        QMessageBox::warning(this, QStringLiteral("权限不足"),
+                             QStringLiteral("当前账号仅可查看用户身份信息，指纹维护需管理员账号操作。"));
+        return;
+    }
+
+    const int row = selectedUserRow();
+    if (row < 0 || row >= m_users.size())
+    {
+        QMessageBox::warning(this, QStringLiteral("提示"), QStringLiteral("请先选择一个用户！"));
+        return;
+    }
+
+    const SystemIdentityUserDto &user = m_users[row];
+    if (user.userId.trimmed().isEmpty())
+    {
+        QMessageBox::warning(this, QStringLiteral("提示"),
+                             QStringLiteral("当前用户列表未返回 userId，暂无法删除指纹。"));
+        return;
+    }
+    if (user.fingerprint.trimmed().isEmpty())
+    {
+        QMessageBox::information(this, QStringLiteral("删除指纹"),
+                                 QStringLiteral("%1 当前没有已绑定的指纹。").arg(displayNameForUser(user)));
+        return;
+    }
+
+    const QString displayName = displayNameForUser(user);
+    const auto reply = QMessageBox::question(
+        this,
+        QStringLiteral("删除指纹"),
+        QStringLiteral("确认删除 %1 的指纹吗？").arg(displayName),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (reply != QMessageBox::Yes)
+    {
+        return;
+    }
+
+    if (ui->advancedActionHintLabel)
+    {
+        ui->advancedActionHintLabel->setText(
+            QStringLiteral("正在删除 %1 的指纹...").arg(displayName));
+    }
+
+    m_collectingDisplayName = displayName;
+    m_clearingFingerprint = true;
+    m_controller->clearUserFingerprint(user.userId);
+}
+
+void SystemPage::onFingerprintCapturedForEnroll(const FingerprintCredential &credential)
+{
+    if (!m_collectingFingerprint)
+    {
+        return;
+    }
+
+    if (credential.templateData.isEmpty())
+    {
+        return;
+    }
+
+    m_fingerprintSource->stop();
+
+    if (ui->advancedActionHintLabel)
+    {
+        ui->advancedActionHintLabel->setText(
+            QStringLiteral("已采集指纹（%1字节），正在保存到 %2。")
+                .arg(credential.templateData.size())
+                .arg(m_collectingDisplayName));
+    }
+
+    m_controller->updateUserFingerprint(m_collectingUserId, credential.templateData);
+}
+
+void SystemPage::onFingerprintSourceError(const QString &message)
+{
+    if (!m_collectingFingerprint || !ui->advancedActionHintLabel)
+    {
+        return;
+    }
+
+    ui->advancedActionHintLabel->setText(
+        QStringLiteral("指纹设备异常：%1")
+            .arg(message.trimmed().isEmpty()
+                     ? QStringLiteral("请检查指纹仪连接")
+                     : message.trimmed()));
+}
+
+void SystemPage::onFingerprintUpdated(const QString &userId, const QString &fingerprint)
+{
+    const bool clearing = m_clearingFingerprint;
+    int updatedRow = -1;
+    for (int row = 0; row < m_users.size(); ++row)
+    {
+        if (m_users[row].userId == userId)
+        {
+            m_users[row].fingerprint = fingerprint;
+            updatedRow = row;
+            break;
+        }
+    }
+
+    repopulateUserTable();
+    if (updatedRow >= 0 && ui->userTable)
+    {
+        ui->userTable->selectRow(updatedRow);
+    }
+
+    const QString displayName = m_collectingDisplayName;
+    resetFingerprintCollectionState();
+    if (ui->advancedActionHintLabel)
+    {
+        ui->advancedActionHintLabel->setText(clearing || fingerprint.trimmed().isEmpty()
+            ? QStringLiteral("已删除 %1 的指纹").arg(displayName)
+            : QStringLiteral("已为 %1 保存指纹").arg(displayName));
+    }
+
+    QMessageBox::information(this,
+                             (clearing || fingerprint.trimmed().isEmpty()) ? QStringLiteral("删除指纹") : QStringLiteral("采集指纹"),
+                             (clearing || fingerprint.trimmed().isEmpty())
+                                 ? QStringLiteral("已删除 %1 的指纹").arg(displayName)
+                                 : QStringLiteral("已为 %1 保存指纹").arg(displayName));
+}
+
+void SystemPage::onFingerprintUpdateFailed(const QString &message)
+{
+    const bool clearing = m_clearingFingerprint;
+    const QString errorMessage = message.trimmed().isEmpty()
+        ? (clearing ? QStringLiteral("删除指纹失败") : QStringLiteral("保存指纹失败"))
+        : message.trimmed();
+
+    resetFingerprintCollectionState();
+    if (ui->advancedActionHintLabel)
+    {
+        ui->advancedActionHintLabel->setText(errorMessage);
+    }
+
+    QMessageBox::warning(this,
+                         clearing ? QStringLiteral("删除指纹") : QStringLiteral("采集指纹"),
+                         errorMessage);
+}
+
+void SystemPage::onFingerprintUpdateStateChanged(bool inProgress)
+{
+    Q_UNUSED(inProgress);
+    updateCollectButtonState();
+}
+
 void SystemPage::repopulateUserTable()
 {
     if (!ui || !ui->userTable)
@@ -850,11 +1079,25 @@ void SystemPage::resetCardCollectionState()
     updateCollectButtonState();
 }
 
+void SystemPage::resetFingerprintCollectionState()
+{
+    m_fingerprintSource->stop();
+    m_clearingFingerprint = false;
+    m_collectingFingerprint = false;
+    m_collectingUserId.clear();
+    m_collectingDisplayName.clear();
+    updateCollectButtonState();
+}
+
 void SystemPage::resetIdentityViewForSessionChange()
 {
     if (m_collectingCard)
     {
         resetCardCollectionState();
+    }
+    if (m_collectingFingerprint)
+    {
+        resetFingerprintCollectionState();
     }
 
     m_identityReadOnlyPromptShown = false;
@@ -873,34 +1116,70 @@ void SystemPage::updateCollectButtonState()
     const int selectedRow = selectedUserRow();
     const bool hasSelection = selectedRow >= 0 && selectedRow < m_users.size();
     const bool hasCard = hasSelection && !m_users[selectedRow].cardNo.trimmed().isEmpty();
-    const bool enableCollect = m_canManageIdentityMedia
+    const bool hasFingerprint = hasSelection && !m_users[selectedRow].fingerprint.trimmed().isEmpty();
+    const bool anyBusy = m_controller->isUserListLoading()
+        || m_controller->isCardUpdateInProgress()
+        || m_controller->isFingerprintUpdateInProgress();
+    const bool enableCollectCard = m_canManageIdentityMedia
         && hasSelection
         && !m_collectingCard
-        && !m_controller->isUserListLoading()
-        && !m_controller->isCardUpdateInProgress();
-    const bool enableDelete = m_canManageIdentityMedia
+        && !m_collectingFingerprint
+        && !anyBusy;
+    const bool enableDeleteCard = m_canManageIdentityMedia
         && hasSelection
         && hasCard
         && !m_collectingCard
-        && !m_controller->isUserListLoading()
-        && !m_controller->isCardUpdateInProgress();
+        && !m_collectingFingerprint
+        && !anyBusy;
+    const bool enableCollectFp = m_canManageIdentityMedia
+        && hasSelection
+        && !m_collectingCard
+        && !m_collectingFingerprint
+        && !anyBusy;
+    const bool enableDeleteFp = m_canManageIdentityMedia
+        && hasSelection
+        && hasFingerprint
+        && !m_collectingCard
+        && !m_collectingFingerprint
+        && !anyBusy;
 
-    ui->collectFingerprintBtn->setEnabled(enableCollect);
-    ui->deleteCardBtn->setEnabled(enableDelete);
+    ui->collectFingerprintBtn->setEnabled(enableCollectCard);
+    ui->deleteCardBtn->setEnabled(enableDeleteCard);
     ui->collectFingerprintBtn->setText(m_collectingCard
                                            ? QStringLiteral("等待刷卡...")
                                            : QStringLiteral("采集卡号"));
     ui->deleteCardBtn->setText(QStringLiteral("删除卡号"));
 
+    if (ui->collectFingerprintPlaceholderBtn)
+    {
+        ui->collectFingerprintPlaceholderBtn->setEnabled(enableCollectFp);
+        ui->collectFingerprintPlaceholderBtn->setText(m_collectingFingerprint
+                                                          ? QStringLiteral("等待按指纹...")
+                                                          : QStringLiteral("采集指纹"));
+    }
+    if (ui->deleteFingerprintBtn)
+    {
+        ui->deleteFingerprintBtn->setEnabled(enableDeleteFp);
+        ui->deleteFingerprintBtn->setText(QStringLiteral("删除指纹"));
+    }
+
     if (!m_canManageIdentityMedia)
     {
         ui->collectFingerprintBtn->setToolTip(QStringLiteral("仅管理员可维护卡号"));
         ui->deleteCardBtn->setToolTip(QStringLiteral("仅管理员可维护卡号"));
+        if (ui->collectFingerprintPlaceholderBtn)
+            ui->collectFingerprintPlaceholderBtn->setToolTip(QStringLiteral("仅管理员可维护指纹"));
+        if (ui->deleteFingerprintBtn)
+            ui->deleteFingerprintBtn->setToolTip(QStringLiteral("仅管理员可维护指纹"));
     }
     else if (!hasSelection)
     {
         ui->collectFingerprintBtn->setToolTip(QStringLiteral("请先选择一个用户"));
         ui->deleteCardBtn->setToolTip(QStringLiteral("请先选择一个用户"));
+        if (ui->collectFingerprintPlaceholderBtn)
+            ui->collectFingerprintPlaceholderBtn->setToolTip(QStringLiteral("请先选择一个用户"));
+        if (ui->deleteFingerprintBtn)
+            ui->deleteFingerprintBtn->setToolTip(QStringLiteral("请先选择一个用户"));
     }
     else
     {
@@ -908,6 +1187,12 @@ void SystemPage::updateCollectButtonState()
         ui->deleteCardBtn->setToolTip(hasCard
                                           ? QStringLiteral("删除当前用户已绑定的卡号")
                                           : QStringLiteral("当前用户没有已绑定的卡号"));
+        if (ui->collectFingerprintPlaceholderBtn)
+            ui->collectFingerprintPlaceholderBtn->setToolTip(QStringLiteral("点击后在指纹仪上按下手指"));
+        if (ui->deleteFingerprintBtn)
+            ui->deleteFingerprintBtn->setToolTip(hasFingerprint
+                                                     ? QStringLiteral("删除当前用户已绑定的指纹")
+                                                     : QStringLiteral("当前用户没有已绑定的指纹"));
     }
 }
 
@@ -949,21 +1234,21 @@ void SystemPage::updateIdentityPermissionState()
     if (ui && ui->advancedHintLabel)
     {
         ui->advancedHintLabel->setText(m_canManageIdentityMedia
-            ? QStringLiteral("管理员可为用户采集或删除卡号，指纹维护将在下一阶段接入。")
+            ? QStringLiteral("管理员可为用户采集或删除卡号和指纹。")
             : QStringLiteral("当前账号仅可查看用户身份信息，卡号和指纹维护需管理员账号操作。"));
     }
 
     if (ui && ui->deleteFingerprintBtn)
     {
         ui->deleteFingerprintBtn->setToolTip(m_canManageIdentityMedia
-            ? QStringLiteral("指纹维护即将接入")
-            : QStringLiteral("仅管理员可维护指纹，且当前功能暂未接入"));
+            ? QStringLiteral("删除选中用户的指纹")
+            : QStringLiteral("仅管理员可维护指纹"));
     }
     if (ui && ui->collectFingerprintPlaceholderBtn)
     {
         ui->collectFingerprintPlaceholderBtn->setToolTip(m_canManageIdentityMedia
-            ? QStringLiteral("指纹维护即将接入")
-            : QStringLiteral("仅管理员可维护指纹，且当前功能暂未接入"));
+            ? QStringLiteral("为选中用户采集指纹")
+            : QStringLiteral("仅管理员可维护指纹"));
     }
 
     updateCollectButtonState();

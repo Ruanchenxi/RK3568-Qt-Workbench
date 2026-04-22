@@ -60,6 +60,7 @@ HEADERS += \
     $$PWD/auth/infra/device/MockCredentialSource.h \
     $$PWD/auth/infra/device/CardSerialSource.h \
     $$PWD/auth/infra/device/FingerprintSource.h \
+    $$PWD/auth/infra/device/zazapi.h \
     $$PWD/workbench/ui/workbenchpage.h \
     $$PWD/workbench/application/WorkbenchController.h \
     $$PWD/keyboard/application/KeyboardController.h \

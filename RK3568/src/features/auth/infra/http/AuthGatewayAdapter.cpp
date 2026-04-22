@@ -81,8 +81,17 @@ void AuthGatewayAdapter::loginByCard(const CardCredential &credential)
 
 void AuthGatewayAdapter::loginByFingerprint(const FingerprintCredential &credential)
 {
-    Q_UNUSED(credential)
-    emit loginFailed(QStringLiteral("指纹登录暂未启用"));
+    if (credential.templateData.isEmpty()) {
+        emit loginFailed(QStringLiteral("未获取到有效指纹数据"));
+        return;
+    }
+
+    QString tenantId = credential.tenantId.trimmed();
+    if (tenantId.isEmpty()) {
+        tenantId = QStringLiteral("000000");
+    }
+
+    m_auth->loginByFingerprint(credential.templateData, tenantId);
 }
 
 void AuthGatewayAdapter::onAuthLoginSuccess(const QJsonObject &userInfo)

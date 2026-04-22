@@ -29,6 +29,11 @@ void AuthServiceAdapter::loginByCard(const QString &cardNo, const QString &tenan
     AuthService::instance()->loginByCard(cardNo, tenantId);
 }
 
+void AuthServiceAdapter::loginByFingerprint(const QByteArray &templateData, const QString &tenantId)
+{
+    AuthService::instance()->loginByFingerprint(templateData, tenantId);
+}
+
 QJsonObject AuthServiceAdapter::userInfo() const
 {
     return AuthService::instance()->getUserInfo();

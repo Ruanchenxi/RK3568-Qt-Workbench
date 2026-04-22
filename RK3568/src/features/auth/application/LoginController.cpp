@@ -52,6 +52,19 @@ void LoginController::loginByCard(const QString &cardNo)
     m_flow->loginByCard(credential);
 }
 
+void LoginController::loginByFingerprint(const QByteArray &templateData)
+{
+    QString tenantId = ConfigManager::instance()->tenantCode().trimmed();
+    if (tenantId.isEmpty()) {
+        tenantId = QStringLiteral("000000");
+    }
+
+    FingerprintCredential credential;
+    credential.tenantId = tenantId;
+    credential.templateData = templateData;
+    m_flow->loginByFingerprint(credential);
+}
+
 void LoginController::requestAccountList()
 {
     QString tenantId = ConfigManager::instance()->tenantCode().trimmed();

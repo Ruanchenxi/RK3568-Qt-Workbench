@@ -8,6 +8,7 @@
 #include <QApplication>
 #include "core/ConfigManager.h"
 #include "features/auth/infra/device/CardSerialSource.h"
+#include "features/auth/infra/device/FingerprintSource.h"
 #include <QAbstractButton>
 #include <QDebug>
 #include <QDialog>
@@ -41,6 +42,7 @@ LoginPage::LoginPage(QWidget *parent) : QWidget(parent),
                                         m_pendingAccountPopup(false),
                                         m_controller(new LoginController(nullptr, this)),
                                         m_cardSource(new CardSerialSource(this)),
+                                        m_fingerprintSource(new FingerprintSource(this)),
                                         m_probeManager(new QNetworkAccessManager(this)),
                                         m_probeReply(nullptr),
                                         m_probeInFlight(false),
@@ -85,6 +87,10 @@ LoginPage::LoginPage(QWidget *parent) : QWidget(parent),
             this, &LoginPage::onCardSourceError);
     connect(m_cardSource, &CardSerialSource::readerStatusChanged,
             this, &LoginPage::cardReaderStatusChanged);
+    connect(m_fingerprintSource, &FingerprintSource::fingerprintCaptured,
+            this, &LoginPage::onFingerprintCaptured);
+    connect(m_fingerprintSource, &FingerprintSource::sourceError,
+            this, &LoginPage::onFingerprintSourceError);
     connect(ConfigManager::instance(), &ConfigManager::configChanged,
             this, &LoginPage::onConfigChanged);
     connect(qApp, &QApplication::focusChanged, this, [this](QWidget *, QWidget *) {
@@ -205,6 +211,27 @@ void LoginPage::onCardCaptured(const CardCredential &credential)
 void LoginPage::onCardSourceError(const QString &message)
 {
     qDebug() << "[LoginPage] 读卡器状态:" << message;
+}
+
+void LoginPage::onFingerprintCaptured(const FingerprintCredential &credential)
+{
+    if (!isVisible() || !m_serviceReady || m_loginInProgress || m_accountListLoading)
+    {
+        return;
+    }
+
+    if (credential.templateData.isEmpty())
+    {
+        return;
+    }
+
+    qDebug() << "[LoginPage] 检测到指纹登录，模板长度=" << credential.templateData.size();
+    m_controller->loginByFingerprint(credential.templateData);
+}
+
+void LoginPage::onFingerprintSourceError(const QString &message)
+{
+    qDebug() << "[LoginPage] 指纹模块状态:" << message;
 }
 
 void LoginPage::onConfigChanged(const QString &key, const QVariant &value)
@@ -539,6 +566,10 @@ void LoginPage::hideEvent(QHideEvent *event)
     {
         m_cardSource->stop();
     }
+    if (m_fingerprintSource)
+    {
+        m_fingerprintSource->stop();
+    }
 }
 
 void LoginPage::refreshServiceReadyState()
@@ -576,6 +607,18 @@ void LoginPage::setServiceReady(bool ready, const QString &message)
         else
         {
             m_cardSource->stop();
+        }
+    }
+
+    if (m_fingerprintSource)
+    {
+        if (m_serviceReady && isVisible())
+        {
+            m_fingerprintSource->start();
+        }
+        else
+        {
+            m_fingerprintSource->stop();
         }
     }
 

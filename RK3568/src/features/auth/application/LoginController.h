@@ -20,6 +20,7 @@ public:
 
     void login(const QString &username, const QString &password);
     void loginByCard(const QString &cardNo);
+    void loginByFingerprint(const QByteArray &templateData);
     void requestAccountList();
 
 signals:

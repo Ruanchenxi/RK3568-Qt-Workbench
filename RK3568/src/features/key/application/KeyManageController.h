@@ -199,6 +199,8 @@ private:
     QByteArray m_pendingDeletedKeyTaskRaw;
     bool m_pendingDeleteAllowsRetransfer = false;
     int m_pendingDeleteRetryCount = 0;
+    int m_pendingDeleteReconcileCount = 0;
+    int m_pendingDeleteInFlightStallCount = 0;
     QString m_pendingCancelSystemTicketId;
     QByteArray m_pendingCancelKeyTaskRaw;
     int m_keySessionId = 0;

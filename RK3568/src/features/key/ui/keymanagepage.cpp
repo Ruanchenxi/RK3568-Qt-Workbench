@@ -1348,96 +1348,100 @@ QString KeyManagePage::ticketStateText(const QString &state)
 
 QString KeyManagePage::ticketStateDescription(const SystemTicketDto &ticket)
 {
+    /* ── 管理员删除流程 ── */
     if (ticket.adminDeleteStage == SystemTicketDto::AdminDeleteStage::TerminationFailed) {
         const QString err = ticket.adminDeleteError.trimmed();
         return err.isEmpty()
-                ? QStringLiteral("工作台终止通知失败，请手动在工作台关闭该任务")
-                : QStringLiteral("工作台终止通知失败，请手动在工作台关闭该任务（错误：%1）").arg(err);
+                ? QStringLiteral("工作台终止失败，请手动关闭该任务")
+                : QStringLiteral("工作台终止失败：%1").arg(err);
     }
     if (ticket.adminDeleteStage == SystemTicketDto::AdminDeleteStage::KeyClearedAwaitingTermination) {
-        return QStringLiteral("钥匙端任务已清理，正在通知工作台终止系统票，请稍候");
+        return QStringLiteral("钥匙已清理，正在通知工作台终止");
     }
+
+    /* ── 回传链路各阶段 ── */
     if (ticket.returnState == QLatin1String("return-requesting-log")) {
-        return QStringLiteral("钥匙任务已完成，主程序正在读取回传日志");
+        return QStringLiteral("任务已完成，正在读取钥匙日志");
     }
     if (ticket.returnState == QLatin1String("return-handshake")) {
-        return QStringLiteral("主程序正在为回传重新建立钥匙通讯握手");
+        return QStringLiteral("正在与钥匙建立回传握手");
     }
     if (ticket.returnState == QLatin1String("return-log-requesting")) {
-        return QStringLiteral("回传握手已完成，主程序正在向钥匙请求任务回传日志");
+        return QStringLiteral("握手完成，正在请求钥匙日志");
     }
     if (ticket.returnState == QLatin1String("return-log-receiving")) {
-        return QStringLiteral("主程序已开始接收钥匙回传日志，正在等待日志帧全部到齐");
+        return QStringLiteral("正在接收钥匙日志，请稍候");
     }
     if (ticket.returnState == QLatin1String("return-uploading")) {
-        return QStringLiteral("主程序已读取钥匙日志，正在回传到服务端");
+        return QStringLiteral("日志已读取，正在上传服务端");
     }
     if (ticket.returnState == QLatin1String("return-upload-success")) {
-        return QStringLiteral("主程序已完成服务端上传，准备继续清理钥匙任务");
+        return QStringLiteral("上传成功，准备清理钥匙任务");
     }
     if (ticket.returnState == QLatin1String("return-delete-pending")) {
-        return QStringLiteral("服务端已确认回传，主程序正在继续清理钥匙中的已完成任务");
+        return QStringLiteral("服务端已确认，正在清理钥匙任务");
     }
     if (ticket.returnState == QLatin1String("return-delete-verifying")) {
-        return QStringLiteral("主程序正在通过后续 Q_TASK 对账，确认钥匙中的任务是否已经删除");
+        return QStringLiteral("正在验证钥匙任务是否已清理");
     }
     if (ticket.returnState == QLatin1String("return-delete-success")) {
-        return QStringLiteral("主程序已完成回传上传，并已清理钥匙中的已完成任务");
+        return QStringLiteral("回传完成，钥匙任务已清理");
     }
     if (ticket.returnState == QLatin1String("return-delete-failed")) {
         if (!ticket.returnError.trimmed().isEmpty()) {
-            return QStringLiteral("钥匙删除验证失败：%1").arg(ticket.returnError);
+            return QStringLiteral("钥匙清理失败：%1").arg(ticket.returnError);
         }
-        return QStringLiteral("钥匙删除验证失败，需人工处理或稍后手动重试");
+        return QStringLiteral("钥匙清理失败，请确认后重试");
     }
     if (ticket.returnState == QLatin1String("return-success")) {
-        return QStringLiteral("主程序已完成回传上传，钥匙任务将进入清理流程");
+        return QStringLiteral("回传完成，即将清理钥匙任务");
     }
     if (ticket.returnState == QLatin1String("return-interrupted-retryable")) {
-        return QStringLiteral("回传链在握手、日志请求或日志接收阶段被中断；钥匙重新就绪后应可自动继续");
+        return QStringLiteral("回传被中断，钥匙就绪后将自动恢复");
     }
     if (ticket.returnState == QLatin1String("manual-required")) {
         if (!ticket.returnError.trimmed().isEmpty()) {
-            return QStringLiteral("当前回传需要人工确认：%1").arg(ticket.returnError);
+            return QStringLiteral("需人工确认：%1").arg(ticket.returnError);
         }
-        return QStringLiteral("当前回传需要人工确认，请先查看 HTTP 客户端报文与钥匙状态");
+        return QStringLiteral("需人工确认，请查看日志详情");
     }
     if (ticket.returnState == QLatin1String("upload_uncertain")) {
-        return QStringLiteral("主程序无法确认服务端是否已收到本次回传，请人工确认后再决定是否重试");
+        return QStringLiteral("服务端是否收到不确定，请人工核实");
     }
     if (ticket.returnState == QLatin1String("return-failed")) {
         if (!ticket.returnError.trimmed().isEmpty()) {
             return QStringLiteral("回传失败：%1").arg(ticket.returnError);
         }
-        return QStringLiteral("回传失败，请查看HTTP客户端报文");
+        return QStringLiteral("回传失败，请查看日志");
     }
+
+    /* ── 传票阶段 ── */
     if (ticket.transferState == QLatin1String("received")) {
-        return QStringLiteral("主程序已接收到工作台JSON，尚未开始向钥匙传票");
+        return QStringLiteral("已接收工作台指令，等待传票");
     }
     if (ticket.transferState == QLatin1String("auto-pending")) {
-        return QStringLiteral("主程序已接收JSON，等待串口连接和钥匙就绪后自动传票");
+        return QStringLiteral("等待钥匙就绪后自动传票");
     }
     if (ticket.transferState == QLatin1String("orphan-recovered")) {
-        return QStringLiteral("该任务来自钥匙侧孤儿恢复，当前不会自动回传或自动删除，请先人工确认来源");
+        return QStringLiteral("孤儿任务恢复，请确认来源后操作");
     }
     if (ticket.transferState == QLatin1String("sending")) {
-        return QStringLiteral("主程序已开始向钥匙发送传票");
+        return QStringLiteral("正在向钥匙传票，请稍候");
     }
     if (ticket.transferState == QLatin1String("success")) {
-        return QStringLiteral("主程序已完成传票发送；同一任务再次触发钥匙传票时将默认忽略重复下发");
+        return QStringLiteral("传票完成，等待任务执行");
     }
     if (ticket.transferState == QLatin1String("key-cleared")) {
-        return QStringLiteral("钥匙中的同任务已被删除；当前系统票可再次手动传票，也可在工作台重新触发后再次自动传票");
+        return QStringLiteral("钥匙任务已删除，可重新传票");
     }
     if (ticket.transferState == QLatin1String("failed")) {
         if (!ticket.lastError.trimmed().isEmpty()) {
             return QStringLiteral("传票失败：%1").arg(ticket.lastError);
         }
-        return QStringLiteral("传票失败，请查看串口报文日志");
+        return QStringLiteral("传票失败，请查看日志");
     }
     return ticket.transferState;
 }
-
 QString KeyManagePage::ticketPositionText(const QString &ticketNo, const QString &taskName)
 {
     return extractPositionFromTaskName(ticketNo, taskName);
