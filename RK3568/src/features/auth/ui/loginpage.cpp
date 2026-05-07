@@ -133,16 +133,9 @@ LoginPage::~LoginPage()
  */
 void LoginPage::onLoginButtonClicked()
 {
-    if (!m_serviceReady)
-    {
-        QMessageBox::information(this, "服务启动中",
-                                 m_serviceReadyMessage.isEmpty()
-                                     ? QStringLiteral("服务尚未就绪，请稍候后再试。")
-                                     : m_serviceReadyMessage);
-        return;
-    }
-
-    if (m_loginInProgress || m_accountListLoading)
+    // PC remote mode may reject /list-account while /login-by-password still works.
+    // Password login must not be blocked by the account-list readiness probe.
+    if (m_loginInProgress)
     {
         return;
     }
@@ -359,9 +352,12 @@ void LoginPage::invalidateAccountListCache()
 
 void LoginPage::updateInteractionState()
 {
-    const bool controlsEnabled = m_serviceReady && !m_loginInProgress && !m_accountListLoading;
-    ui->loginBtn->setEnabled(controlsEnabled);
-    ui->selectAccountBtn->setEnabled(controlsEnabled);
+    // Keep manual password login available even when the optional account list
+    // service is unavailable; the account picker still depends on that probe.
+    const bool loginEnabled = !m_loginInProgress;
+    const bool accountPickerEnabled = m_serviceReady && !m_loginInProgress && !m_accountListLoading;
+    ui->loginBtn->setEnabled(loginEnabled);
+    ui->selectAccountBtn->setEnabled(accountPickerEnabled);
 }
 
 void LoginPage::updateAccountRowHighlight()
@@ -579,6 +575,8 @@ void LoginPage::refreshServiceReadyState()
 
 void LoginPage::setServiceReady(bool ready, const QString &message)
 {
+    // m_serviceReady now represents account-list/readiness status, not whether
+    // manual password login is allowed.
     m_serviceReady = ready;
     m_serviceReadyMessage = ready
         ? QStringLiteral("服务已就绪，可进行账号密码登录或刷卡登录。")
@@ -588,14 +586,14 @@ void LoginPage::setServiceReady(bool ready, const QString &message)
     {
         ui->accountLoginDescLabel->setText(m_serviceReady
             ? QStringLiteral("请输入操作员账号和登录密码，也可直接刷卡登录。")
-            : m_serviceReadyMessage);
+            : QStringLiteral("可手动输入账号密码登录；账号选择和刷卡登录需等待账号列表服务。"));
     }
 
     if (ui->loginFootHint)
     {
         ui->loginFootHint->setText(m_serviceReady
             ? QStringLiteral("支持刷卡直接登录；若无响应，请重新贴卡后再试。")
-            : QStringLiteral("后台服务启动完成前，暂不开放账号密码登录和刷卡登录。"));
+            : QStringLiteral("%1 账号密码登录可手动尝试。").arg(m_serviceReadyMessage));
     }
 
     if (m_cardSource)
