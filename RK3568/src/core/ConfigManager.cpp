@@ -112,11 +112,11 @@ void ConfigManager::loadDefaults()
     // 如果配置不存在,设置默认值
     if (!m_settings->contains("system/homeUrl"))
     {
-        setHomeUrl("http://localhost/pad");
+        setHomeUrl("https://outage.yw-safe.com");
     }
     if (!m_settings->contains("system/apiUrl"))
     {
-        setApiUrl("http://localhost/api/kids-outage/third-api");
+        setApiUrl("https://outage.yw-safe.com/api/kids-outage/third-api");
     }
     if (!m_settings->contains("system/stationId"))
     {
@@ -124,7 +124,7 @@ void ConfigManager::loadDefaults()
     }
     if (!m_settings->contains("system/tenantCode"))
     {
-        setTenantCode("000000");
+        setTenantCode("dev001");
     }
     if (!m_settings->contains("serial/keyPort"))
     {
