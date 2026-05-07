@@ -1128,7 +1128,7 @@ bool ProcessService::startScriptProcess(const QString &scriptPath)
 QString ProcessService::serviceStartMode() const
 {
 #ifdef Q_OS_WIN
-    const QString defaultMode = "local";
+    const QString defaultMode = "remote";
 #else
     const QString defaultMode = "remote";
 #endif

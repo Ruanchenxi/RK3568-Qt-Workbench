@@ -272,9 +272,8 @@ void ConfigManager::loadDefaults()
     if (!m_settings->contains("service/remoteFallbackLocal"))
     {
 #ifdef Q_OS_WIN
-        // Windows 联调环境默认开启回退：
-        // remote 模式检测到服务不可达时，自动回退执行本地启动脚本。
-        setValue("service/remoteFallbackLocal", true);
+        // PC 线上包默认纯 remote：远程不可达时只报告状态，不自动拉起本地 start-all.bat。
+        setValue("service/remoteFallbackLocal", false);
 #else
         // Linux 板端优先采用“检查优先，失败再恢复”：
         // 若本地存在恢复脚本，则允许 remote 失败后回退本地拉起。
@@ -301,10 +300,8 @@ void ConfigManager::loadDefaults()
     if (!m_settings->contains("service/remoteRequirePorts"))
     {
 #ifdef Q_OS_WIN
-        // Windows 联调默认开启严格端口检查：
-        // 即使 80 端口可达，也要求关键业务端口（如 8081/9000）可达，
-        // 否则触发 remote->local 回退，自动拉起后端。
-        setValue("service/remoteRequirePorts", true);
+        // PC 线上包不要求本机 8081/9000 端口存在；只检查 homeUrl/apiUrl 主机可达。
+        setValue("service/remoteRequirePorts", false);
 #else
         // Linux 产品板默认同机部署，优先要求关键端口可达；
         // 若没有本地恢复脚本，则仍按纯 remote 口径保持宽松检查。
@@ -314,10 +311,10 @@ void ConfigManager::loadDefaults()
     if (!m_settings->contains("service/startMode"))
     {
         // 启动策略默认值按平台区分：
-        // Windows 联调默认 local（由前端拉起 start-all.bat）。
+        // Windows PC 包默认 remote，连接外部/线上服务，不拉起本地 start-all.bat。
         // Linux 板端默认 remote，先做健康检查，必要时再通过 remoteFallbackLocal 恢复。
 #ifdef Q_OS_WIN
-        setValue("service/startMode", "local");
+        setValue("service/startMode", "remote");
 #else
         setValue("service/startMode", "remote");
 #endif
@@ -335,7 +332,7 @@ void ConfigManager::loadDefaults()
     if (!m_settings->contains("service/startModeMigratedV1"))
     {
 #ifdef Q_OS_WIN
-        setValue("service/startMode", "local");
+        setValue("service/startMode", "remote");
 #else
         setValue("service/startMode", "remote");
 #endif
@@ -363,18 +360,29 @@ void ConfigManager::loadDefaults()
     }
 
 #ifdef Q_OS_WIN
-    // 兼容迁移V3（Windows联调优先）：
-    // 历史版本可能通过 V2 强制把 startMode 迁移成 remote，
-    // 导致只做可达性检查、不执行本地脚本拉起。
-    // 本迁移仅在 Windows 执行一次，把 remote 拉回 local。
+    // 兼容迁移V3（保留历史键名）：
+    // 新的 PC 线上包口径是 remote，不再把 Windows 强制迁回 local。
     if (!m_settings->contains("service/startModeMigratedV3WindowsLocalDefault"))
     {
         const QString currentMode = m_settings->value("service/startMode").toString().trimmed().toLower();
-        if (currentMode.isEmpty() || currentMode == "remote")
+        if (currentMode.isEmpty())
         {
-            setValue("service/startMode", "local");
+            setValue("service/startMode", "remote");
         }
         setValue("service/startModeMigratedV3WindowsLocalDefault", true);
+    }
+
+    // PC 线上包迁移：已有本地联调配置也切到纯 remote，避免打包后仍启动本地后端。
+    if (!m_settings->contains("service/startModeMigratedV4WindowsRemotePackageDefault"))
+    {
+        const QString currentMode = m_settings->value("service/startMode").toString().trimmed().toLower();
+        if (currentMode.isEmpty() || currentMode == "local")
+        {
+            setValue("service/startMode", "remote");
+        }
+        setValue("service/remoteFallbackLocal", false);
+        setValue("service/remoteRequirePorts", false);
+        setValue("service/startModeMigratedV4WindowsRemotePackageDefault", true);
     }
 #endif
 
