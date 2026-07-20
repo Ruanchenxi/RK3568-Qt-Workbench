@@ -1,0 +1,3363 @@
+/**
+ * @file KeyManageController.cpp
+ * @brief 閽ュ寵绠＄悊椤垫帶鍒跺櫒瀹炵幇
+ */
+#include "features/key/application/KeyManageController.h"
+
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonParseError>
+#include <QDebug>
+#include <QStringList>
+#include <QTimer>
+#include <QNetworkAccessManager>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QUrlQuery>
+
+#include "core/AppContext.h"
+#include "core/ConfigManager.h"
+#include "features/key/application/KeySessionService.h"
+#include "features/key/application/KeyProvisioningService.h"
+#include "features/key/application/TicketCancelCoordinator.h"
+#include "features/key/application/TicketStore.h"
+#include "features/key/application/TicketIngressService.h"
+#include "features/key/application/TicketReturnHttpClient.h"
+#include "features/auth/infra/password/AuthServiceAdapter.h"
+#include "features/key/protocol/KeyProtocolDefs.h"
+
+namespace {
+
+int resolveBusinessStationNo()
+{
+    ConfigManager *config = ConfigManager::instance();
+    bool ok = false;
+    const int stationNo = config->stationId().trimmed().toInt(&ok);
+    if (ok && stationNo >= 0) {
+        return stationNo;
+    }
+
+    const int legacyStationNo = config->value(QStringLiteral("key/backendStationNo"), 0).toInt(&ok);
+    return (ok && legacyStationNo >= 0) ? legacyStationNo : 0;
+}
+
+QString rawTaskIdToDecimalString(const QByteArray &taskIdRaw)
+{
+    if (taskIdRaw.size() < 8) {
+        return QString();
+    }
+
+    qulonglong value = 0;
+    for (int i = 0; i < 8; ++i) {
+        value |= (static_cast<qulonglong>(static_cast<quint8>(taskIdRaw[i])) << (i * 8));
+    }
+    return QString::number(value);
+}
+
+bool isSessionReadySnapshot(const KeySessionSnapshot &snapshot)
+{
+    return snapshot.connected
+            && snapshot.keyPresent
+            && snapshot.keyStable
+            && snapshot.sessionReady;
+}
+
+bool isReturnInFlightState(const QString &state)
+{
+    return state == QLatin1String("return-requesting-log")
+            || state == QLatin1String("return-handshake")
+            || state == QLatin1String("return-log-requesting")
+            || state == QLatin1String("return-log-receiving")
+            || state == QLatin1String("return-uploading");
+}
+
+bool isReturnCleanupState(const QString &state)
+{
+    return state == QLatin1String("return-upload-success")
+            || state == QLatin1String("return-delete-pending")
+            || state == QLatin1String("return-delete-verifying")
+            || state == QLatin1String("return-delete-success");
+}
+
+bool shouldSkipAutoReturnForState(const QString &state)
+{
+    return state == QLatin1String("return-success")
+            || state == QLatin1String("return-delete-success")
+            || state == QLatin1String("return-delete-failed")
+            || isReturnInFlightState(state)
+            || isReturnCleanupState(state)
+            || state == QLatin1String("manual-required")
+            || state == QLatin1String("upload_uncertain")
+            || state == QLatin1String("return-failed");
+}
+
+bool isAutomaticTransferSource(const SystemTicketDto &ticket)
+{
+    return ticket.transferTriggerSource == QLatin1String("automatic");
+}
+
+QString extractTaskIdFromWorkbenchJson(const QByteArray &jsonBytes)
+{
+    QJsonParseError pe;
+    const QJsonDocument doc = QJsonDocument::fromJson(jsonBytes, &pe);
+    if (doc.isNull() || !doc.isObject()) {
+        return QString();
+    }
+
+    const QJsonObject root = doc.object();
+    const QJsonObject ticketObj = (root.contains("data") && root.value("data").isObject())
+            ? root.value("data").toObject()
+            : root;
+    return ticketObj.value("taskId").toString().trimmed();
+}
+
+}
+
+KeyManageController::KeyManageController(IKeySessionService *session,
+                                         SerialLogManager *logManager,
+                                         QObject *parent)
+    : QObject(parent)
+    , m_session(session)
+    , m_logManager(logManager)
+    , m_ticketStore(new TicketStore(this))
+    , m_ticketIngress(new TicketIngressService(this))
+    , m_ticketReturnClient(new TicketReturnHttpClient(this))
+    , m_keyProvisioning(new KeyProvisioningService(nullptr, this))
+    , m_ticketCancelCoordinator(new TicketCancelCoordinator(this))
+    , m_terminationNetwork(new QNetworkAccessManager(this))
+    , m_nextOpId(1)
+    , m_selectedSystemTicketId()
+    , m_activeTransferTaskId()
+    , m_activeReturnTaskId()
+    , m_activeReturnTaskIdRaw()
+    , m_httpTransactionSafetyTimer(new QTimer(this))
+{
+    m_httpTransactionSafetyTimer->setSingleShot(true);
+    m_httpTransactionSafetyTimer->setInterval(60000); // 60 秒安全超时
+    connect(m_httpTransactionSafetyTimer, &QTimer::timeout, this, [this]() {
+        const QString timedOutTaskId = m_httpTransferTransactionTaskId;
+        qWarning().noquote()
+                << QStringLiteral("[KeyManageController] HTTP transfer transaction safety timeout fired! "
+                                  "Force-clearing stuck lock. taskId=%1 session=%2 epoch=%3")
+                      .arg(m_httpTransferTransactionTaskId.isEmpty()
+                                   ? QStringLiteral("<none>")
+                                   : m_httpTransferTransactionTaskId,
+                           QString::number(m_httpTransferTransactionSessionId),
+                           QString::number(m_httpTransferTransactionBridgeEpoch));
+        emit statusMessage(QStringLiteral("浼犵エ浜掓枼閿佽秴鏃讹紙60s锛夛紝寮哄埗閲婃斁锛岃妫€鏌ユ棩蹇?") );
+        clearHttpTransferTransaction(true);
+        if (!timedOutTaskId.isEmpty()) {
+            m_ticketStore->updateTransferState(timedOutTaskId,
+                                               QStringLiteral("failed"),
+                                               QStringLiteral("HTTP浼犵エ浜嬪姟瓒呮椂锛屽凡寮哄埗娓呯悊娲诲姩涓婁笅鏂?") );
+        }
+    });
+    if (!m_session) {
+        m_session = new KeySessionService(this);
+    }
+    if (!m_logManager) {
+        m_logManager = new SerialLogManager(this);
+    }
+
+    connect(m_session, &IKeySessionService::eventOccurred,
+            this, &KeyManageController::handleSessionEvent);
+    connect(m_session, &IKeySessionService::logItemEmitted,
+            this, &KeyManageController::handleLogItem);
+    connect(m_ticketStore, &TicketStore::ticketsChanged,
+            this, &KeyManageController::handleSystemTicketsChanged);
+    connect(m_ticketIngress, &TicketIngressService::httpServerLogAppended,
+            this, &KeyManageController::handleHttpServerLog);
+    m_ticketIngress->setIngressHandler(
+            [this](const QByteArray &jsonBytes,
+                   const TicketIngressService::PersistBodyFn &persistBody) {
+        TicketIngressService::IngressResult result;
+        QString taskId = extractTaskIdFromWorkbenchJson(jsonBytes);
+        if (taskId.isEmpty()) {
+            result.accepted = false;
+            result.statusCode = 200;
+            result.message = QStringLiteral("浼犵エ璇锋眰涓?taskId 涓虹┖锛屾棤娉曞鐞?");
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] ticket ingress rejected reason=empty-taskId");
+            return result;
+        }
+
+        const TicketCancelCoordinator::CancelRecord trackedCancel =
+                m_ticketCancelCoordinator->recordFor(taskId);
+        if (trackedCancel.valid
+                && (trackedCancel.cancelState == QLatin1String("cancel-accepted")
+                    || trackedCancel.cancelState == QLatin1String("cancel-pending")
+                    || trackedCancel.cancelState == QLatin1String("cancel-executing"))) {
+            result.accepted = false;
+            result.statusCode = 200;
+            result.message = QStringLiteral("璇ヤ换鍔″凡鍙楃悊鎾ら攢锛屽綋鍓嶄笉鍐嶆帴鍙楅噸澶嶄紶绁?");
+            result.taskId = taskId;
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] ticket ingress rejected reason=cancel-active taskId=%1 cancelState=%2")
+                          .arg(taskId, trackedCancel.cancelState);
+            return result;
+        }
+        // WHY: 閽ュ寵鏈氨缁椂绂佹鎵ц閽ュ寵浼犵エ锛堟湰鍦?HTTP 鍏ュ彛纭棬绂侊級
+        // 鍦ㄧエ杩涘叆鏈湴绁ㄦ睜涔嬪墠锛屽厛妫€鏌ラ挜鍖欑姸鎬侊紝閬垮厤鏃犻挜鍖欐椂绁ㄩ敊璇繘鍏ュ緟浼犻摼
+        const KeySessionSnapshot snapshot = m_session->snapshot();
+        const bool keyReady = snapshot.connected
+                && snapshot.keyPresent
+                && snapshot.keyStable
+                && snapshot.sessionReady;
+
+        if (!keyReady) {
+            result.accepted = false;
+            result.statusCode = 200;  // 涓氬姟鎷掔粷浠嶈繑鍥?HTTP 200
+            result.message = QStringLiteral("鏈娴嬪埌閽ュ寵鍦ㄤ綅锛岃纭锛?");
+            result.taskId.clear();
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] ticket ingress rejected reason=key-not-ready connected=%1 keyPresent=%2 keyStable=%3 sessionReady=%4")
+                          .arg(snapshot.connected ? QStringLiteral("true") : QStringLiteral("false"),
+                               snapshot.keyPresent ? QStringLiteral("true") : QStringLiteral("false"),
+                               snapshot.keyStable ? QStringLiteral("true") : QStringLiteral("false"),
+                               snapshot.sessionReady ? QStringLiteral("true") : QStringLiteral("false"));
+            return result;
+        }
+        // commandInFlight / recoveryWindowActive 涓嶅湪姝ゅ鎷︽埅锛?        // 杩欎袱涓姸鎬佹槸鐬椂鐨勶紙Q_TASK銆佺數閲忔煡璇㈢瓑闅忔椂鍦ㄩ€旓級锛屽湪 ingress 灞傜‖鎷︿細瀵艰嚧鐢ㄦ埛鍑犱箮姘歌繙鏃犳硶浼犵エ銆?        // 璁╄姹傚厛鍏ユ睜锛岀敱 startDirectWorkbenchTransfer 鍒ゆ柇鈥斺€斿鏋滃綋鏃朵粛鍦ㄩ€斿垯鏍囪 failed 骞惰繑鍥為敊璇紝
+        // 鐢ㄦ埛閲嶈瘯鍗冲彲锛屼笉浼氳姘镐箙鍗℃銆?
+        if (m_httpTransferTransactionActive) {
+            result.accepted = false;
+            result.statusCode = 200;
+            result.message = QStringLiteral("褰撳墠宸叉湁宸ヤ綔鍙颁紶绁ㄧ‘璁や簨鍔″湪鎵ц锛岃绋嶅悗閲嶈瘯");
+            result.taskId = taskId;
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] ticket ingress rejected reason=http-transaction-active taskId=%1 activeTaskId=%2")
+                          .arg(taskId.isEmpty() ? QStringLiteral("<empty>") : taskId,
+                               m_httpTransferTransactionTaskId.isEmpty()
+                                       ? QStringLiteral("<none>")
+                                       : m_httpTransferTransactionTaskId);
+            return result;
+        }
+
+        const SystemTicketDto oldTicket = m_ticketStore->ticketById(taskId);
+        if (oldTicket.valid) {
+            if (oldTicket.transferState == QLatin1String("success")) {
+                // 鑻ユ湁鏈€鏂?Q_TASK 鏁版嵁涓旇浠诲姟宸蹭笉鍦ㄩ挜鍖欎腑锛岃鏄庢湰鍦扮姸鎬侀檲鏃э紝鍏佽閲嶄紶
+                const bool hasKeyTaskData = !m_lastKeyTasks.isEmpty();
+                const bool taskStillInKey = taskExistsInList(m_lastKeyTasks, taskId);
+                if (hasKeyTaskData && !taskStillInKey) {
+                    qInfo().noquote()
+                            << QStringLiteral("[KeyManageController] ticket ingress: local success state stale (taskId not in lastKeyTasks), allowing re-transfer taskId=%1")
+                                  .arg(taskId);
+                    m_ticketStore->updateTransferState(taskId, QStringLiteral("received"));
+                } else {
+                    result.accepted = false;
+                    result.statusCode = 200;
+                    result.message = QStringLiteral("璇ヤ换鍔″凡浼犵エ鍒伴挜鍖欙紝璇峰嬁閲嶅鎿嶄綔");
+                    result.taskId = taskId;
+                    return result;
+                }
+            }
+            if (oldTicket.transferState == QLatin1String("sending")) {
+                result.accepted = false;
+                result.statusCode = 200;
+                result.message = QStringLiteral("璇ヤ换鍔℃鍦ㄤ紶绁ㄤ腑锛岃鍕块噸澶嶆搷浣?");
+                result.taskId = taskId;
+                return result;
+            }
+            if (oldTicket.transferState == QLatin1String("received")
+                    || oldTicket.transferState == QLatin1String("auto-pending")) {
+                result.accepted = false;
+                result.statusCode = 200;
+                result.message = QStringLiteral("璇ヤ换鍔″凡鏈夊緟澶勭悊鐨勪紶绁ㄨ姹傦紝璇峰嬁閲嶅鎿嶄綔");
+                result.taskId = taskId;
+                return result;
+            }
+        }
+
+        const int expectedSessionId = m_keySessionId;
+        const int expectedBridgeEpoch = snapshot.bridgeEpoch;
+        if (!m_activeReturnTaskId.isEmpty()
+                || !m_pendingReturnHandshakeTaskId.isEmpty()
+                || !m_pendingDeletedSystemTicketId.isEmpty()) {
+            result.accepted = false;
+            result.statusCode = 200;
+            result.message = QStringLiteral("褰撳墠閽ュ寵浠嶆湁鍥炰紶鎴栧垹闄ょ‘璁や腑鐨勪笟鍔★紝璇风◢鍚庨噸璇?");
+            result.taskId = taskId;
+            return result;
+        }
+        if (m_autoQuerySessionId == expectedSessionId && expectedSessionId > 0) {
+            result.accepted = false;
+            result.statusCode = 200;
+            result.message = QStringLiteral("褰撳墠閽ュ寵閫氳姝ｅ湪纭锛岃绋嶅悗閲嶈瘯");
+            result.taskId = taskId;
+            return result;
+        }
+
+        // P0锛氬厛鍏ユ睜锛坮eceived锛夛紝鍐嶅紓姝ュ彂閫侊紝绔嬪嵆杩斿洖 success=true
+        // m_httpTransferTransactionActive 鍏呭綋骞跺彂浜掓枼閿侊紝鍦ㄤ紶绁ㄥ紓姝ュ畬鎴愬悗鐢变簨浠跺鐞嗗櫒閲婃斁
+        // P0：先入池（received），再异步发送，立即返回 success=true
+        setHttpTransferTransaction(taskId, expectedSessionId, expectedBridgeEpoch);
+
+        const QString savedPath = persistBody();
+        QString ingestError;
+        if (!m_ticketStore->ingestJson(jsonBytes, savedPath, &ingestError)) {
+            qWarning().noquote()
+                    << QStringLiteral("[KeyManageController] ticket ingress ingest failed taskId=%1 reason=%2")
+                          .arg(taskId, ingestError);
+            clearHttpTransferTransaction(false);
+            result.accepted = false;
+            result.statusCode = 200;
+            result.message = QStringLiteral("浼犵エ璇锋眰鍏ユ睜澶辫触锛?1").arg(ingestError);
+            result.taskId = taskId;
+            return result;
+        }
+
+        QString transferBlockedReason;
+        if (!startDirectWorkbenchTransfer(taskId,
+                                          jsonBytes,
+                                          expectedSessionId,
+                                          expectedBridgeEpoch,
+                                          &transferBlockedReason)) {
+            m_ticketStore->updateTransferState(taskId, QStringLiteral("failed"), transferBlockedReason);
+            clearHttpTransferTransaction(false);
+            result.accepted = false;
+            result.statusCode = 200;
+            result.message = transferBlockedReason.isEmpty()
+                    ? QStringLiteral("閽ュ寵鐘舵€佸湪鍙戦€佸墠鍙戠敓鍙樺寲锛岃閲嶆柊鐐瑰嚮閽ュ寵浼犵エ")
+                    : transferBlockedReason;
+            result.taskId = taskId;
+            return result;
+        }
+
+        // 浼犵エ宸插紑濮嬪紓姝ュ彂閫侊紝鎸傝捣 socket 绛夊緟涓插彛 + Q_TASK 纭
+        // TicketTransferFinished/TicketTransferFailed 浜嬩欢澶勭悊鍣ㄨ礋璐ｈ皟鐢?completeDeferredResponse
+        result.accepted = true;
+        result.deferred = true;
+        result.statusCode = 200;
+        result.message = QStringLiteral("浼犵エ璇锋眰宸插紑濮嬪彂閫?");
+        result.taskId = taskId;
+        return result;
+    });
+
+    // 鈹€鈹€ cancelTicket ingress handler 鈹€鈹€
+    m_ticketIngress->setCancelHandler([this](const QString &taskId) {
+        TicketIngressService::IngressResult result;
+        result.statusCode = 200;
+        result.taskId = taskId;
+
+        if (taskId.isEmpty()) {
+            result.accepted = false;
+            result.message = QStringLiteral("taskId 涓虹┖");
+            return result;
+        }
+
+        const TicketCancelCoordinator::CancelRecord trackedRecord =
+                m_ticketCancelCoordinator->recordFor(taskId);
+
+        if (trackedRecord.valid) {
+            if (trackedRecord.cancelState == QLatin1String("cancel-done")) {
+                result.accepted = true;
+                result.message = QStringLiteral("浠诲姟宸插彇娑?");
+                return result;
+            }
+            if (trackedRecord.cancelState == QLatin1String("cancel-accepted")
+                    || trackedRecord.cancelState == QLatin1String("cancel-pending")
+                    || trackedRecord.cancelState == QLatin1String("cancel-executing")) {
+                result.accepted = true;
+                result.message = QStringLiteral("浠诲姟鍙栨秷宸插彈鐞?");
+                return result;
+            }
+        }
+
+        SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
+
+        // 票不存在，尝试孤儿恢复（重启后票池丢失但钥匙里仍有任务）
+        if (!ticket.valid) {
+            quint8 orphanStatus = 0xFF;
+            const QByteArray orphanRaw = findKeyTaskIdRaw(taskId, &orphanStatus);
+            if (!orphanRaw.isEmpty()) {
+                // 閽ュ寵閲屾湁杩欎釜浠诲姟锛屽缓瀛ゅ効鎭㈠璁板綍鍚庣户缁蛋姝ｅ父娴佺▼
+                m_ticketStore->ingestOrphanTicket(taskId);
+                ticket = m_ticketStore->ticketById(taskId);
+                qInfo().noquote()
+                        << QStringLiteral("[KeyManageController] cancel ingress orphan-recovery taskId=%1 keyStatus=0x%2")
+                              .arg(taskId, QString::number(orphanStatus, 16));
+            } else {
+                result.accepted = false;
+                result.message = QStringLiteral("鏈壘鍒板搴斾换鍔?");
+                qInfo().noquote()
+                        << QStringLiteral("[KeyManageController] cancel ingress rejected reason=not-found taskId=%1")
+                              .arg(taskId);
+                return result;
+            }
+        }
+
+        // 宸叉湁鎾ら攢鎰忓浘锛堝箓绛夛級
+        // 已受理撤销的票不参与本轮对账升级
+        if (!ticket.cancelState.isEmpty()
+                && ticket.cancelState != QLatin1String("none")) {
+            result.accepted = true;
+            result.message = QStringLiteral("浠诲姟鍙栨秷宸插彈鐞?");
+            m_ticketCancelCoordinator->recordAccepted(taskId,
+                                                     ticket,
+                                                     ticket.cancelState,
+                                                     result.message);
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] cancel ingress idempotent taskId=%1 cancelState=%2")
+                          .arg(taskId, ticket.cancelState);
+            return result;
+        }
+
+        // 已完成回传闭环（幂等成功）
+        if (ticket.returnState == QLatin1String("return-delete-success")
+                || ticket.returnState == QLatin1String("return-success")
+                || ticket.transferState == QLatin1String("key-cleared")) {
+            result.accepted = true;
+            result.message = QStringLiteral("浠诲姟宸插畬鎴愶紝鏃犻渶鎾ら攢");
+            m_ticketCancelCoordinator->recordDone(taskId, ticket, result.message);
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] cancel ingress no-op taskId=%1 returnState=%2 transferState=%3")
+                          .arg(taskId, ticket.returnState, ticket.transferState);
+            return result;
+        }
+
+        // 宸插湪鍥炰紶娓呯悊閾句腑锛堜笉鏂拌捣鎾ら攢閾撅級
+        if (ticket.returnState == QLatin1String("return-upload-success")
+                || ticket.returnState == QLatin1String("return-delete-pending")
+                || ticket.returnState == QLatin1String("return-delete-verifying")) {
+            result.accepted = true;
+            result.message = QStringLiteral("浠诲姟宸插湪娓呯悊涓紝鏃犻渶閲嶅鎾ら攢");
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] cancel ingress already-in-cleanup taskId=%1 returnState=%2")
+                          .arg(taskId, ticket.returnState);
+            return result;
+        }
+
+        // 鏈笅鍙戝埌閽ュ寵锛坮eceived / auto-pending锛夛紝涓?lastKeyTasks 閲屾病鏈?鈫?鐩存帴绉婚櫎
+        const KeySessionSnapshot snapshot = m_session->snapshot();
+        if (ticket.transferState == QLatin1String("success")
+                && (!snapshot.connected || !snapshot.keyPresent || m_lastKeyTasks.isEmpty())) {
+            result.accepted = false;
+            result.message = QStringLiteral("浠诲姟宸蹭笅鍙戝埌閽ュ寵涓旈挜鍖欏凡琚彇璧帮紝鏃犳硶鎾ら攢姝ｅ湪鎵ц鐨勪换鍔?");
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] cancel ingress rejected reason=key-not-present-after-success taskId=%1 connected=%2 keyPresent=%3 lastKeyTasks=%4")
+                          .arg(taskId,
+                               snapshot.connected ? QStringLiteral("true") : QStringLiteral("false"),
+                               snapshot.keyPresent ? QStringLiteral("true") : QStringLiteral("false"),
+                               QString::number(m_lastKeyTasks.size()));
+            return result;
+        }
+
+        if ((ticket.transferState == QLatin1String("received")
+                    || ticket.transferState == QLatin1String("auto-pending"))
+                && !taskExistsInList(m_lastKeyTasks, taskId)) {
+            m_ticketCancelCoordinator->recordDone(taskId, ticket, QStringLiteral("浠诲姟宸插彇娑?") );
+            m_ticketStore->removeTicket(taskId);
+            result.accepted = true;
+            result.message = QStringLiteral("浠诲姟宸插彇娑?");
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] cancel ingress direct-remove taskId=%1 transferState=%2")
+                          .arg(taskId, ticket.transferState);
+            return result;
+        }
+
+        // 记录当前钥匙列表中的可见性，用于撤销跟踪上下文
+        const bool currentlyInKey = taskExistsInList(m_lastKeyTasks, taskId);
+        QString blockedReason;
+        const bool canProcessNow = canProcessCancelNow(&blockedReason);
+        const QString nextCancelState = canProcessNow
+                ? QStringLiteral("cancel-pending")
+                : QStringLiteral("cancel-accepted");
+
+        m_ticketStore->updateCancelTracking(taskId,
+                                            nextCancelState,
+                                            QStringLiteral("workbench-http"),
+                                            ticket.residentSlotId.isEmpty() ? QStringLiteral("slot-1") : ticket.residentSlotId,
+                                            ticket.residentKeyId,
+                                            QDateTime::currentDateTime(),
+                                            currentlyInKey,
+                                            canProcessNow
+                                                ? QStringLiteral("宸插彈鐞嗘挙閿€锛岀瓑寰?Q_TASK 瀵硅处鍚庢墽琛屽垹闄?")
+                                                : QStringLiteral("宸插彈鐞嗘挙閿€锛岀瓑寰呭綋鍓嶄笟鍔￠摼鏀跺彛"));
+        m_ticketCancelCoordinator->recordAccepted(taskId,
+                                                 m_ticketStore->ticketById(taskId),
+                                                 nextCancelState,
+                                                 canProcessNow
+                                                     ? QStringLiteral("浠诲姟鍙栨秷宸插彈鐞嗭紝鍑嗗瀵硅处鎵ц")
+                                                     : QStringLiteral("浠诲姟鍙栨秷宸插彈鐞嗭紝寰呭綋鍓嶄换鍔℃敹鍙ｅ悗鎵ц"));
+        result.accepted = true;
+        result.message = canProcessNow
+                ? QStringLiteral("浠诲姟鍙栨秷宸插彈鐞嗭紝鍑嗗瀵硅处鎵ц")
+                : QStringLiteral("浠诲姟鍙栨秷宸插彈鐞嗭紝寰呭綋鍓嶄换鍔℃敹鍙ｅ悗鎵ц");
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] cancel ingress accepted taskId=%1 transferState=%2 returnState=%3 nextCancelState=%4 blockedReason=%5")
+                      .arg(taskId,
+                           ticket.transferState,
+                           ticket.returnState,
+                           nextCancelState,
+                           blockedReason.isEmpty() ? QStringLiteral("<none>") : blockedReason);
+        if (canProcessNow) {
+            schedulePendingCancelReconcile(QStringLiteral("cancel-request-accepted"), 150);
+        }
+        return result;
+    });
+
+    connect(m_ticketReturnClient, &TicketReturnHttpClient::logAppended,
+            this, &KeyManageController::handleHttpClientLog);
+    connect(m_ticketReturnClient, &TicketReturnHttpClient::uploadSucceeded,
+            this, &KeyManageController::handleReturnUploadSucceeded);
+    connect(m_ticketReturnClient, &TicketReturnHttpClient::uploadFailed,
+            this, &KeyManageController::handleReturnUploadFailed);
+    connect(m_keyProvisioning, &KeyProvisioningService::logAppended,
+            this, &KeyManageController::handleHttpClientLog);
+    connect(m_keyProvisioning, &KeyProvisioningService::initPayloadReady,
+            this, &KeyManageController::handleInitPayloadReady);
+    connect(m_keyProvisioning, &KeyProvisioningService::rfidPayloadReady,
+            this, &KeyManageController::handleRfidPayloadReady);
+    connect(m_keyProvisioning, &KeyProvisioningService::requestFailed,
+            this, &KeyManageController::handleProvisionRequestFailed);
+    connect(m_logManager, &SerialLogManager::overflowDropped, this, [this]() {
+        emit statusMessage(QStringLiteral("鏃ュ織杈惧埌涓婇檺锛屽凡鑷姩涓㈠純鏃ф棩蹇?") );
+    });
+    connect(ConfigManager::instance(), &ConfigManager::configChanged,
+            this, [this](const QString &key, const QVariant &) {
+        if (key == QLatin1String("serial/keyPort")) {
+            refreshKeySerialApplyStatus();
+        }
+    });
+}
+
+void KeyManageController::start()
+{
+    m_ticketStore->loadFromDisk();
+
+    // 鐧诲綍鍚庨噸璇曚笂娆″洜鏈櫥褰曡€屽け璐ョ殑宸ヤ綔鍙扮粓姝㈤€氱煡
+    auto retryPendingTerminations = [this]() {
+        for (const SystemTicketDto &ticket : m_ticketStore->tickets()) {
+            if (ticket.adminDeleteStage
+                    == SystemTicketDto::AdminDeleteStage::KeyClearedAwaitingTermination) {
+                callTerminationThenRemove(ticket.taskId);
+            }
+        }
+    };
+    connect(AppContext::instance(), &AppContext::userLoggedIn,
+            this, [retryPendingTerminations](const UserInfo &) {
+        retryPendingTerminations();
+    });
+    // 控制器启动时用户可能已经是已登录状态，直接触发一次
+    if (AppContext::instance()->isLoggedIn()) {
+        retryPendingTerminations();
+    }
+
+    m_ticketCancelCoordinator->start();
+    tryAutoConnectKeyPort();
+    if (!m_ticketIngress->start()) {
+        emit statusMessage(m_ticketIngress->lastError());
+    }
+    const KeySessionSnapshot snapshot = currentSnapshot();
+    m_lastReadyState = snapshot.connected
+            && snapshot.keyPresent
+            && snapshot.keyStable
+            && snapshot.sessionReady;
+    m_acceptedBridgeEpoch = snapshot.bridgeEpoch;
+    emit sessionSnapshotChanged(snapshot);
+    emit systemTicketsUpdated(systemTickets());
+    refreshKeySerialApplyStatus();
+    schedulePendingCancelReconcile(QStringLiteral("startup"), 500);
+}
+
+void KeyManageController::onInitClicked()
+{
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    if (!snapshot.connected) {
+        emit statusMessage(QStringLiteral("涓插彛鏈繛鎺ワ紝鏃犳硶鎵ц鍒濆鍖?") );
+        return;
+    }
+    if (!snapshot.keyPresent || !snapshot.keyStable || !snapshot.sessionReady) {
+        emit statusMessage(QStringLiteral("閽ュ寵鏈氨缁紝鏃犳硶鎵ц鍒濆鍖?") );
+        return;
+    }
+    if (m_keyProvisioning->isBusy()) {
+        emit statusMessage(QStringLiteral("姝ｅ湪鑾峰彇閽ュ寵鍒濆鍖栨暟鎹紝璇风◢鍚庡啀璇?") );
+        return;
+    }
+
+    const int stationNo = resolveBusinessStationNo();
+    emit statusMessage(QStringLiteral("鍒濆鍖栭挜鍖欙紝姝ｅ湪鑾峰彇鍒濆鍖栨暟鎹?.."));
+    m_keyProvisioning->requestInitPayload(stationNo);
+}
+
+void KeyManageController::onDownloadRfidClicked()
+{
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    if (!snapshot.connected) {
+        emit statusMessage(QStringLiteral("涓插彛鏈繛鎺ワ紝鏃犳硶涓嬭浇 RFID"));
+        return;
+    }
+    if (!snapshot.keyPresent || !snapshot.keyStable || !snapshot.sessionReady) {
+        emit statusMessage(QStringLiteral("閽ュ寵鏈氨缁紝鏃犳硶涓嬭浇 RFID"));
+        return;
+    }
+    if (m_keyProvisioning->isBusy()) {
+        emit statusMessage(QStringLiteral("姝ｅ湪鑾峰彇 RFID 鏁版嵁锛岃绋嶅悗鍐嶈瘯"));
+        return;
+    }
+
+    const int stationNo = resolveBusinessStationNo();
+    emit statusMessage(QStringLiteral("涓嬭浇 RFID锛屾鍦ㄨ幏鍙栧悗绔暟鎹?.."));
+    m_keyProvisioning->requestRfidPayload(stationNo);
+}
+
+void KeyManageController::onQueryBatteryClicked()
+{
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    if (!snapshot.connected) {
+        emit statusMessage(QStringLiteral("涓插彛鏈繛鎺ワ紝鏃犳硶鏌ヨ閽ュ寵鐢甸噺"));
+        return;
+    }
+
+    CommandRequest req;
+    req.id = CommandId::QueryBattery;
+    req.opId = nextOpId();
+    m_session->execute(req);
+    emit statusMessage(QStringLiteral("鎵ц鑾峰彇鐢甸噺 (Q_KEYEQ)"));
+}
+
+void KeyManageController::onSyncDeviceTimeClicked()
+{
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    if (!snapshot.connected) {
+        emit statusMessage(QStringLiteral("涓插彛鏈繛鎺ワ紝鏃犳硶鎵ц閽ュ寵鏍℃椂"));
+        return;
+    }
+
+    CommandRequest req;
+    req.id = CommandId::SyncDeviceTime;
+    req.opId = nextOpId();
+    m_session->execute(req);
+    emit statusMessage(QStringLiteral("鎵ц閽ュ寵鏍℃椂 (SET_TIME)"));
+}
+
+void KeyManageController::onQueryTasksClicked()
+{
+    if (m_httpTransferTransactionActive) {
+        emit statusMessage(QStringLiteral("褰撳墠宸ヤ綔鍙颁紶绁ㄦ鍦ㄥ仛閽ュ寵浠诲姟纭锛岃绋嶅悗鍐嶆煡璇?") );
+        return;
+    }
+
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    if (!snapshot.connected) {
+        emit statusMessage(QStringLiteral("涓插彛鏈繛鎺ワ紝鏃犳硶鏌ヨ浠诲姟"));
+        return;
+    }
+
+    CommandRequest req;
+    req.id = CommandId::QueryTasks;
+    req.opId = nextOpId();
+    m_session->execute(req);
+    emit statusMessage(QStringLiteral("鎵ц鑾峰彇浠诲姟鏁?(Q_TASK)"));
+}
+
+void KeyManageController::onDeleteClicked()
+{
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    if (!snapshot.connected) {
+        emit statusMessage(QStringLiteral("涓插彛鏈繛鎺ワ紝鏃犳硶鍒犻櫎绁?") );
+        return;
+    }
+
+    m_pendingDeletedSystemTicketId.clear();
+    m_pendingDeletedKeyTaskRaw.clear();
+    m_pendingDeleteAllowsRetransfer = false;
+    m_pendingDeleteOrigin = DeleteOrigin::None;
+
+    if (m_selectedKeyTaskRaw.isEmpty()) {
+        emit statusMessage(QStringLiteral("鏈€変腑閽ュ寵绁紝鏃犳硶鍒犻櫎锛岃鍏堣鍙栭挜鍖欑エ鍒楄〃骞堕€変腑涓€鏉′换鍔?") );
+        return;
+    }
+
+    m_pendingDeletedKeyTaskRaw = m_selectedKeyTaskRaw;
+    m_pendingDeletedSystemTicketId = taskIdFromRaw(m_pendingDeletedKeyTaskRaw);
+    const SystemTicketDto mappedTicket = m_ticketStore->ticketById(m_pendingDeletedSystemTicketId);
+    m_pendingDeleteAllowsRetransfer = mappedTicket.valid
+            && (mappedTicket.returnState.isEmpty() || mappedTicket.returnState == QLatin1String("idle"));
+    m_pendingDeleteSessionId = m_keySessionId;
+    m_pendingDeleteRetryCount = 0;
+    m_pendingDeleteOrigin = DeleteOrigin::ManualDelete;
+
+    CommandRequest req;
+    req.id = CommandId::DeleteTask;
+    req.opId = nextOpId();
+    req.payload = m_pendingDeletedKeyTaskRaw;
+    m_session->execute(req);
+    emit statusMessage(QStringLiteral("鎵ц鍒犻櫎绁?(DEL)"));
+}
+
+void KeyManageController::onTransferSelectedTicket()
+{
+    if (m_selectedSystemTicketId.trimmed().isEmpty()) {
+        emit statusMessage(QStringLiteral("鏈€変腑绯荤粺绁紝鏃犳硶鍙戦€佷紶绁?") );
+        return;
+    }
+
+    tryStartTicketTransfer(m_selectedSystemTicketId, false);
+}
+
+void KeyManageController::onReturnSelectedTicket()
+{
+    if (m_selectedSystemTicketId.trimmed().isEmpty()) {
+        emit statusMessage(QStringLiteral("鏈€変腑绯荤粺绁紝鏃犳硶鎵ц鍥炰紶"));
+        return;
+    }
+
+    tryStartTicketReturn(m_selectedSystemTicketId, false);
+}
+
+void KeyManageController::onGetSystemTicketListClicked()
+{
+    qInfo().noquote()
+            << QStringLiteral("[KeyManageController] onGetSystemTicketListClicked count=%1 selectedTaskId=%2")
+                  .arg(QString::number(systemTickets().size()),
+                       m_selectedSystemTicketId.isEmpty() ? QStringLiteral("<none>") : m_selectedSystemTicketId);
+    emit systemTicketsUpdated(systemTickets());
+}
+
+void KeyManageController::onSystemTicketSelected(int row)
+{
+    const QList<SystemTicketDto> tickets = systemTickets();
+    if (row < 0 || row >= tickets.size()) {
+        m_selectedSystemTicketId.clear();
+        emit selectedSystemTicketChanged(SystemTicketDto{});
+        return;
+    }
+
+    m_selectedSystemTicketId = tickets.at(row).taskId;
+    emit selectedSystemTicketChanged(tickets.at(row));
+}
+
+void KeyManageController::onKeyTaskSelected(int row)
+{
+    if (row < 0 || row >= m_lastKeyTasks.size()) {
+        m_selectedKeyTaskRaw.clear();
+        return;
+    }
+
+    m_selectedKeyTaskRaw = m_lastKeyTasks.at(row).taskId;
+}
+
+void KeyManageController::onExpertModeChanged(bool enabled)
+{
+    m_logManager->setExpertMode(enabled);
+    emit logTableRefreshRequested();
+}
+
+void KeyManageController::onShowHexChanged(bool enabled)
+{
+    m_logManager->setShowHex(enabled);
+}
+
+void KeyManageController::onClearLogsClicked()
+{
+    m_logManager->clear();
+    emit logsCleared();
+    emit statusMessage(QStringLiteral("涓插彛鏃ュ織宸叉竻绌?") );
+}
+
+void KeyManageController::onClearHttpClientLogsClicked()
+{
+    m_httpClientLogLines.clear();
+    emit statusMessage(QStringLiteral("HTTP瀹㈡埛绔姤鏂囧凡娓呯┖"));
+}
+
+void KeyManageController::onClearHttpServerLogsClicked()
+{
+    m_httpServerLogLines.clear();
+    emit statusMessage(QStringLiteral("HTTP鏈嶅姟绔姤鏂囧凡娓呯┖"));
+}
+
+bool KeyManageController::exportLogs(const QString &path, QString *error) const
+{
+    return m_logManager->exportText(path, error);
+}
+
+QList<LogItem> KeyManageController::visibleLogs() const
+{
+    return m_logManager->filteredItems();
+}
+
+bool KeyManageController::shouldDisplay(const LogItem &item) const
+{
+    return m_logManager->shouldDisplay(item);
+}
+
+KeySessionSnapshot KeyManageController::currentSnapshot() const
+{
+    return m_session->snapshot();
+}
+
+QList<SystemTicketDto> KeyManageController::systemTickets() const
+{
+    return m_ticketStore->tickets();
+}
+
+QString KeyManageController::httpServerLogText() const
+{
+    return m_httpServerLogLines.join("\n");
+}
+
+QString KeyManageController::httpClientLogText() const
+{
+    return m_httpClientLogLines.join("\n");
+}
+
+QVariantMap KeyManageController::keySerialApplyStatus() const
+{
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    const QString configuredPort = ConfigManager::instance()->keySerialPort().trimmed();
+    QString busyReason;
+    QVariantMap status;
+    status.insert(QStringLiteral("configuredPort"), configuredPort);
+    status.insert(QStringLiteral("runtimePort"), snapshot.portName.trimmed());
+    status.insert(QStringLiteral("verifiedPort"), snapshot.verifiedPortName.trimmed());
+    status.insert(QStringLiteral("state"), m_keySerialApplyState);
+    status.insert(QStringLiteral("message"), m_keySerialApplyMessage);
+    status.insert(QStringLiteral("canApply"),
+                  !m_keyPortApplyInProgress
+                  && !configuredPort.isEmpty()
+                  && configuredPort != snapshot.portName.trimmed()
+                  && !isKeyPortApplyBusy(&busyReason));
+    status.insert(QStringLiteral("busyReason"), busyReason);
+    return status;
+}
+
+bool KeyManageController::canStartManualReturn(const QString &taskId, QString *blockedReason) const
+{
+    return canStartTicketReturn(taskId, false, nullptr, blockedReason);
+}
+
+void KeyManageController::requestApplyConfiguredKeyPort()
+{
+    const QString configuredPort = ConfigManager::instance()->keySerialPort().trimmed();
+    if (configuredPort.isEmpty()) {
+        m_keySerialApplyState = QStringLiteral("apply_failed");
+        m_keySerialApplyMessage = QStringLiteral("褰撳墠鏈厤缃挜鍖欎覆鍙ｏ紝鏃犳硶搴旂敤鍒拌繍琛屾€?");
+        emit statusMessage(m_keySerialApplyMessage);
+        refreshKeySerialApplyStatus();
+        return;
+    }
+
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    if (snapshot.portName.trimmed() == configuredPort
+            && snapshot.connected
+            && (!snapshot.keyPresent || (snapshot.sessionReady && snapshot.protocolHealthy))) {
+        m_keySerialApplyState = QStringLiteral("applied");
+        m_keySerialApplyMessage = QStringLiteral("杩愯鎬佸凡浣跨敤褰撳墠閰嶇疆涓插彛锛屾棤闇€閲嶆柊搴旂敤");
+        emit statusMessage(m_keySerialApplyMessage);
+        refreshKeySerialApplyStatus();
+        return;
+    }
+
+    QString busyReason;
+    if (isKeyPortApplyBusy(&busyReason)) {
+        m_keySerialApplyState = QStringLiteral("saved_not_applied");
+        m_keySerialApplyMessage = busyReason;
+        emit statusMessage(busyReason);
+        refreshKeySerialApplyStatus();
+        return;
+    }
+
+    const int cfgBaud = ConfigManager::instance()->baudRate();
+    const int baud = (cfgBaud > 0) ? cfgBaud : 115200;
+
+    m_keyPortApplyInProgress = true;
+    m_suppressSessionAutomation = true;
+    ++m_keyPortApplyEpoch;
+    m_keyPortApplyTargetPort = configuredPort;
+    m_keySerialApplyState = QStringLiteral("applying");
+    m_keySerialApplyMessage = QStringLiteral("姝ｅ湪鍒囨崲閽ュ寵涓插彛鍒?%1锛屽苟绛夊緟鏂拌繍琛屾€佸畬鎴愰€氳鎺ョ").arg(configuredPort);
+    emit statusMessage(m_keySerialApplyMessage);
+    refreshKeySerialApplyStatus();
+
+    invalidateCurrentKeySession(QStringLiteral("搴旂敤鏂伴挜鍖欎覆鍙ｉ厤缃?") );
+    m_session->setPortSwitchInProgress(true);
+    m_session->disconnectPort();
+    m_session->clearVerifiedPort();
+
+    const bool connected = m_session->connectPort(configuredPort, baud);
+
+    if (connected) {
+        emit sessionSnapshotChanged(m_session->snapshot());
+        emit statusMessage(QStringLiteral("鏂伴挜鍖欎覆鍙?%1 宸叉墦寮€锛岀瓑寰呴€氳纭鍚庡畬鎴愯繍琛屾€佸垏鎹?").arg(configuredPort));
+        refreshKeySerialApplyStatus();
+        return;
+    }
+
+    m_session->setPortSwitchInProgress(false);
+    m_keyPortApplyInProgress = false;
+    m_suppressSessionAutomation = false;
+    m_keyPortApplyTargetPort.clear();
+    m_keySerialApplyState = QStringLiteral("apply_failed");
+    m_keySerialApplyMessage = QStringLiteral("閰嶇疆宸蹭繚瀛橈紝浣嗘柊閽ュ寵涓插彛 %1 鏈垚鍔熷簲鐢ㄥ埌杩愯鎬?").arg(configuredPort);
+    emit sessionSnapshotChanged(m_session->snapshot());
+    emit statusMessage(m_keySerialApplyMessage);
+    refreshKeySerialApplyStatus();
+}
+
+void KeyManageController::handleSessionEvent(const KeySessionEvent &event)
+{
+    const int eventBridgeEpoch = event.data.value(QStringLiteral("bridgeEpoch")).toInt();
+    if (!m_keyPortApplyInProgress
+            && m_acceptedBridgeEpoch > 0
+            && eventBridgeEpoch > 0
+            && eventBridgeEpoch != m_acceptedBridgeEpoch) {
+        switch (event.kind) {
+        case KeySessionEvent::TasksUpdated:
+        case KeySessionEvent::TaskLogReady:
+        case KeySessionEvent::Ack:
+        case KeySessionEvent::Nak:
+        case KeySessionEvent::Timeout:
+        case KeySessionEvent::KeyStateChanged:
+        case KeySessionEvent::TicketTransferProgress:
+        case KeySessionEvent::TicketTransferFinished:
+        case KeySessionEvent::TicketTransferFailed:
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] ignore stale bridge-epoch event kind=%1 eventEpoch=%2 acceptedEpoch=%3")
+                          .arg(QString::number(static_cast<int>(event.kind)),
+                               QString::number(eventBridgeEpoch),
+                               QString::number(m_acceptedBridgeEpoch));
+            return;
+        default:
+            break;
+        }
+    }
+
+    switch (event.kind) {
+    case KeySessionEvent::Notice:
+        emit statusMessage(event.data.value("what").toString());
+        break;
+    case KeySessionEvent::Timeout: {
+        const QString what = event.data.value("what").toString();
+        // 瓒呮椂涔熻閲婃斁 auto-query 绐楀彛锛屽惁鍒?Q_TASK 瓒呮椂鍚?m_autoQuerySessionId 姘镐箙鍗′綇
+        // NAK 也释放 auto-query 窗口（Q_TASK 被拒绝时）
+        if (m_autoQuerySessionId == m_keySessionId && m_keySessionId > 0) {
+            m_autoQuerySessionId = 0;
+        }
+        if (what.contains(QStringLiteral("DEL"), Qt::CaseInsensitive)) {
+            if (!m_pendingDeletedSystemTicketId.isEmpty()) {
+                m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
+                                                 QStringLiteral("return-delete-verifying"),
+                                                 QStringLiteral("DEL 瓒呮椂锛岀瓑寰呭悗缁?Q_TASK 瀵硅处纭閽ュ寵浠诲姟鏄惁宸插垹闄?") );
+                m_pendingDeleteSessionId = 0;
+                emit statusMessage(QStringLiteral("DEL 瓒呮椂锛屼繚鐣欏垹闄ら獙璇佹剰鍥撅紝绛夊緟鍚庣画 Q_TASK 缁х画瀵硅处"));
+            }
+        }
+        if (!m_pendingCancelSystemTicketId.isEmpty()
+                && what.contains(QStringLiteral("DEL"), Qt::CaseInsensitive)) {
+            const QString taskId = m_pendingCancelSystemTicketId;
+            const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
+            if (ticket.valid) {
+                m_ticketStore->updateCancelTracking(taskId,
+                                                    QStringLiteral("cancel-pending"),
+                                                    QStringLiteral("workbench-http"),
+                                                    ticket.residentSlotId.isEmpty() ? QStringLiteral("slot-1") : ticket.residentSlotId,
+                                                    ticket.residentKeyId,
+                                                    ticket.cancelRequestedAt.isValid() ? ticket.cancelRequestedAt : QDateTime::currentDateTime(),
+                                                    true,
+                                                    QStringLiteral("DEL 瓒呮椂锛岀瓑寰呭悗缁?Q_TASK 瀵硅处纭浠诲姟鏄惁宸插垹闄?") );
+                m_ticketCancelCoordinator->recordAccepted(taskId,
+                                                         m_ticketStore->ticketById(taskId),
+                                                         QStringLiteral("cancel-pending"),
+                                                         QStringLiteral("DEL 瓒呮椂锛岀瓑寰呭悗缁?Q_TASK 瀵硅处纭浠诲姟鏄惁宸插垹闄?") );
+            }
+            m_pendingCancelSessionId = 0;
+            schedulePendingCancelReconcile(QStringLiteral("cancel-del-timeout"), 800);
+        }
+        if (!m_pendingTransferHandshakeTaskId.isEmpty()
+                && what.contains(QStringLiteral("SET_COM"), Qt::CaseInsensitive)) {
+            const QString taskId = m_pendingTransferHandshakeTaskId;
+            m_pendingTransferHandshakeTaskId.clear();
+            m_pendingTransferHandshakeJsonBytes.clear();
+            m_pendingTransferHandshakeDebugChunk = 0;
+            m_ticketStore->updateTransferState(taskId, QStringLiteral("failed"),
+                                               QStringLiteral("浼犵エ鍓嶆彙鎵嬭秴鏃?") );
+            m_activeTransferTaskId.clear();
+            m_activeTransferSessionId = 0;
+            if (m_httpTransferTransactionActive) {
+                clearHttpTransferTransaction(false);
+            }
+        }
+        if ((!m_activeReturnTaskId.isEmpty() || !m_pendingReturnHandshakeTaskId.isEmpty())
+                && (what.contains(QStringLiteral("SET_COM"), Qt::CaseInsensitive)
+                    || what.contains(QStringLiteral("I_TASK_LOG"), Qt::CaseInsensitive)
+                    || what.contains(QStringLiteral("0X05"), Qt::CaseInsensitive)
+                    || what.contains(QStringLiteral("UP_TASK_LOG"), Qt::CaseInsensitive)
+                    || what.contains(QStringLiteral("0X15"), Qt::CaseInsensitive))) {
+            failActiveReturnHandshake(what);
+        }
+        emit timeoutOccurred(what);
+        emit statusMessage(what);
+        break;
+    }
+    case KeySessionEvent::Ack:
+        if (static_cast<quint8>(event.data.value("ackedCmd").toInt()) == KeyProtocol::CmdSetCom
+                && !m_pendingTransferHandshakeTaskId.isEmpty()
+                && !m_pendingTransferHandshakeJsonBytes.isEmpty()
+                && isCurrentKeySession(m_activeTransferSessionId)) {
+            const QString taskId = m_pendingTransferHandshakeTaskId;
+            const QByteArray jsonBytes = m_pendingTransferHandshakeJsonBytes;
+            const int debugChunk = m_pendingTransferHandshakeDebugChunk;
+            m_pendingTransferHandshakeTaskId.clear();
+            m_pendingTransferHandshakeJsonBytes.clear();
+            m_pendingTransferHandshakeDebugChunk = 0;
+            TicketTransferRequest request;
+            request.jsonBytes = jsonBytes;
+            request.opId = nextOpId();
+            request.debugFrameChunkSize = debugChunk;
+            m_session->transferTicket(request);
+            emit statusMessage(QStringLiteral("浼犵エ鍓嶆彙鎵嬪凡纭锛屽紑濮嬪彂閫?TICKET 甯э細%1").arg(taskId));
+        }
+        if (static_cast<quint8>(event.data.value("ackedCmd").toInt()) == KeyProtocol::CmdSetCom
+                && !m_pendingReturnHandshakeTaskId.isEmpty()
+                && !m_pendingReturnHandshakeTaskIdRaw.isEmpty()
+                && isCurrentKeySession(m_activeReturnSessionId)) {
+            m_ticketStore->updateReturnState(m_pendingReturnHandshakeTaskId,
+                                             QStringLiteral("return-log-requesting"));
+            CommandRequest req;
+            req.id = CommandId::QueryTaskLog;
+            req.opId = nextOpId();
+            req.payload = m_pendingReturnHandshakeTaskIdRaw;
+            m_session->execute(req);
+            emit statusMessage(QStringLiteral("鍥炰紶鍓嶆彙鎵嬪凡纭锛屽紑濮嬭鍙栭挜鍖欏洖浼犳棩蹇楋細%1")
+                                   .arg(m_pendingReturnHandshakeTaskId));
+            m_pendingReturnHandshakeTaskId.clear();
+            m_pendingReturnHandshakeTaskIdRaw.clear();
+        }
+        if (static_cast<quint8>(event.data.value("ackedCmd").toInt()) == KeyProtocol::CmdITaskLog
+                && !m_activeReturnTaskId.isEmpty()
+                && isCurrentKeySession(m_activeReturnSessionId)) {
+            m_ticketStore->updateReturnState(m_activeReturnTaskId,
+                                             QStringLiteral("return-log-receiving"));
+        }
+        if (static_cast<quint8>(event.data.value("ackedCmd").toInt()) == KeyProtocol::CmdDel
+                && !m_pendingCancelSystemTicketId.isEmpty()) {
+            schedulePendingCancelReconcile(QStringLiteral("cancel-del-ack"), 300);
+        }
+        emit ackReceived(static_cast<quint8>(event.data.value("ackedCmd").toInt()));
+        break;
+    case KeySessionEvent::Nak:
+        // NAK 涔熼噴鏀?auto-query 绐楀彛锛圦_TASK 琚嫆缁濇椂锛?        if (m_autoQuerySessionId == m_keySessionId && m_keySessionId > 0) {
+            m_autoQuerySessionId = 0;
+        }
+        if (static_cast<quint8>(event.data.value("origCmd").toInt()) == KeyProtocol::CmdDel) {
+            if (!m_pendingDeletedSystemTicketId.isEmpty()) {
+                m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
+                                                 QStringLiteral("return-delete-verifying"),
+                                                 QStringLiteral("DEL 鏀跺埌 NAK锛岀瓑寰呭悗缁?Q_TASK 瀵硅处纭閽ュ寵浠诲姟鐘舵€?") );
+                m_pendingDeleteSessionId = 0;
+            }
+        }
+        if (!m_pendingCancelSystemTicketId.isEmpty()
+                && static_cast<quint8>(event.data.value("origCmd").toInt()) == KeyProtocol::CmdDel) {
+            const QString taskId = m_pendingCancelSystemTicketId;
+            const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
+            if (ticket.valid) {
+                m_ticketStore->updateCancelTracking(taskId,
+                                                    QStringLiteral("cancel-pending"),
+                                                    QStringLiteral("workbench-http"),
+                                                    ticket.residentSlotId.isEmpty() ? QStringLiteral("slot-1") : ticket.residentSlotId,
+                                                    ticket.residentKeyId,
+                                                    ticket.cancelRequestedAt.isValid() ? ticket.cancelRequestedAt : QDateTime::currentDateTime(),
+                                                    true,
+                                                    QStringLiteral("DEL 鏀跺埌 NAK锛岀瓑寰呭悗缁?Q_TASK 瀵硅处纭閽ュ寵浠诲姟鐘舵€?") );
+                m_ticketCancelCoordinator->recordAccepted(taskId,
+                                                         m_ticketStore->ticketById(taskId),
+                                                         QStringLiteral("cancel-pending"),
+                                                         QStringLiteral("DEL 鏀跺埌 NAK锛岀瓑寰呭悗缁?Q_TASK 瀵硅处纭閽ュ寵浠诲姟鐘舵€?") );
+            }
+            m_pendingCancelSessionId = 0;
+            schedulePendingCancelReconcile(QStringLiteral("cancel-del-nak"), 800);
+        }
+        if (!m_pendingTransferHandshakeTaskId.isEmpty()
+                && static_cast<quint8>(event.data.value("origCmd").toInt()) == KeyProtocol::CmdSetCom) {
+            const QString taskId = m_pendingTransferHandshakeTaskId;
+            m_pendingTransferHandshakeTaskId.clear();
+            m_pendingTransferHandshakeJsonBytes.clear();
+            m_pendingTransferHandshakeDebugChunk = 0;
+            m_ticketStore->updateTransferState(taskId, QStringLiteral("failed"),
+                                               QStringLiteral("浼犵エ鍓嶆彙鎵嬭閽ュ寵鎷掔粷(NAK)"));
+            m_activeTransferTaskId.clear();
+            m_activeTransferSessionId = 0;
+            if (m_httpTransferTransactionActive) {
+                clearHttpTransferTransaction(false);
+            }
+            emit statusMessage(QStringLiteral("浼犵エ鍓嶆彙鎵嬭閽ュ寵鎷掔粷锛?1").arg(taskId));
+        }
+        if (!m_activeReturnTaskId.isEmpty() || !m_pendingReturnHandshakeTaskId.isEmpty()) {
+            const quint8 origCmd = static_cast<quint8>(event.data.value("origCmd").toInt());
+            if (origCmd == KeyProtocol::CmdSetCom
+                    || origCmd == KeyProtocol::CmdITaskLog
+                    || origCmd == KeyProtocol::CmdUpTaskLog) {
+                const QString reason = QStringLiteral("鏀跺埌 NAK锛宱rigCmd=0x%1")
+                        .arg(origCmd, 2, 16, QLatin1Char('0'))
+                        .toUpper();
+                failActiveReturnHandshake(reason);
+            }
+        }
+        emit nakReceived(static_cast<quint8>(event.data.value("origCmd").toInt()),
+                         static_cast<quint8>(event.data.value("errCode").toInt()));
+        break;
+    case KeySessionEvent::TasksUpdated: {
+        if (m_suppressSessionAutomation) {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] ignore TasksUpdated during controlled key-port apply epoch=%1")
+                          .arg(QString::number(m_keyPortApplyEpoch));
+            break;
+        }
+        const QList<KeyTaskDto> tasks = toTaskDtos(event.data.value("tasks").toList());
+        const KeySessionSnapshot snapshot = m_session->snapshot();
+        const bool ready = isSessionReadySnapshot(snapshot);
+        const bool httpTransactionControlledEvent =
+                isActiveHttpTransferTransactionFor(m_httpTransferTransactionSessionId, eventBridgeEpoch);
+        m_lastKeyTasks = tasks;
+        if (httpTransactionControlledEvent) {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] TasksUpdated captured for active http transfer transaction taskId=%1 session=%2 epoch=%3; suppress auto side-effects")
+                          .arg(m_httpTransferTransactionTaskId.isEmpty()
+                                       ? QStringLiteral("<none>")
+                                       : m_httpTransferTransactionTaskId,
+                               QString::number(m_httpTransferTransactionSessionId),
+                               QString::number(m_httpTransferTransactionBridgeEpoch));
+        } else if (ready) {
+            reconcileSystemTicketsFromKeyTasks(tasks);
+            // 涓诲姩瀛ゅ効璇嗗埆锛氶挜鍖欎腑鏈変换鍔′絾鏈湴绁ㄦ睜鏃犺褰?鈫?寤哄鍎挎仮澶嶇エ
+            for (const KeyTaskDto &task : tasks) {
+                const QString orphanTaskId = taskIdFromRaw(task.taskId);
+                if (!m_ticketStore->ticketById(orphanTaskId).valid) {
+                    m_ticketStore->ingestOrphanTicket(orphanTaskId);
+                    qInfo().noquote()
+                            << QStringLiteral("[KeyManageController] orphan device task detected and recovered taskId=%1")
+                                  .arg(orphanTaskId);
+                }
+            }
+            recoverAutoTransferWhenKeyEmpty(tasks);
+            tryAutoCleanupReturnedTicket(tasks);
+        } else {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] TasksUpdated arrived while session not ready, skip auto actions currentSession=%1")
+                          .arg(QString::number(m_keySessionId));
+        }
+        bool selectedStillExists = false;
+        for (const KeyTaskDto &task : tasks) {
+            if (task.taskId == m_selectedKeyTaskRaw) {
+                selectedStillExists = true;
+                break;
+            }
+        }
+        if (!selectedStillExists) {
+            m_selectedKeyTaskRaw.clear();
+        }
+        emit tasksUpdated(tasks);
+        emit statusMessage(QStringLiteral("Q_TASK 瀹屾垚锛屼换鍔℃暟=%1").arg(tasks.size()));
+        // Q_TASK 瀹屾垚鍚庨噴鏀?auto-query 绐楀彛锛屽厑璁镐汉宸ヤ紶绁ㄩ€氳繃 ingress 闂ㄧ
+        if (m_autoQuerySessionId == m_keySessionId && m_keySessionId > 0) {
+            m_autoQuerySessionId = 0;
+        }
+        if (!httpTransactionControlledEvent && ready && !m_pendingDeletedSystemTicketId.isEmpty()) {
+            finalizePendingReturnDelete(tasks);
+        }
+        if (!httpTransactionControlledEvent && ready && !m_pendingCancelSystemTicketId.isEmpty()) {
+            finalizePendingCancelDelete(tasks);
+        }
+        if (!httpTransactionControlledEvent && ready) {
+            tryProcessPendingCancelTasks(tasks);
+        }
+        if (!httpTransactionControlledEvent && ready) {
+            tryAutoReturnCompletedTicket(tasks);
+        }
+        if (!m_selectedSystemTicketId.isEmpty()) {
+            emit selectedSystemTicketChanged(m_ticketStore->ticketById(m_selectedSystemTicketId));
+        }
+        if (!httpTransactionControlledEvent && ready && (!tasks.isEmpty() || m_activeTransferTaskId.isEmpty())) {
+            tryAutoTransferPendingTicket();
+        }
+        break;
+    }
+    case KeySessionEvent::TaskLogReady: {
+        if (m_suppressSessionAutomation) {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] ignore TaskLogReady during controlled key-port apply epoch=%1")
+                          .arg(QString::number(m_keyPortApplyEpoch));
+            break;
+        }
+        if (m_activeReturnTaskId.isEmpty() || !isCurrentKeySession(m_activeReturnSessionId)) {
+            emit statusMessage(QStringLiteral("鏀跺埌浠诲姟鍥炰紶鏃ュ織锛屼絾褰撳墠鏃犳椿鍔ㄥ洖浼犱换鍔?") );
+            break;
+        }
+
+        QJsonObject payload;
+        payload.insert("stationNo", event.data.value("stationNo").toInt());
+        payload.insert("steps", event.data.value("steps").toInt());
+        payload.insert("taskId", event.data.value("taskId").toString());
+
+        QJsonArray items;
+        const QVariantList rawItems = event.data.value("items").toList();
+        for (const QVariant &itemVar : rawItems) {
+            items.append(QJsonObject::fromVariantMap(itemVar.toMap()));
+        }
+        payload.insert("taskLogItems", items);
+
+        m_ticketStore->updateReturnState(m_activeReturnTaskId, QStringLiteral("return-uploading"));
+        m_ticketReturnClient->uploadReturnPayload(payload);
+        emit statusMessage(QStringLiteral("宸茶В鏋愰挜鍖欏洖浼犳棩蹇楋紝鍑嗗涓婁紶鍒版湇鍔＄"));
+        break;
+    }
+    case KeySessionEvent::TicketTransferProgress: {
+        if (m_suppressSessionAutomation) {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] ignore TicketTransferProgress during controlled key-port apply epoch=%1")
+                          .arg(QString::number(m_keyPortApplyEpoch));
+            break;
+        }
+        if (m_activeTransferTaskId.isEmpty() || !isCurrentKeySession(m_activeTransferSessionId)) {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] ignore stale TicketTransferProgress activeTransfer=%1 activeTransferSession=%2 currentSession=%3")
+                          .arg(m_activeTransferTaskId.isEmpty() ? QStringLiteral("<none>") : m_activeTransferTaskId,
+                               QString::number(m_activeTransferSessionId),
+                               QString::number(m_keySessionId));
+            break;
+        }
+        const int frameIndex = event.data.value("frameIndex").toInt();
+        const int totalFrames = event.data.value("totalFrames").toInt();
+        if (!m_activeTransferTaskId.isEmpty()) {
+            m_ticketStore->updateTransferState(m_activeTransferTaskId, QStringLiteral("sending"));
+        }
+        emit statusMessage(QStringLiteral("浼犵エ鍙戦€佷腑锛氱 %1/%2 甯?").arg(frameIndex).arg(totalFrames));
+        break;
+    }
+    case KeySessionEvent::TicketTransferFinished: {
+        if (m_suppressSessionAutomation) {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] ignore TicketTransferFinished during controlled key-port apply epoch=%1")
+                          .arg(QString::number(m_keyPortApplyEpoch));
+            break;
+        }
+        if (m_activeTransferTaskId.isEmpty() || !isCurrentKeySession(m_activeTransferSessionId)) {
+            qInfo().noquote()
+                << QStringLiteral("[KeyManageController] ignore stale TicketTransferFinished activeTransfer=%1 activeTransferSession=%2 currentSession=%3")
+                          .arg(m_activeTransferTaskId.isEmpty() ? QStringLiteral("<none>") : m_activeTransferTaskId,
+                               QString::number(m_activeTransferSessionId),
+                               QString::number(m_keySessionId));
+            break;
+        }
+        const QString finishedTaskId = m_activeTransferTaskId;
+        const int finishedSessionId = m_activeTransferSessionId;
+        const bool trackedTicket = m_ticketStore->ticketById(finishedTaskId).valid;
+        const bool wasHttpTransfer = isActiveHttpTransferTransactionFor(finishedSessionId, eventBridgeEpoch);
+        if (trackedTicket) {
+            m_ticketStore->updateTransferState(finishedTaskId, QStringLiteral("success"));
+        }
+        m_activeTransferTaskId.clear();
+        m_activeTransferSessionId = 0;
+        if (wasHttpTransfer) {
+            clearHttpTransferTransaction(false);
+        }
+        emit statusMessage(QStringLiteral("浼犵エ鍙戦€佸畬鎴愶細%1").arg(finishedTaskId));
+        // 浼犵エ瀹屾垚鍚庝富鍔ㄨЕ鍙戜竴娆?Q_TASK 瀵硅处锛岀‘璁や换鍔″凡鍐欏叆閽ュ寵骞舵洿鏂?m_lastKeyTasks
+        // 杩欐牱涓嬫 success 鐘舵€佹鏌ユ湁鏂伴矞鏁版嵁锛屼笉渚濊禆涓嬫 ready-edge 鎵嶈兘瀵硅处
+        if (trackedTicket && isCurrentKeySession(finishedSessionId)) {
+            onQueryTasksClicked();
+        } else {
+            tryAutoTransferPendingTicket();
+        }
+        schedulePendingCancelReconcile(QStringLiteral("transfer-finished"), 150);
+        break;
+    }
+    case KeySessionEvent::TicketTransferFailed: {
+        if (m_suppressSessionAutomation) {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] ignore TicketTransferFailed during controlled key-port apply epoch=%1")
+                          .arg(QString::number(m_keyPortApplyEpoch));
+            break;
+        }
+        const QString what = event.data.value("what").toString();
+        if (m_activeTransferTaskId.isEmpty() || !isCurrentKeySession(m_activeTransferSessionId)) {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] ignore stale TicketTransferFailed reason=%1 activeTransfer=%2 activeTransferSession=%3 currentSession=%4")
+                          .arg(what,
+                               m_activeTransferTaskId.isEmpty() ? QStringLiteral("<none>") : m_activeTransferTaskId,
+                               QString::number(m_activeTransferSessionId),
+                               QString::number(m_keySessionId));
+            break;
+        }
+
+        const QString failedTaskId = m_activeTransferTaskId;
+        const int failedSessionId = m_activeTransferSessionId;
+        const bool inflightBusy = what.contains(QStringLiteral("褰撳墠鏈夊懡浠ゅ湪閫?") );
+        const SystemTicketDto failedTicket = m_ticketStore->ticketById(failedTaskId);
+        const bool trackedTicket = failedTicket.valid;
+        const bool allowAutoPending = trackedTicket && isAutomaticTransferSource(failedTicket);
+        const bool wasHttpTransfer = isActiveHttpTransferTransactionFor(failedSessionId, eventBridgeEpoch);
+        if (inflightBusy && allowAutoPending) {
+            m_ticketStore->updateTransferState(failedTaskId,
+                                               QStringLiteral("auto-pending"),
+                                               QStringLiteral("搴曞眰浠嶆湁鍛戒护鍦ㄩ€旓紝绛夊緟褰撳墠鍛戒护瀹屾垚鍚庤嚜鍔ㄩ噸璇?") );
+            m_activeTransferTaskId.clear();
+            m_activeTransferSessionId = 0;
+            if (wasHttpTransfer) {
+                clearHttpTransferTransaction(false);
+            }
+            emit statusMessage(QStringLiteral("浼犵エ鏆傛湭鍙戦€侊細褰撳墠浠嶆湁鍛戒护鍦ㄩ€旓紝宸插洖鍒拌嚜鍔ㄧ瓑寰呴槦鍒楋細%1")
+                                   .arg(failedTaskId));
+            scheduleAutoTransferRetry(QStringLiteral("搴曞眰鍛戒护鍦ㄩ€?") );
+            break;
+        }
+        if (inflightBusy && trackedTicket) {
+            m_ticketStore->updateTransferState(failedTaskId,
+                                               QStringLiteral("failed"),
+                                               QStringLiteral("鏈涓轰汉宸ヨЕ鍙戯紝搴曞眰鍛戒护鍦ㄩ€旓紝鏈嚜鍔ㄨ浆鍥?auto-pending锛岃浜哄伐閲嶈瘯"));
+            m_activeTransferTaskId.clear();
+            m_activeTransferSessionId = 0;
+            if (wasHttpTransfer) {
+                clearHttpTransferTransaction(false);
+            }
+            m_ticketIngress->completeDeferredResponse(
+                failedTaskId, false,
+                QStringLiteral("浼犵エ澶辫触锛氬簳灞傚懡浠や粛鍦ㄩ€旓紝璇风◢鍚庨噸璇?") );
+            emit statusMessage(QStringLiteral("浜哄伐浼犵エ澶辫触锛氬簳灞傚懡浠や粛鍦ㄩ€旓紝绯荤粺涓嶄細鑷姩琛ュ彂锛岃鎵嬪姩閲嶈瘯锛?1")
+                                   .arg(failedTaskId));
+            break;
+        }
+
+        if (!m_activeTransferTaskId.isEmpty()) {
+            m_ticketStore->updateTransferState(m_activeTransferTaskId, QStringLiteral("failed"), what);
+        }
+        m_activeTransferTaskId.clear();
+        m_activeTransferSessionId = 0;
+        if (wasHttpTransfer) {
+            clearHttpTransferTransaction(false);
+        }
+        m_ticketIngress->completeDeferredResponse(
+            failedTaskId, false,
+            QStringLiteral("浼犵エ澶辫触锛?1").arg(what.isEmpty() ? QStringLiteral("涓插彛浼犺緭閿欒") : what));
+        emit statusMessage(QStringLiteral("浼犵エ鍙戦€佸け璐ワ細%1").arg(what));
+        break;
+    }
+    case KeySessionEvent::KeyStateChanged: {
+        const KeySessionSnapshot snapshot = m_session->snapshot();
+        const QString targetPort = m_keyPortApplyTargetPort.trimmed();
+        if (m_keyPortApplyInProgress) {
+            if (!targetPort.isEmpty() && snapshot.portName.trimmed() != targetPort) {
+                qInfo().noquote()
+                        << QStringLiteral("[KeyManageController] ignore KeyStateChanged from stale runtime during key-port apply target=%1 currentPort=%2 epoch=%3")
+                              .arg(targetPort,
+                                   snapshot.portName.trimmed().isEmpty() ? QStringLiteral("<none>") : snapshot.portName.trimmed(),
+                                   QString::number(m_keyPortApplyEpoch));
+                break;
+            }
+
+            if (!snapshot.connected) {
+                m_lastReadyState = false;
+                m_session->setPortSwitchInProgress(false);
+                m_keyPortApplyInProgress = false;
+                m_suppressSessionAutomation = false;
+                m_keySerialApplyState = QStringLiteral("apply_failed");
+                m_keySerialApplyMessage = QStringLiteral("閰嶇疆宸蹭繚瀛橈紝浣嗘柊閽ュ寵涓插彛 %1 鍦ㄥ垏鎹㈣繃绋嬩腑鏂紑锛岃繍琛屾€佹湭瀹屾垚鎺ョ")
+                                                  .arg(targetPort.isEmpty() ? QStringLiteral("<unknown>") : targetPort);
+                m_keyPortApplyTargetPort.clear();
+                emit sessionSnapshotChanged(snapshot);
+                emit statusMessage(m_keySerialApplyMessage);
+                refreshKeySerialApplyStatus();
+                break;
+            }
+
+            if (!snapshot.keyPresent) {
+                m_lastReadyState = false;
+                emit sessionSnapshotChanged(snapshot);
+                refreshKeySerialApplyStatus(QStringLiteral("applying"),
+                                            QStringLiteral("鏂颁覆鍙?%1 宸插垏鍒拌繍琛屾€侊紝褰撳墠鏈娴嬪埌閽ュ寵锛屽緟鏀剧ǔ骞跺畬鎴愰€氳纭鍚庣粨鏉?apply")
+                                                    .arg(targetPort.isEmpty() ? snapshot.portName.trimmed() : targetPort));
+                break;
+            }
+
+            if (!(snapshot.sessionReady && snapshot.protocolHealthy)) {
+                m_lastReadyState = false;
+                emit sessionSnapshotChanged(snapshot);
+                refreshKeySerialApplyStatus(QStringLiteral("applying"),
+                                            QStringLiteral("鏂颁覆鍙?%1 宸叉墦寮€锛屾鍦ㄧ瓑寰?SET_COM/閫氳纭瀹屾垚")
+                                                    .arg(targetPort.isEmpty() ? snapshot.portName.trimmed() : targetPort));
+                break;
+            }
+
+            m_session->setPortSwitchInProgress(false);
+            m_keyPortApplyInProgress = false;
+            m_suppressSessionAutomation = false;
+            m_acceptedBridgeEpoch = snapshot.bridgeEpoch;
+            m_keySerialApplyState = QStringLiteral("applied");
+            m_keySerialApplyMessage = QStringLiteral("閽ュ寵涓插彛宸插垏鎹㈠埌 %1锛屾柊杩愯鎬佸凡瀹屾垚閫氳纭")
+                                              .arg(targetPort.isEmpty() ? snapshot.portName.trimmed() : targetPort);
+            m_keyPortApplyTargetPort.clear();
+        }
+
+        const bool ready = snapshot.connected
+                && snapshot.keyPresent
+                && snapshot.keyStable
+                && snapshot.sessionReady;
+        const bool linkInterrupted = !snapshot.connected || !snapshot.keyPresent;
+        if (linkInterrupted) {
+            invalidateCurrentKeySession(!snapshot.connected
+                    ? QStringLiteral("涓插彛鏂紑")
+                    : QStringLiteral("閽ュ寵绉婚櫎"));
+            if (!m_activeTransferTaskId.isEmpty()) {
+                const QString reason = !snapshot.connected
+                        ? QStringLiteral("涓插彛宸叉柇寮€锛屽綋鍓嶄紶绁ㄥ凡涓柇锛岃閲嶆柊杩炴帴鍚庨噸璇?")
+                        : QStringLiteral("閽ュ寵宸茬Щ闄わ紝褰撳墠浼犵エ宸蹭腑鏂紝璇烽噸鏂版斁鍥為挜鍖欏悗閲嶈瘯");
+                m_ticketStore->updateTransferState(m_activeTransferTaskId,
+                                                   QStringLiteral("failed"),
+                                                   reason);
+                m_activeTransferTaskId.clear();
+                m_activeTransferSessionId = 0;
+                m_pendingTransferHandshakeTaskId.clear();
+                m_pendingTransferHandshakeJsonBytes.clear();
+                m_pendingTransferHandshakeDebugChunk = 0;
+                // 閽ュ寵涓柇鏃?HTTP 浜嬪姟涔熷繀椤婚噴鏀撅紝鍚﹀垯鍚庣画璇锋眰浼氳姘镐箙鎸′綇
+                if (m_httpTransferTransactionActive) {
+                    clearHttpTransferTransaction(false);
+                }
+                emit statusMessage(reason);
+            }
+
+            if (!m_activeReturnTaskId.isEmpty() || !m_pendingReturnHandshakeTaskId.isEmpty()) {
+                const QString reason = !snapshot.connected
+                        ? QStringLiteral("涓插彛宸叉柇寮€锛屽綋鍓嶅洖浼犲凡涓柇锛岃閲嶆柊杩炴帴鍚庨噸璇?")
+                        : QStringLiteral("閽ュ寵宸茬Щ闄わ紝褰撳墠鍥炰紶宸蹭腑鏂紝璇烽噸鏂版斁鍥為挜鍖欏悗閲嶈瘯");
+                failActiveReturnHandshake(reason);
+                emit statusMessage(reason);
+            }
+
+            if (!m_pendingDeletedSystemTicketId.isEmpty()) {
+                const QString taskId = m_pendingDeletedSystemTicketId;
+                m_ticketStore->updateReturnState(taskId,
+                                                 QStringLiteral("return-delete-verifying"),
+                                                 QStringLiteral("閽ュ寵宸茬Щ闄わ紝鍒犻櫎楠岃瘉宸蹭腑鏂紝绛夊緟閲嶆柊鏀惧洖鍚庣户缁璐?") );
+                m_pendingDeleteSessionId = 0;
+                emit statusMessage(QStringLiteral("閽ュ寵宸茬Щ闄わ紝浠诲姟 %1 鐨勯挜鍖欐竻鐞嗛獙璇佸凡涓柇锛涢噸鏂版斁鍥炲悗灏嗙户缁鏌?")
+                                       .arg(taskId));
+            }
+        }
+
+
+        if (linkInterrupted && !m_pendingCancelSystemTicketId.isEmpty()) {
+            const QString taskId = m_pendingCancelSystemTicketId;
+            const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
+            if (ticket.valid) {
+                m_ticketStore->updateCancelTracking(taskId,
+                                                    QStringLiteral("cancel-pending"),
+                                                    QStringLiteral("workbench-http"),
+                                                    ticket.residentSlotId.isEmpty() ? QStringLiteral("slot-1") : ticket.residentSlotId,
+                                                    ticket.residentKeyId,
+                                                    ticket.cancelRequestedAt.isValid() ? ticket.cancelRequestedAt : QDateTime::currentDateTime(),
+                                                    true,
+                                                    QStringLiteral("閽ュ寵宸茬Щ闄わ紝鎾ら攢鍒犻櫎楠岃瘉宸蹭腑鏂紝绛夊緟閲嶆柊鏀惧洖鍚庣户缁璐?") );
+                m_ticketCancelCoordinator->recordAccepted(taskId,
+                                                         m_ticketStore->ticketById(taskId),
+                                                         QStringLiteral("cancel-pending"),
+                                                         QStringLiteral("閽ュ寵宸茬Щ闄わ紝鎾ら攢鍒犻櫎楠岃瘉宸蹭腑鏂紝绛夊緟閲嶆柊鏀惧洖鍚庣户缁璐?") );
+            }
+            m_pendingCancelSessionId = 0;
+            emit statusMessage(QStringLiteral("閽ュ寵宸茬Щ闄わ紝浠诲姟 %1 鐨勬挙閿€鍒犻櫎閾惧凡涓柇锛涢噸鏂版斁鍥炲悗灏嗙户缁璐?").arg(taskId));
+        }
+
+        if (ready && !m_lastReadyState) {
+            openNewKeySession();
+        }
+
+        emit sessionSnapshotChanged(snapshot);
+        refreshKeySerialApplyStatus();
+        if (!m_suppressSessionAutomation && !m_httpTransferTransactionActive) {
+            tryAutoRefreshKeyTasksOnReady(snapshot);
+            schedulePendingCancelReconcile(QStringLiteral("key-state-ready"), 150);
+            tryAutoTransferPendingTicket();
+        } else if (m_httpTransferTransactionActive) {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] skip ready-edge automation during active http transfer transaction taskId=%1 session=%2 epoch=%3")
+                          .arg(m_httpTransferTransactionTaskId.isEmpty()
+                                       ? QStringLiteral("<none>")
+                                       : m_httpTransferTransactionTaskId,
+                               QString::number(m_httpTransferTransactionSessionId),
+                               QString::number(m_httpTransferTransactionBridgeEpoch));
+        }
+        break;
+    }
+    case KeySessionEvent::RawProtocol:
+        break;
+    }
+}
+
+void KeyManageController::handleLogItem(const LogItem &item)
+{
+    m_logManager->append(item);
+    if (m_logManager->shouldDisplay(item)) {
+        emit logRowAppended(item);
+    }
+}
+
+void KeyManageController::handleSystemTicketsChanged(const QList<SystemTicketDto> &tickets)
+{
+    qInfo().noquote()
+            << QStringLiteral("[KeyManageController] handleSystemTicketsChanged count=%1 selectedTaskId=%2 activeTransfer=%3 activeReturn=%4 pendingDelete=%5")
+                  .arg(QString::number(tickets.size()),
+                       m_selectedSystemTicketId.isEmpty() ? QStringLiteral("<none>") : m_selectedSystemTicketId,
+                       m_activeTransferTaskId.isEmpty() ? QStringLiteral("<none>") : m_activeTransferTaskId,
+                       m_activeReturnTaskId.isEmpty() ? QStringLiteral("<none>") : m_activeReturnTaskId,
+                       m_pendingDeletedSystemTicketId.isEmpty() ? QStringLiteral("<none>") : m_pendingDeletedSystemTicketId);
+    emit statusMessage(QStringLiteral("绯荤粺绁ㄥ垪琛ㄥ凡鍒锋柊锛屽綋鍓嶇エ鏁?%1").arg(tickets.size()));
+    emit systemTicketsUpdated(tickets);
+    if (!m_selectedSystemTicketId.isEmpty()) {
+        for (const SystemTicketDto &ticket : tickets) {
+            if (ticket.taskId == m_selectedSystemTicketId) {
+                emit selectedSystemTicketChanged(ticket);
+                return;
+            }
+        }
+    }
+}
+
+void KeyManageController::handleJsonReceived(const QByteArray &jsonBytes, const QString &savedPath)
+{
+    QString taskId;
+    QString resultMessage;
+    ingestWorkbenchJson(jsonBytes, savedPath, &taskId, &resultMessage);
+}
+
+bool KeyManageController::ingestWorkbenchJson(const QByteArray &jsonBytes,
+                                              const QString &savedPath,
+                                              QString *taskIdOut,
+                                              QString *resultMessage,
+                                              bool scheduleAutoTransfer)
+{
+    QJsonParseError pe;
+    const QJsonDocument doc = QJsonDocument::fromJson(jsonBytes, &pe);
+    QString taskId;
+    if (!doc.isNull() && doc.isObject()) {
+        const QJsonObject root = doc.object();
+        const QJsonObject ticketObj = (root.contains("data") && root.value("data").isObject())
+                ? root.value("data").toObject()
+                : root;
+        taskId = ticketObj.value("taskId").toString();
+    }
+    if (taskIdOut) {
+        *taskIdOut = taskId;
+    }
+    const SystemTicketDto oldTicket = m_ticketStore->ticketById(taskId);
+
+    qInfo().noquote()
+            << QStringLiteral("[KeyManageController] ingestWorkbenchJson begin taskId=%1 payloadBytes=%2 savedPath=%3 oldValid=%4 oldTransfer=%5 oldReturn=%6")
+                  .arg(taskId.isEmpty() ? QStringLiteral("<empty>") : taskId,
+                       QString::number(jsonBytes.size()),
+                       savedPath,
+                       oldTicket.valid ? QStringLiteral("true") : QStringLiteral("false"),
+                       oldTicket.valid ? oldTicket.transferState : QStringLiteral("<none>"),
+                       oldTicket.valid ? oldTicket.returnState : QStringLiteral("<none>"));
+
+    QString ingestError;
+    if (!m_ticketStore->ingestJson(jsonBytes, savedPath, &ingestError)) {
+        if (resultMessage) {
+            *resultMessage = ingestError;
+        }
+        qWarning().noquote()
+                << QStringLiteral("[KeyManageController] ingestWorkbenchJson failed taskId=%1 reason=%2")
+                      .arg(taskId.isEmpty() ? QStringLiteral("<empty>") : taskId,
+                           ingestError);
+        emit statusMessage(QStringLiteral("绯荤粺绁ㄥ叆姹犲け璐ワ細%1").arg(ingestError));
+        return false;
+    }
+    if (resultMessage) {
+        resultMessage->clear();
+    }
+
+    qInfo().noquote()
+            << QStringLiteral("[KeyManageController] ingestWorkbenchJson accepted taskId=%1 autoTransfer=%2")
+                  .arg(taskId,
+                       autoTransferEnabled() ? QStringLiteral("true") : QStringLiteral("false"));
+    emit statusMessage(QStringLiteral("绯荤粺绁ㄥ叆姹犳垚鍔燂細taskId=%1锛屽綋鍓嶇姸鎬?received").arg(taskId));
+
+    if (oldTicket.valid) {
+        if (oldTicket.transferState == QLatin1String("success")) {
+            if (resultMessage) {
+                *resultMessage = QStringLiteral("ticket already transferred, duplicate ignored");
+            }
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] ingestWorkbenchJson duplicate success taskId=%1 ignored=true")
+                          .arg(taskId);
+            emit statusMessage(QStringLiteral("绯荤粺绁ㄥ凡瀛樺湪涓斿凡浼犵エ鍒伴挜鍖欙紝鏈閲嶅璇锋眰宸插拷鐣?") );
+            return true;
+        }
+        if (oldTicket.transferState == QLatin1String("sending")) {
+            if (resultMessage) {
+                *resultMessage = QStringLiteral("ticket is already sending, duplicate ignored");
+            }
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] ingestWorkbenchJson duplicate sending taskId=%1 ignored=true")
+                          .arg(taskId);
+            emit statusMessage(QStringLiteral("绯荤粺绁ㄦ鍦ㄤ紶绁ㄥ埌閽ュ寵锛屾湰娆￠噸澶嶈姹傚凡蹇界暐"));
+            return true;
+        }
+        if (oldTicket.transferState == QLatin1String("key-cleared")) {
+            if (scheduleAutoTransfer && autoTransferEnabled()) {
+                if (resultMessage) {
+                    *resultMessage = QStringLiteral("ticket accepted, key task cleared, auto retransfer scheduled");
+                }
+                qInfo().noquote()
+                        << QStringLiteral("[KeyManageController] ingestWorkbenchJson key-cleared taskId=%1 action=auto-retransfer")
+                              .arg(taskId);
+                emit statusMessage(QStringLiteral("绯荤粺绁ㄥ搴旈挜鍖欎换鍔″凡鍒犻櫎锛屽噯澶囧啀娆¤嚜鍔ㄤ紶绁?") );
+                tryStartTicketTransfer(taskId, true);
+            } else {
+                if (resultMessage) {
+                    *resultMessage = scheduleAutoTransfer
+                            ? QStringLiteral("ticket accepted, key task cleared, manual retransfer allowed")
+                            : QStringLiteral("ticket accepted, key task cleared, waiting for immediate transfer");
+                }
+                qInfo().noquote()
+                        << QStringLiteral("[KeyManageController] ingestWorkbenchJson key-cleared taskId=%1 action=%2")
+                              .arg(taskId,
+                                   scheduleAutoTransfer
+                                   ? QStringLiteral("manual-retransfer")
+                                   : QStringLiteral("immediate-transfer"));
+                emit statusMessage(scheduleAutoTransfer
+                                   ? QStringLiteral("绯荤粺绁ㄥ搴旈挜鍖欎换鍔″凡鍒犻櫎锛屽彲鎵嬪姩鍐嶆浼犵エ")
+                                   : QStringLiteral("绯荤粺绁ㄥ搴旈挜鍖欎换鍔″凡鍒犻櫎锛屽噯澶囩珛鍗抽噸鏂颁紶绁?") );
+            }
+            return true;
+        }
+    }
+
+    if (!scheduleAutoTransfer) {
+        if (resultMessage) {
+            *resultMessage = QStringLiteral("ticket accepted, ready for immediate transfer");
+        }
+        emit statusMessage(QStringLiteral("绯荤粺绁ㄥ凡鎺ユ敹骞跺叆姹狅紝鍑嗗绔嬪嵆鍙戦€佸埌閽ュ寵"));
+    } else if (autoTransferEnabled()) {
+        if (resultMessage) {
+            *resultMessage = QStringLiteral("ticket accepted, queued for auto transfer");
+        }
+        emit statusMessage(QStringLiteral("绯荤粺绁ㄥ凡鎺ユ敹骞跺叆姹狅紝鍑嗗鑷姩浼犵エ"));
+    } else {
+        if (resultMessage) {
+            *resultMessage = QStringLiteral("ticket accepted, auto transfer disabled");
+        }
+        emit statusMessage(QStringLiteral("绯荤粺绁ㄥ凡鎺ユ敹骞跺叆姹狅紙鑷姩浼犵エ宸插叧闂級"));
+    }
+    qInfo().noquote()
+            << QStringLiteral("[KeyManageController] ingestWorkbenchJson taskId=%1 nextAction=%2")
+                  .arg(taskId,
+                       scheduleAutoTransfer ? QStringLiteral("queue-auto-transfer")
+                                            : QStringLiteral("immediate-transfer-by-caller"));
+    if (scheduleAutoTransfer) {
+        tryAutoTransferPendingTicket();
+    }
+    return true;
+}
+
+void KeyManageController::handleHttpServerLog(const QString &text)
+{
+    m_httpServerLogLines << text;
+    if (m_httpServerLogLines.size() > 2000) {
+        m_httpServerLogLines.removeFirst();
+    }
+    emit httpServerLogAppended(text);
+}
+
+void KeyManageController::handleHttpClientLog(const QString &text)
+{
+    m_httpClientLogLines << text;
+    if (m_httpClientLogLines.size() > 2000) {
+        m_httpClientLogLines.removeFirst();
+    }
+    emit httpClientLogAppended(text);
+}
+
+void KeyManageController::handleInitPayloadReady(const QByteArray &payload)
+{
+    CommandRequest req;
+    req.id = CommandId::InitKey;
+    req.opId = nextOpId();
+    req.payload = payload;
+    m_session->execute(req);
+    emit statusMessage(QStringLiteral("鍒濆鍖栨暟鎹凡鍑嗗瀹屾垚锛屽紑濮嬩笅鍙戝埌閽ュ寵"));
+}
+
+void KeyManageController::handleRfidPayloadReady(const QByteArray &payload)
+{
+    CommandRequest req;
+    req.id = CommandId::DownloadRfid;
+    req.opId = nextOpId();
+    req.payload = payload;
+    m_session->execute(req);
+    emit statusMessage(QStringLiteral("RFID 鏁版嵁宸插噯澶囧畬鎴愶紝寮€濮嬩笅鍙戝埌閽ュ寵"));
+}
+
+void KeyManageController::handleProvisionRequestFailed(const QString &reason)
+{
+    emit statusMessage(reason);
+}
+
+void KeyManageController::handleReturnUploadSucceeded(const QString &taskId)
+{
+    emit statusMessage(QStringLiteral("鍥炰紶涓婁紶鎴愬姛锛?1").arg(taskId));
+
+    if (!m_activeReturnTaskIdRaw.isEmpty() && isCurrentKeySession(m_activeReturnSessionId)) {
+        markReturnDeletePending(taskId, m_activeReturnTaskIdRaw);
+
+        CommandRequest req;
+        req.id = CommandId::DeleteTask;
+        req.opId = nextOpId();
+        req.payload = m_activeReturnTaskIdRaw;
+        m_session->execute(req);
+        emit statusMessage(QStringLiteral("鍥炰紶涓婁紶鎴愬姛锛屽紑濮嬪垹闄ら挜鍖欎腑鐨勫凡瀹屾垚浠诲姟"));
+    } else {
+        const QString reason = QStringLiteral("鍥炰紶涓婁紶鎴愬姛锛屼絾缂哄皯閽ュ寵浠诲姟鍘熷ID锛屾棤娉曡嚜鍔ㄥ垹闄ら挜鍖欎换鍔?");
+        m_ticketStore->updateReturnState(taskId, QStringLiteral("manual-required"), reason);
+        emit statusMessage(reason);
+    }
+
+    clearActiveReturnContext();
+}
+
+void KeyManageController::handleReturnUploadFailed(const QString &taskId, const QString &reason)
+{
+    m_ticketStore->updateReturnState(taskId, QStringLiteral("manual-required"), reason);
+    emit statusMessage(QStringLiteral("鍥炰紶涓婁紶澶辫触锛?1").arg(reason));
+    clearActiveReturnContext();
+}
+
+void KeyManageController::failActiveReturnHandshake(const QString &reason)
+{
+    const QString taskId = !m_activeReturnTaskId.isEmpty()
+            ? m_activeReturnTaskId
+            : m_pendingReturnHandshakeTaskId;
+    if (!taskId.isEmpty()) {
+        m_ticketStore->updateReturnState(taskId,
+                                         QStringLiteral("return-interrupted-retryable"),
+                                         reason);
+    }
+    clearActiveReturnContext();
+}
+
+void KeyManageController::clearActiveReturnContext(bool clearHandshakeOnly)
+{
+    if (!clearHandshakeOnly) {
+        m_activeReturnTaskId.clear();
+        m_activeReturnTaskIdRaw.clear();
+        m_activeReturnSessionId = 0;
+    }
+    m_pendingReturnHandshakeTaskId.clear();
+    m_pendingReturnHandshakeTaskIdRaw.clear();
+    schedulePendingCancelReconcile(QStringLiteral("return-context-cleared"), 300);
+}
+
+void KeyManageController::markReturnDeletePending(const QString &taskId, const QByteArray &taskIdRaw)
+{
+    m_ticketStore->updateReturnState(taskId, QStringLiteral("return-upload-success"));
+    m_ticketStore->updateReturnState(taskId, QStringLiteral("return-delete-verifying"));
+    m_pendingDeletedSystemTicketId = taskId;
+    m_pendingDeletedKeyTaskRaw = taskIdRaw;
+    m_pendingDeleteAllowsRetransfer = false;
+    m_pendingDeleteSessionId = m_activeReturnSessionId;
+    m_pendingDeleteRetryCount = 0;
+    m_pendingDeleteOrigin = DeleteOrigin::AutoReturnCleanup;
+}
+
+void KeyManageController::finalizePendingReturnDelete(const QList<KeyTaskDto> &tasks)
+{
+    if (m_pendingDeletedSystemTicketId.isEmpty() || m_pendingDeletedKeyTaskRaw.isEmpty()) {
+        return;
+    }
+    if (m_pendingDeleteSessionId > 0 && !isCurrentKeySession(m_pendingDeleteSessionId)) {
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] finalizePendingReturnDelete skipped stale session pendingDeleteSession=%1 currentSession=%2 taskId=%3")
+                      .arg(QString::number(m_pendingDeleteSessionId),
+                           QString::number(m_keySessionId),
+                           m_pendingDeletedSystemTicketId.isEmpty() ? QStringLiteral("<none>") : m_pendingDeletedSystemTicketId);
+        return;
+    }
+
+    bool stillExists = false;
+    for (const KeyTaskDto &task : tasks) {
+        if (task.taskId == m_pendingDeletedKeyTaskRaw) {
+            stillExists = true;
+            break;
+        }
+    }
+
+    const bool sessionUnknown = (m_pendingDeleteSessionId == 0);
+    if (sessionUnknown && !stillExists) {
+        m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
+                                         QStringLiteral("return-delete-verifying"),
+                                         QStringLiteral("鍒犻櫎閾捐矾鏇捐閽ュ寵绉婚櫎鎵撴柇锛屽綋鍓嶉挜鍖欐湭瑙傛祴鍒拌浠诲姟锛岀户缁瓑寰呭師閽ュ寵鍥炰綅鍚庡啀纭"));
+        emit statusMessage(QStringLiteral("鍒犻櫎閾捐矾鏇捐閽ュ寵绉婚櫎鎵撴柇锛屽綋鍓嶆湭纭鍒板師浠诲姟锛岀户缁瓑寰呭師閽ュ寵鍥炰綅"));
+        return;
+    }
+    if (stillExists || sessionUnknown) {
+        const QString retryReason = (sessionUnknown && !stillExists)
+                ? QStringLiteral("鍒犻櫎鍚庨挜鍖欏彂鐢熻繃绉婚櫎锛屽綋鍓嶆棤娉曠‘璁ゆ槸鍚︿负鍚屼竴鎶婇挜鍖欙紝閲嶆柊鍙戦€?DEL 浠ラ伩鍏嶈鍒ゆ垚鍔?")
+                : QStringLiteral("鍒犻櫎鍚庨獙璇佸彂鐜伴挜鍖欎换鍔′粛瀛樺湪锛岄噸鏂板彂閫?DEL 缁х画娓呯悊");
+        if (!retryPendingReturnDelete(retryReason)) {
+            emit statusMessage(retryReason);
+        }
+        return;
+    }
+    if (!stillExists && !sessionUnknown) {
+        if (m_pendingDeleteOrigin == DeleteOrigin::ManualDelete) {
+            m_ticketStore->markKeyTaskDeleted(m_pendingDeletedSystemTicketId);
+            const SystemTicketDto ticket = m_ticketStore->ticketById(m_pendingDeletedSystemTicketId);
+            if (ticket.valid) {
+                // 閽ュ寵宸叉竻鐞嗗畬姣曪紝寮傛閫氱煡宸ヤ綔鍙扮粓姝紱鎴愬姛鍚庡垹闄ゆ湰鍦拌褰曪紝澶辫触鍒欎繚鐣欎緵閲嶈瘯
+                callTerminationThenRemove(m_pendingDeletedSystemTicketId);
+                emit statusMessage(QStringLiteral("閽ュ寵浠诲姟宸插垹闄わ紝姝ｅ湪閫氱煡宸ヤ綔鍙扮粓姝㈢郴缁熺エ锛?1")
+                                       .arg(m_pendingDeletedSystemTicketId));
+            } else {
+                emit statusMessage(QStringLiteral("閽ュ寵娈嬬暀浠诲姟宸叉竻鐞嗭紙鏈湴璁板綍宸茶繃鏈燂級锛?1")
+                                       .arg(m_pendingDeletedSystemTicketId));
+            }
+        } else {
+            // 鍥炰紶娓呯悊鏀跺彛 鈥?鍘熸湁閫昏緫瀹屽叏涓嶅彉
+            if (m_pendingDeleteAllowsRetransfer) {
+                m_ticketStore->markKeyTaskDeleted(m_pendingDeletedSystemTicketId);
+                emit statusMessage(QStringLiteral("閽ュ寵浠诲姟宸插垹闄わ紝鍙啀娆′紶绁?") );
+            } else {
+                const SystemTicketDto ticket = m_ticketStore->ticketById(m_pendingDeletedSystemTicketId);
+                if (ticket.valid && (ticket.returnState == QLatin1String("return-delete-verifying")
+                                     || ticket.returnState == QLatin1String("return-delete-pending")
+                                     || ticket.returnState == QLatin1String("return-upload-success"))) {
+                    m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
+                                                     QStringLiteral("return-delete-success"));
+                    emit statusMessage(QStringLiteral("鍥炰紶瀹屾垚锛岄挜鍖欎换鍔″凡娓呯悊锛?1")
+                                           .arg(m_pendingDeletedSystemTicketId));
+                    emit workbenchRefreshRequested();
+                } else {
+                    emit statusMessage(QStringLiteral("閽ュ寵浠诲姟宸插垹闄?") );
+                }
+            }
+        }
+        m_pendingDeletedSystemTicketId.clear();
+        m_pendingDeletedKeyTaskRaw.clear();
+        m_pendingDeleteAllowsRetransfer = false;
+        m_pendingDeleteSessionId = 0;
+        m_pendingDeleteRetryCount = 0;
+        m_pendingDeleteOrigin = DeleteOrigin::None;
+    } else {
+        m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
+                                         QStringLiteral("return-delete-verifying"),
+                                         QStringLiteral("鍒犻櫎鍚庨獙璇佸彂鐜伴挜鍖欎换鍔′粛瀛樺湪锛岀瓑寰呭悗缁嚜鍔ㄦ竻鐞?") );
+        emit statusMessage(QStringLiteral("鍒犻櫎鍚庨獙璇佸彂鐜伴挜鍖欎换鍔′粛瀛樺湪锛岃缁х画绛夊緟鑷姩娓呯悊"));
+    }
+}
+
+bool KeyManageController::retryPendingReturnDelete(const QString &reason)
+{
+    if (m_pendingDeletedSystemTicketId.isEmpty() || m_pendingDeletedKeyTaskRaw.isEmpty()) {
+        return false;
+    }
+
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    if (!snapshot.connected || !snapshot.keyPresent || !snapshot.keyStable || !snapshot.sessionReady) {
+        m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
+                                         QStringLiteral("return-delete-verifying"),
+                                         reason.isEmpty()
+                                                 ? QStringLiteral("绛夊緟閽ュ寵閲嶆柊灏辩华鍚庣户缁垹闄ら獙璇?")
+                                                 : reason);
+        return false;
+    }
+    if (snapshot.commandInFlight || snapshot.recoveryWindowActive) {
+        m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
+                                         QStringLiteral("return-delete-verifying"),
+                                         reason.isEmpty()
+                                                 ? QStringLiteral("绛夊緟褰撳墠鍗忚绐楀彛鏀跺彛鍚庣户缁垹闄ら獙璇?")
+                                                 : reason);
+        return false;
+    }
+    if (m_pendingDeleteRetryCount >= 3) {
+        m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
+                                         QStringLiteral("return-delete-failed"),
+                                         QStringLiteral("DEL 宸查噸璇?3 娆′粛鏈‘璁ゅ垹闄わ紝璇蜂汉宸ュ鐞?") );
+        emit statusMessage(QStringLiteral("浠诲姟 %1 鍒犻櫎楠岃瘉澶辫触锛欴EL 宸查噸璇?3 娆′粛鏈敹鍙ｏ紝璇蜂汉宸ュ鐞?")
+                               .arg(m_pendingDeletedSystemTicketId));
+        m_pendingDeletedSystemTicketId.clear();
+        m_pendingDeletedKeyTaskRaw.clear();
+        m_pendingDeleteAllowsRetransfer = false;
+        m_pendingDeleteSessionId = 0;
+        m_pendingDeleteRetryCount = 0;
+        m_pendingDeleteOrigin = DeleteOrigin::None;
+        return false;
+    }
+
+    ++m_pendingDeleteRetryCount;
+    m_pendingDeleteSessionId = m_keySessionId;
+    m_ticketStore->updateReturnState(m_pendingDeletedSystemTicketId,
+                                     QStringLiteral("return-delete-pending"),
+                                     QStringLiteral("DEL 閲嶈瘯绗?%1/3 娆★細%2")
+                                             .arg(m_pendingDeleteRetryCount)
+                                             .arg(reason.isEmpty() ? QStringLiteral("缁х画纭閽ュ寵浠诲姟娓呯悊缁撴灉") : reason));
+
+    CommandRequest req;
+    req.id = CommandId::DeleteTask;
+    req.opId = nextOpId();
+    req.payload = m_pendingDeletedKeyTaskRaw;
+    m_session->execute(req);
+    emit statusMessage(QStringLiteral("浠诲姟 %1 鍒犻櫎楠岃瘉鏈敹鍙ｏ紝宸茶嚜鍔ㄩ噸鍙?DEL锛堢 %2/3 娆★級")
+                           .arg(m_pendingDeletedSystemTicketId)
+                           .arg(m_pendingDeleteRetryCount));
+    return true;
+}
+
+void KeyManageController::callTermination(const QString &taskId)
+{
+    AuthServiceAdapter authAdapter;
+    const QString accessToken = authAdapter.accessToken().trimmed();
+    if (accessToken.isEmpty()) {
+        qWarning().noquote()
+                << QStringLiteral("[KeyManageController] callTermination skip: no accessToken taskId=%1").arg(taskId);
+        emit statusMessage(QStringLiteral("缁堟绯荤粺绁ㄥけ璐ワ細鏈櫥褰曪紝璇风鐞嗗憳鎵嬪姩鍦ㄥ伐浣滃彴缁堟"));
+        return;
+    }
+
+    QString apiBase = ConfigManager::instance()->apiUrl();
+    if (apiBase.endsWith(QLatin1String("/third-api"))) {
+        apiBase.chop(10);
+    }
+    while (apiBase.endsWith(QLatin1Char('/'))) {
+        apiBase.chop(1);
+    }
+
+    QUrl url(apiBase + QStringLiteral("/task/termination"));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("id"), taskId);
+    query.addQueryItem(QStringLiteral("reason"), QStringLiteral("绠＄悊鍛樻墜宸ュ垹闄ら挜鍖欎换鍔?") );
+    url.setQuery(query);
+
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    request.setRawHeader("kids-auth", QStringLiteral("bearer %1").arg(accessToken).toUtf8());
+    request.setRawHeader("kids-requested-with", "KidsHttpRequest");
+
+    qInfo().noquote()
+            << QStringLiteral("[KeyManageController] callTermination POST taskId=%1 url=%2").arg(taskId, url.toString());
+
+    QNetworkReply *reply = m_terminationNetwork->post(request, QByteArray("{}"));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, taskId]() {
+        reply->deleteLater();
+        const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (reply->error() == QNetworkReply::NoError && httpStatus >= 200 && httpStatus < 300) {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] callTermination success taskId=%1 http=%2").arg(taskId).arg(httpStatus);
+        } else {
+            qWarning().noquote()
+                    << QStringLiteral("[KeyManageController] callTermination failed taskId=%1 http=%2 error=%3")
+                           .arg(taskId).arg(httpStatus).arg(reply->errorString());
+            emit statusMessage(QStringLiteral("缁堟绯荤粺绁ㄦ帴鍙ｈ皟鐢ㄥけ璐ワ紙HTTP %1锛夛紝璇风鐞嗗憳鍦ㄥ伐浣滃彴鎵嬪姩缁堟").arg(httpStatus));
+        }
+    });
+}
+
+void KeyManageController::callTerminationThenRemove(const QString &taskId)
+{
+    AuthServiceAdapter authAdapter;
+    const QString accessToken = authAdapter.accessToken().trimmed();
+    if (accessToken.isEmpty()) {
+        qWarning().noquote()
+                << QStringLiteral("[KeyManageController] callTerminationThenRemove skip: no accessToken taskId=%1").arg(taskId);
+        m_ticketStore->updateAdminDeleteStage(taskId,
+                SystemTicketDto::AdminDeleteStage::KeyClearedAwaitingTermination);
+        m_ticketStore->updateAdminDeleteError(taskId, QStringLiteral("鏈櫥褰曪紝绛夊緟涓嬫鐧诲綍鍚庤嚜鍔ㄩ噸璇?") );
+        emit statusMessage(QStringLiteral("宸ヤ綔鍙伴€氱煡澶辫触锛氭湭鐧诲綍锛屼笅娆＄櫥褰曞悗灏嗚嚜鍔ㄩ噸璇曪紙浠诲姟 ID: %1锛?").arg(taskId));
+        return;
+    }
+
+    m_ticketStore->updateAdminDeleteStage(taskId,
+            SystemTicketDto::AdminDeleteStage::KeyClearedAwaitingTermination);
+
+    QString apiBase = ConfigManager::instance()->apiUrl();
+    if (apiBase.endsWith(QLatin1String("/third-api"))) {
+        apiBase.chop(10);
+    }
+    while (apiBase.endsWith(QLatin1Char('/'))) {
+        apiBase.chop(1);
+    }
+
+    QUrl url(apiBase + QStringLiteral("/task/termination"));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("id"), taskId);
+    query.addQueryItem(QStringLiteral("reason"), QStringLiteral("绠＄悊鍛樻墜宸ュ垹闄ら挜鍖欎换鍔?") );
+    url.setQuery(query);
+
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    request.setRawHeader("kids-auth", QStringLiteral("bearer %1").arg(accessToken).toUtf8());
+    request.setRawHeader("kids-requested-with", "KidsHttpRequest");
+
+    qInfo().noquote()
+            << QStringLiteral("[KeyManageController] callTerminationThenRemove POST taskId=%1 url=%2")
+                  .arg(taskId, url.toString());
+
+    QNetworkReply *reply = m_terminationNetwork->post(request, QByteArray("{}"));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, taskId]() {
+        const QByteArray body = reply->readAll();
+        reply->deleteLater();
+        const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+        // 鍏堝垽鏂紶杈撳眰鏄惁鎴愬姛
+        QString errText;
+        bool transportOk = (reply->error() == QNetworkReply::NoError
+                            && httpStatus >= 200 && httpStatus < 300);
+        if (!transportOk) {
+            errText = reply->errorString();
+            if (errText.trimmed().isEmpty()) {
+                errText = QStringLiteral("HTTP %1").arg(httpStatus);
+            }
+        }
+
+        // 鍐嶅垽鏂笟鍔″眰锛堜笌 TicketReturnHttpClient 淇濇寔涓€鑷达級
+        bool businessOk = false;
+        if (transportOk) {
+            QJsonParseError pe;
+            const QJsonDocument doc = QJsonDocument::fromJson(body, &pe);
+            if (!doc.isNull() && doc.isObject()) {
+                const QJsonObject obj = doc.object();
+                businessOk = obj.value(QStringLiteral("success")).toBool(false)
+                             || obj.value(QStringLiteral("code")).toInt() == 200;
+                if (!businessOk) {
+                    errText = obj.value(QStringLiteral("msg")).toString().trimmed();
+                    if (errText.isEmpty()) {
+                        errText = QStringLiteral("宸ヤ綔鍙版帴鍙ｈ繑鍥炰笟鍔″け璐ワ紙HTTP %1锛?").arg(httpStatus);
+                    }
+                }
+            } else {
+                // body 闈?JSON 鏃讹紝浼犺緭灞?2xx 鍗宠涓烘垚鍔燂紙鍏煎鏃?body 鍝嶅簲锛?                businessOk = true;
+            }
+        }
+
+        if (businessOk) {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] callTerminationThenRemove success taskId=%1 http=%2")
+                          .arg(taskId).arg(httpStatus);
+            m_ticketStore->removeTicket(taskId);
+            emit statusMessage(QStringLiteral("绯荤粺绁ㄥ凡缁堟骞跺垹闄わ細%1").arg(taskId));
+        } else {
+            qWarning().noquote()
+                    << QStringLiteral("[KeyManageController] callTerminationThenRemove failed taskId=%1 http=%2 error=%3")
+                          .arg(taskId).arg(httpStatus).arg(errText);
+            m_ticketStore->updateAdminDeleteStage(taskId,
+                    SystemTicketDto::AdminDeleteStage::TerminationFailed);
+            m_ticketStore->updateAdminDeleteError(taskId, errText);
+            emit statusMessage(
+                    QStringLiteral("宸ヤ綔鍙伴€氱煡澶辫触锛岃鎵嬪姩鍦ㄥ伐浣滃彴鍏抽棴浠诲姟 ID: %1锛堥敊璇細%2锛?")
+                            .arg(taskId, errText));
+        }
+    });
+}
+
+bool KeyManageController::canProcessCancelNow(QString *blockedReason) const
+{
+    auto setBlockedReason = [blockedReason](const QString &reason) {
+        if (blockedReason) {
+            *blockedReason = reason;
+        }
+    };
+
+    if (m_pendingCancelSystemTicketId.size() > 0) {
+        setBlockedReason(QStringLiteral("褰撳墠宸叉湁鎾ら攢鍒犻櫎閾惧湪鎵ц"));
+        return false;
+    }
+    if (!m_activeTransferTaskId.isEmpty()) {
+        setBlockedReason(QStringLiteral("褰撳墠瀛樺湪浼犵エ閾惧湪閫?") );
+        return false;
+    }
+    if (!m_activeReturnTaskId.isEmpty()
+            || !m_pendingReturnHandshakeTaskId.isEmpty()
+            || !m_pendingDeletedSystemTicketId.isEmpty()) {
+        setBlockedReason(QStringLiteral("褰撳墠瀛樺湪鍥炰紶鎴栧垹闄ら獙璇侀摼鍦ㄩ€?") );
+        return false;
+    }
+
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    if (!snapshot.connected || !snapshot.keyPresent || !snapshot.keyStable || !snapshot.sessionReady) {
+        setBlockedReason(QStringLiteral("褰撳墠閽ュ寵浼氳瘽鏈氨缁?") );
+        return false;
+    }
+    if (snapshot.commandInFlight) {
+        setBlockedReason(QStringLiteral("褰撳墠搴曞眰浠嶆湁鍗忚鍛戒护鍦ㄩ€?") );
+        return false;
+    }
+    if (snapshot.recoveryWindowActive) {
+        setBlockedReason(QStringLiteral("褰撳墠澶勪簬鑷姩鎭㈠绐楀彛"));
+        return false;
+    }
+    if (m_autoQuerySessionId == m_keySessionId && m_keySessionId > 0) {
+        setBlockedReason(QStringLiteral("褰撳墠姝ｅ湪鎵ц鑷姩 Q_TASK 瀵硅处"));
+        return false;
+    }
+
+    setBlockedReason(QString());
+    return true;
+}
+
+void KeyManageController::schedulePendingCancelReconcile(const QString &reason, int delayMs)
+{
+    if (m_cancelReconcileScheduled || !m_ticketCancelCoordinator->hasPendingWork()) {
+        return;
+    }
+
+    m_cancelReconcileScheduled = true;
+    const int effectiveDelayMs = delayMs > 0 ? delayMs : 300;
+    qInfo().noquote()
+            << QStringLiteral("[KeyManageController] schedulePendingCancelReconcile reason=%1 delayMs=%2 currentSession=%3")
+                  .arg(reason.isEmpty() ? QStringLiteral("<none>") : reason,
+                       QString::number(effectiveDelayMs),
+                       QString::number(m_keySessionId));
+
+    QTimer::singleShot(effectiveDelayMs, this, [this]() {
+        m_cancelReconcileScheduled = false;
+        if (!m_ticketCancelCoordinator->hasPendingWork()) {
+            return;
+        }
+
+        QString blockedReason;
+        if (!canProcessCancelNow(&blockedReason)) {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] pending cancel reconcile skipped reason=%1")
+                          .arg(blockedReason.isEmpty() ? QStringLiteral("<none>") : blockedReason);
+            return;
+        }
+
+        if (m_keySessionId <= 0) {
+            return;
+        }
+
+        m_autoQuerySessionId = m_keySessionId;
+        emit statusMessage(QStringLiteral("妫€娴嬪埌寰呮挙閿€浠诲姟锛屽紑濮嬭鍙栭挜鍖欑エ鍒楄〃杩涜瀵硅处"));
+        onQueryTasksClicked();
+    });
+}
+
+void KeyManageController::tryProcessPendingCancelTasks(const QList<KeyTaskDto> &tasks)
+{
+    if (!m_ticketCancelCoordinator->hasPendingWork()) {
+        return;
+    }
+    if (!m_pendingCancelSystemTicketId.isEmpty()) {
+        return;
+    }
+
+    QString blockedReason;
+    if (!canProcessCancelNow(&blockedReason)) {
+        return;
+    }
+
+    const QStringList pendingTaskIds = m_ticketCancelCoordinator->activeTaskIds();
+    for (const QString &taskId : pendingTaskIds) {
+        if (taskId.trimmed().isEmpty()) {
+            continue;
+        }
+
+        const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
+        if (ticket.valid) {
+            if (ticket.returnState == QLatin1String("return-delete-success")
+                    || ticket.returnState == QLatin1String("return-success")
+                    || ticket.transferState == QLatin1String("key-cleared")) {
+                m_ticketCancelCoordinator->recordDone(taskId, ticket, QStringLiteral("浠诲姟宸插畬鎴愶紝鏃犻渶鎾ら攢"));
+                continue;
+            }
+            if (ticket.returnState == QLatin1String("return-upload-success")
+                    || ticket.returnState == QLatin1String("return-delete-pending")
+                    || ticket.returnState == QLatin1String("return-delete-verifying")) {
+                m_ticketCancelCoordinator->recordDone(taskId, ticket, QStringLiteral("浠诲姟宸插湪娓呯悊涓紝鏃犻渶閲嶅鎾ら攢"));
+                continue;
+            }
+        }
+
+        quint8 keyTaskStatus = 0xFF;
+        const QByteArray keyTaskRaw = findKeyTaskIdRaw(taskId, &keyTaskStatus);
+        if (keyTaskRaw.isEmpty()) {
+            if (ticket.valid) {
+                m_ticketCancelCoordinator->recordDone(taskId, ticket, QStringLiteral("浠诲姟宸插彇娑?") );
+                m_ticketStore->removeTicket(taskId);
+            } else {
+                m_ticketCancelCoordinator->recordDoneWithoutTicket(taskId, QStringLiteral("浠诲姟宸插彇娑?") );
+            }
+            emit statusMessage(QStringLiteral("鎾ら攢浠诲姟宸茬‘璁や笉鍦ㄩ挜鍖欎腑锛屽凡瀹屾垚鏀跺彛锛?1").arg(taskId));
+            continue;
+        }
+
+        m_pendingCancelSystemTicketId = taskId;
+        m_pendingCancelKeyTaskRaw = keyTaskRaw;
+        m_pendingCancelSessionId = m_keySessionId;
+
+        if (ticket.valid) {
+            m_ticketStore->updateCancelTracking(taskId,
+                                                QStringLiteral("cancel-executing"),
+                                                QStringLiteral("workbench-http"),
+                                                ticket.residentSlotId.isEmpty() ? QStringLiteral("slot-1") : ticket.residentSlotId,
+                                                ticket.residentKeyId,
+                                                ticket.cancelRequestedAt.isValid() ? ticket.cancelRequestedAt : QDateTime::currentDateTime(),
+                                                true,
+                                                QStringLiteral("宸茬‘璁ら挜鍖欎腑瀛樺湪浠诲姟锛屽紑濮嬫墽琛?DEL"));
+            m_ticketCancelCoordinator->recordExecuting(taskId,
+                                                       m_ticketStore->ticketById(taskId),
+                                                       QStringLiteral("宸茬‘璁ら挜鍖欎腑瀛樺湪浠诲姟锛屽紑濮嬫墽琛?DEL"));
+        } else {
+            SystemTicketDto transientTicket;
+            transientTicket.taskId = taskId;
+            transientTicket.cancelState = QStringLiteral("cancel-executing");
+            transientTicket.residentSlotId = QStringLiteral("slot-1");
+            transientTicket.cancelSource = QStringLiteral("workbench-http");
+            transientTicket.cancelRequestedAt = QDateTime::currentDateTime();
+            transientTicket.wasInKey = true;
+            transientTicket.valid = true;
+            m_ticketCancelCoordinator->recordExecuting(taskId,
+                                                       transientTicket,
+                                                       QStringLiteral("宸茬‘璁ら挜鍖欎腑瀛樺湪浠诲姟锛屽紑濮嬫墽琛?DEL"));
+        }
+
+        CommandRequest req;
+        req.id = CommandId::DeleteTask;
+        req.opId = nextOpId();
+        req.payload = keyTaskRaw;
+        m_session->execute(req);
+        emit statusMessage(QStringLiteral("妫€娴嬪埌寰呮挙閿€浠诲姟浠嶅湪閽ュ寵涓紝寮€濮嬫墽琛屽垹闄わ細%1").arg(taskId));
+        return;
+    }
+}
+
+void KeyManageController::finalizePendingCancelDelete(const QList<KeyTaskDto> &tasks)
+{
+    if (m_pendingCancelSystemTicketId.isEmpty()) {
+        return;
+    }
+    if (m_pendingCancelSessionId > 0 && !isCurrentKeySession(m_pendingCancelSessionId)) {
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] finalizePendingCancelDelete skipped stale session pendingCancelSession=%1 currentSession=%2 taskId=%3")
+                      .arg(QString::number(m_pendingCancelSessionId),
+                           QString::number(m_keySessionId),
+                           m_pendingCancelSystemTicketId);
+        return;
+    }
+
+    bool stillExists = false;
+    for (const KeyTaskDto &task : tasks) {
+        if (task.taskId == m_pendingCancelKeyTaskRaw) {
+            stillExists = true;
+            break;
+        }
+    }
+
+    const QString taskId = m_pendingCancelSystemTicketId;
+    const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
+    if (!stillExists) {
+        if (ticket.valid) {
+            m_ticketCancelCoordinator->recordDone(taskId, ticket, QStringLiteral("浠诲姟宸插彇娑?") );
+            m_ticketStore->removeTicket(taskId);
+        } else {
+            m_ticketCancelCoordinator->recordDoneWithoutTicket(taskId, QStringLiteral("浠诲姟宸插彇娑?") );
+        }
+        emit statusMessage(QStringLiteral("鎾ら攢浠诲姟宸插畬鎴愶紝閽ュ寵渚т换鍔″凡娓呯悊锛?1").arg(taskId));
+        emit workbenchRefreshRequested();
+        m_pendingCancelSystemTicketId.clear();
+        m_pendingCancelKeyTaskRaw.clear();
+        m_pendingCancelSessionId = 0;
+        return;
+    }
+
+    if (ticket.valid) {
+        m_ticketStore->updateCancelTracking(taskId,
+                                            QStringLiteral("cancel-pending"),
+                                            QStringLiteral("workbench-http"),
+                                            ticket.residentSlotId.isEmpty() ? QStringLiteral("slot-1") : ticket.residentSlotId,
+                                            ticket.residentKeyId,
+                                            ticket.cancelRequestedAt.isValid() ? ticket.cancelRequestedAt : QDateTime::currentDateTime(),
+                                            true,
+                                            QStringLiteral("鍒犻櫎楠岃瘉鍙戠幇閽ュ寵浠诲姟浠嶅瓨鍦紝绛夊緟涓嬩竴娆″畨鍏ㄧ獥鍙ｇ户缁竻鐞?") );
+        m_ticketCancelCoordinator->recordAccepted(taskId,
+                                                  m_ticketStore->ticketById(taskId),
+                                                  QStringLiteral("cancel-pending"),
+                                                  QStringLiteral("鍒犻櫎楠岃瘉鍙戠幇閽ュ寵浠诲姟浠嶅瓨鍦紝绛夊緟涓嬩竴娆″畨鍏ㄧ獥鍙ｇ户缁竻鐞?") );
+    }
+    emit statusMessage(QStringLiteral("鎾ら攢鍒犻櫎楠岃瘉鍙戠幇浠诲姟浠嶅瓨鍦紝绛夊緟鍚庣画缁х画娓呯悊锛?1").arg(taskId));
+    m_pendingCancelSystemTicketId.clear();
+    m_pendingCancelKeyTaskRaw.clear();
+    m_pendingCancelSessionId = 0;
+    schedulePendingCancelReconcile(QStringLiteral("cancel-verify-still-exists"), 1500);
+}
+
+bool KeyManageController::autoTransferEnabled() const
+{
+    return ConfigManager::instance()->value("ticket/autoTransferEnabled", false).toBool();
+}
+
+void KeyManageController::reconcileSystemTicketsFromKeyTasks(const QList<KeyTaskDto> &tasks)
+{
+    m_lastSuccessfulQueryTasksAtMs = QDateTime::currentMSecsSinceEpoch();
+
+    for (const KeyTaskDto &task : tasks) {
+        const QString taskId = taskIdFromRaw(task.taskId);
+        const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
+        if (!ticket.valid) {
+            continue;
+        }
+        // 宸插彈鐞嗘挙閿€鐨勭エ涓嶅仛瀵硅处绾犳锛堥伩鍏嶆妸鎾ら攢涓殑绁ㄥ張鎺ㄥ洖 success锛?        if (!ticket.cancelState.isEmpty()
+                && ticket.cancelState != QLatin1String("none")) {
+            continue;
+        }
+
+        m_ticketStore->updateKeyConfirmedAt(taskId, m_lastSuccessfulQueryTasksAtMs);
+
+        // Q_TASK 璇佸疄姝や换鍔″湪閽ュ寵涓?鈫?鍥炲寘缁欐寕璧风殑 socket锛堜笉绠″綋鍓?transferState 鏄惁宸叉槸 success锛?        m_ticketIngress->completeDeferredResponse(
+            taskId, true,
+            QStringLiteral("浼犵エ鎴愬姛锛屽凡纭浠诲姟瀛樺湪浜庨挜鍖欎腑"));
+
+        const bool needsReconcile = ticket.transferState == QLatin1String("received")
+                || ticket.transferState == QLatin1String("auto-pending")
+                || ticket.transferState == QLatin1String("sending")
+                || ticket.transferState == QLatin1String("failed");
+        if (!needsReconcile) {
+            continue;
+        }
+
+        m_ticketStore->updateTransferState(taskId, QStringLiteral("success"));
+        emit statusMessage(QStringLiteral("妫€娴嬪埌閽ュ寵涓凡瀛樺湪绯荤粺绁紝宸插皢鏈湴鐘舵€佺籂姝ｄ负鈥滃凡浼犵エ鍒伴挜鍖欌€濓細%1")
+                               .arg(taskId));
+    }
+}
+
+void KeyManageController::recoverAutoTransferWhenKeyEmpty(const QList<KeyTaskDto> &tasks)
+{
+    if (!autoTransferEnabled()) {
+        return;
+    }
+    if (!tasks.isEmpty()) {
+        return;
+    }
+    if (!m_activeTransferTaskId.isEmpty() || !m_activeReturnTaskId.isEmpty()) {
+        return;
+    }
+
+    bool requeued = false;
+    const QList<SystemTicketDto> tickets = systemTickets();
+    for (const SystemTicketDto &ticket : tickets) {
+        // 宸插彈鐞嗘挙閿€鐨勭エ涓嶅弬涓庤嚜鍔ㄦ仮澶?        if (!ticket.cancelState.isEmpty()
+                && ticket.cancelState != QLatin1String("none")) {
+            continue;
+        }
+        const bool shouldRecover = ticket.transferState == QLatin1String("sending")
+                || ticket.transferState == QLatin1String("failed");
+        if (!shouldRecover) {
+            continue;
+        }
+        if (!isAutomaticTransferSource(ticket)) {
+            continue;
+        }
+        if (ticket.returnState == QLatin1String("return-success")
+                || ticket.returnState == QLatin1String("return-upload-success")
+                || ticket.returnState == QLatin1String("return-delete-pending")
+                || ticket.returnState == QLatin1String("return-delete-verifying")
+                || ticket.returnState == QLatin1String("return-delete-success")
+                || ticket.returnState == QLatin1String("return-handshake")
+                || ticket.returnState == QLatin1String("return-log-requesting")
+                || ticket.returnState == QLatin1String("return-log-receiving")
+                || ticket.returnState == QLatin1String("return-uploading")) {
+            continue;
+        }
+
+        m_ticketStore->updateTransferState(ticket.taskId, QStringLiteral("auto-pending"));
+        emit statusMessage(QStringLiteral("閽ュ寵涓湭妫€娴嬪埌绯荤粺绁紝宸插皢浠诲姟閲嶆柊鍔犲叆鑷姩浼犵エ闃熷垪锛?1")
+                               .arg(ticket.taskId));
+        requeued = true;
+    }
+
+    if (requeued) {
+        tryAutoTransferPendingTicket();
+    }
+}
+
+void KeyManageController::tryAutoCleanupReturnedTicket(const QList<KeyTaskDto> &tasks)
+{
+    if (!m_activeReturnTaskId.isEmpty()) {
+        return;
+    }
+    if (!m_pendingDeletedSystemTicketId.isEmpty()) {
+        return;
+    }
+    if (!m_pendingCancelSystemTicketId.isEmpty()) {
+        return;
+    }
+
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    if (!snapshot.connected || !snapshot.keyPresent || !snapshot.keyStable || !snapshot.sessionReady) {
+        return;
+    }
+
+    for (const KeyTaskDto &task : tasks) {
+        if (task.status != 0x02) {
+            continue;
+        }
+
+        const QString taskId = taskIdFromRaw(task.taskId);
+        const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
+        if (!ticket.valid) {
+            continue;
+        }
+        if (!ticket.cancelState.isEmpty() && ticket.cancelState != QLatin1String("none")) {
+            continue;
+        }
+        if (ticket.returnState != QLatin1String("return-upload-success")
+                && ticket.returnState != QLatin1String("return-delete-pending")
+                && ticket.returnState != QLatin1String("return-delete-verifying")) {
+            continue;
+        }
+
+        m_pendingDeletedSystemTicketId = taskId;
+        m_pendingDeletedKeyTaskRaw = task.taskId;
+        m_pendingDeleteAllowsRetransfer = false;
+        m_pendingDeleteSessionId = m_keySessionId;
+        m_pendingDeleteRetryCount = 0;
+        m_pendingDeleteOrigin = DeleteOrigin::AutoReturnCleanup;
+
+        CommandRequest req;
+        req.id = CommandId::DeleteTask;
+        req.opId = nextOpId();
+        req.payload = task.taskId;
+        m_session->execute(req);
+        emit statusMessage(QStringLiteral("妫€娴嬪埌鍥炰紶宸叉垚鍔熶絾閽ュ寵浠诲姟浠嶅瓨鍦紝鑷姩缁х画娓呯悊閽ュ寵浠诲姟锛?1")
+                               .arg(taskId));
+        return;
+    }
+}
+
+void KeyManageController::tryAutoRefreshKeyTasksOnReady(const KeySessionSnapshot &snapshot)
+{
+    const bool ready = snapshot.connected
+            && snapshot.keyPresent
+            && snapshot.keyStable
+            && snapshot.sessionReady;
+    const bool becameReady = (!m_lastReadyState && ready);
+    m_lastReadyState = ready;
+
+    if (!becameReady) {
+        return;
+    }
+
+    if (!m_activeTransferTaskId.isEmpty() || m_autoQuerySessionId == m_keySessionId) {
+        return;
+    }
+
+    m_autoQuerySessionId = m_keySessionId;
+    emit statusMessage(QStringLiteral("閽ュ寵宸插氨缁紝鑷姩璇诲彇閽ュ寵绁ㄥ垪琛ㄤ互妫€鏌ュ緟鍥炰紶浠诲姟"));
+    onQueryTasksClicked();
+}
+
+void KeyManageController::tryStartTicketReturn(const QString &taskId, bool automatic)
+{
+    QByteArray taskIdRaw;
+    QString blockedReason;
+    if (!canStartTicketReturn(taskId, automatic, &taskIdRaw, &blockedReason)) {
+        if (!automatic && !blockedReason.trimmed().isEmpty()) {
+            emit statusMessage(blockedReason);
+        }
+        return;
+    }
+
+    m_activeReturnTaskId = taskId;
+    m_activeReturnTaskIdRaw = taskIdRaw;
+    m_activeReturnSessionId = m_keySessionId;
+    m_pendingReturnHandshakeTaskId = taskId;
+    m_pendingReturnHandshakeTaskIdRaw = taskIdRaw;
+    m_ticketStore->updateReturnState(taskId, QStringLiteral("return-handshake"));
+
+    CommandRequest req;
+    req.id = CommandId::SetCom;
+    req.opId = nextOpId();
+    m_session->execute(req);
+    emit statusMessage(QStringLiteral("%1鍥炰紶鍓嶉噸鏂版彙鎵嬶細%2")
+                           .arg(automatic ? QStringLiteral("鑷姩") : QStringLiteral("鎵ц"))
+                           .arg(taskId));
+}
+
+void KeyManageController::tryAutoReturnCompletedTicket(const QList<KeyTaskDto> &tasks)
+{
+    if (!activeReturnChainTaskId().isEmpty()) {
+        return;
+    }
+    if (!m_ticketReturnClient->isConfigured()) {
+        return;
+    }
+
+    for (const KeyTaskDto &task : tasks) {
+        if (task.status != 0x02) {
+            continue;
+        }
+
+        const QString taskId = taskIdFromRaw(task.taskId);
+        const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
+        if (!ticket.valid) {
+            continue;
+        }
+        // 已受理撤销的票不参与自动恢复
+        if (!ticket.cancelState.isEmpty()
+                && ticket.cancelState != QLatin1String("none")) {
+            continue;
+        }
+        if (!isKeyPresenceFresh(ticket)) {
+            continue;
+        }
+        if (shouldSkipAutoReturnForState(ticket.returnState)) {
+            continue;
+        }
+
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] tryAutoReturnCompletedTicket selected taskId=%1 returnState=%2 transferState=%3")
+                      .arg(taskId,
+                           ticket.returnState.isEmpty() ? QStringLiteral("idle") : ticket.returnState,
+                           ticket.transferState);
+        tryStartTicketReturn(taskId, true);
+        return;
+    }
+}
+
+bool KeyManageController::canStartTicketReturn(const QString &taskId,
+                                               bool automatic,
+                                               QByteArray *taskIdRaw,
+                                               QString *blockedReason) const
+{
+    if (taskIdRaw) {
+        taskIdRaw->clear();
+    }
+
+    auto setBlockedReason = [blockedReason](const QString &reason) {
+        if (blockedReason) {
+            *blockedReason = reason;
+        }
+    };
+
+    if (taskId.trimmed().isEmpty()) {
+        setBlockedReason(QStringLiteral("鍥炰紶澶辫触锛歵askId 涓虹┖"));
+        return false;
+    }
+
+    const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
+    if (!ticket.valid) {
+        setBlockedReason(QStringLiteral("鍥炰紶澶辫触锛氱郴缁熺エ涓嶅瓨鍦?") );
+        return false;
+    }
+    if (!isKeyPresenceFresh(ticket)) {
+        setBlockedReason(QStringLiteral("鍥炰紶澶辫触锛氳绯荤粺绁ㄥ皻鏈幏寰楅挜鍖欑纭"));
+        return false;
+    }
+    if (isReturnCleanupState(ticket.returnState)) {
+        setBlockedReason(QStringLiteral("璇ョ郴缁熺エ宸茶繘鍏ュ洖浼犳垚鍔熷悗鐨勬竻鐞嗛樁娈碉紝鏈涓嶉噸澶嶄笂浼?") );
+        return false;
+    }
+    if (ticket.returnState == QLatin1String("return-success")
+            || ticket.returnState == QLatin1String("return-delete-success")) {
+        setBlockedReason(QStringLiteral("璇ョ郴缁熺エ宸插畬鎴愬洖浼狅紝鏈涓嶉噸澶嶄笂浼?") );
+        return false;
+    }
+    if (!m_ticketReturnClient->isConfigured()) {
+        setBlockedReason(QStringLiteral("鍥炰紶鎺ュ彛鏈厤缃紝鏆備笉鍙戣捣鍥炰紶"));
+        return false;
+    }
+
+    const QString busyTaskId = activeReturnChainTaskId();
+    if (!busyTaskId.isEmpty() && busyTaskId != taskId) {
+        setBlockedReason(QStringLiteral("褰撳墠浠诲姟 %1 姝ｅ湪鍥炰紶鎴栨竻鐞嗭紝璇风瓑寰呭綋鍓嶉摼璺畬鎴愬悗鍐嶈瘯").arg(busyTaskId));
+        return false;
+    }
+    if (busyTaskId == taskId && (isReturnInFlightState(ticket.returnState) || isReturnCleanupState(ticket.returnState))) {
+        setBlockedReason(QStringLiteral("璇ョ郴缁熺エ褰撳墠鍥炰紶閾句粛鍦ㄦ墽琛屼腑锛岃绋嶅悗鍐嶈瘯"));
+        return false;
+    }
+
+    quint8 keyTaskStatus = 0;
+    const QByteArray resolvedTaskIdRaw = findKeyTaskIdRaw(taskId, &keyTaskStatus);
+    if (resolvedTaskIdRaw.isEmpty()) {
+        setBlockedReason(QStringLiteral("閽ュ寵鍐呮湭鎵惧埌璇ョ郴缁熺エ锛岃鍏堣鍙栭挜鍖欑エ鍒楄〃"));
+        return false;
+    }
+    if (keyTaskStatus != 0x02) {
+        setBlockedReason(QStringLiteral("璇ョ郴缁熺エ鍦ㄩ挜鍖欎腑鐨勭姸鎬佹湭瀹屾垚锛屽綋鍓嶄换鍔″畬鎴愬悗鎵嶅厑璁稿洖浼?") );
+        return false;
+    }
+
+    if (taskIdRaw) {
+        *taskIdRaw = resolvedTaskIdRaw;
+    }
+    setBlockedReason(QString());
+    return true;
+}
+
+bool KeyManageController::isKeyPresenceFresh(const SystemTicketDto &ticket) const
+{
+    if (ticket.transferState != QLatin1String("success")) {
+        return false;
+    }
+    if (ticket.keyConfirmedAtMs <= 0) {
+        return false;
+    }
+    if (m_lastSuccessfulQueryTasksAtMs <= 0) {
+        return false;
+    }
+    return ticket.keyConfirmedAtMs + 500 >= m_lastSuccessfulQueryTasksAtMs;
+}
+
+QString KeyManageController::activeReturnChainTaskId() const
+{
+    if (!m_activeReturnTaskId.isEmpty()) {
+        return m_activeReturnTaskId;
+    }
+    if (!m_pendingReturnHandshakeTaskId.isEmpty()) {
+        return m_pendingReturnHandshakeTaskId;
+    }
+    if (!m_pendingDeletedSystemTicketId.isEmpty()) {
+        return m_pendingDeletedSystemTicketId;
+    }
+    return QString();
+}
+
+QByteArray KeyManageController::findKeyTaskIdRaw(const QString &taskId, quint8 *status) const
+{
+    for (const KeyTaskDto &task : m_lastKeyTasks) {
+        if (taskIdFromRaw(task.taskId) == taskId) {
+            if (status) {
+                *status = task.status;
+            }
+            return task.taskId;
+        }
+    }
+    if (status) {
+        *status = 0xFF;
+    }
+    return QByteArray();
+}
+
+QString KeyManageController::taskIdFromRaw(const QByteArray &taskIdRaw)
+{
+    return rawTaskIdToDecimalString(taskIdRaw);
+}
+
+bool KeyManageController::taskExistsInList(const QList<KeyTaskDto> &tasks, const QString &taskId) const
+{
+    for (const KeyTaskDto &task : tasks) {
+        if (taskIdFromRaw(task.taskId) == taskId) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool KeyManageController::hasBlockingIncompleteKeyTask(const QList<KeyTaskDto> &tasks,
+                                                       QString *blockingTaskId,
+                                                       const QByteArray &excludeTaskIdRaw) const
+{
+    if (blockingTaskId) {
+        blockingTaskId->clear();
+    }
+
+    for (const KeyTaskDto &task : tasks) {
+        if (!excludeTaskIdRaw.isEmpty() && task.taskId == excludeTaskIdRaw) {
+            continue;
+        }
+        if (task.status == 0x02) {
+            continue;
+        }
+        if (blockingTaskId) {
+            *blockingTaskId = taskIdFromRaw(task.taskId);
+        }
+        return true;
+    }
+    return false;
+}
+
+bool KeyManageController::startDirectWorkbenchTransfer(const QString &taskId,
+                                                       const QByteArray &jsonBytes,
+                                                       int expectedSessionId,
+                                                       int expectedBridgeEpoch,
+                                                       QString *blockedReason)
+{
+    if (taskId.trimmed().isEmpty()) {
+        if (blockedReason) {
+            *blockedReason = QStringLiteral("浼犵エ鍙戦€佸け璐ワ細taskId 涓虹┖");
+        }
+        return false;
+    }
+    if (jsonBytes.isEmpty()) {
+        if (blockedReason) {
+            *blockedReason = QStringLiteral("浼犵エ鍙戦€佸け璐ワ細JSON 鍐呭涓虹┖");
+        }
+        return false;
+    }
+    if (!m_activeTransferTaskId.isEmpty()) {
+        if (blockedReason) {
+            *blockedReason = QStringLiteral("褰撳墠宸叉湁鍏朵粬浼犵エ浠诲姟姝ｅ湪鎵ц锛岃绋嶅悗閲嶈瘯");
+        }
+        return false;
+    }
+
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    if (expectedSessionId <= 0 || !isCurrentKeySession(expectedSessionId)) {
+        if (blockedReason) {
+            *blockedReason = QStringLiteral("褰撳墠閽ュ寵浼氳瘽鏈缓绔嬶紝鏃犳硶鍙戦€佷紶绁?");
+        }
+        return false;
+    }
+    if (expectedBridgeEpoch <= 0 || snapshot.bridgeEpoch != expectedBridgeEpoch) {
+        if (blockedReason) {
+            *blockedReason = QStringLiteral("褰撳墠閽ュ寵浼氳瘽宸插彉鍖栵紝鏃犳硶鍙戦€佷紶绁?");
+        }
+        return false;
+    }
+    if (!snapshot.connected) {
+        if (blockedReason) {
+            *blockedReason = QStringLiteral("涓插彛鏈繛鎺ワ紝鏃犳硶鍙戦€佷紶绁?");
+        }
+        return false;
+    }
+    if (!snapshot.keyPresent || !snapshot.keyStable) {
+        if (blockedReason) {
+            *blockedReason = QStringLiteral("閽ュ寵鏈氨缁紝鏃犳硶鍙戦€佷紶绁?");
+        }
+        return false;
+    }
+    if (!snapshot.sessionReady) {
+        if (blockedReason) {
+            *blockedReason = QStringLiteral("閽ュ寵閫氳浼氳瘽鏈氨缁紝鏃犳硶鍙戦€佷紶绁?");
+        }
+        return false;
+    }
+    if (snapshot.commandInFlight) {
+        if (blockedReason) {
+            *blockedReason = QStringLiteral("褰撳墠搴曞眰浠嶆湁鍗忚鍛戒护鍦ㄩ€旓紝鏃犳硶鍙戦€佷紶绁?");
+        }
+        return false;
+    }
+    if (snapshot.recoveryWindowActive) {
+        if (blockedReason) {
+            *blockedReason = QStringLiteral("褰撳墠閽ュ寵閫氳姝ｅ湪鎭㈠涓紝鏃犳硶鍙戦€佷紶绁?");
+        }
+        return false;
+    }
+
+    m_activeTransferTaskId = taskId;
+    m_activeTransferSessionId = expectedSessionId;
+    m_ticketStore->updateTransferTriggerSource(taskId, QStringLiteral("manual"));
+    m_pendingTransferHandshakeTaskId = taskId;
+    m_pendingTransferHandshakeJsonBytes = jsonBytes;
+    m_pendingTransferHandshakeDebugChunk = ConfigManager::instance()
+            ->value("ticket/debugFrameChunkSize", 0).toInt();
+    qInfo().noquote()
+            << QStringLiteral("[KeyManageController] startDirectWorkbenchTransfer SET_COM handshake before TICKET taskId=%1 session=%2 payloadBytes=%3")
+                  .arg(taskId,
+                       QString::number(expectedSessionId),
+                       QString::number(jsonBytes.size()));
+    CommandRequest req;
+    req.id = CommandId::SetCom;
+    req.opId = nextOpId();
+    m_session->execute(req);
+    emit statusMessage(QStringLiteral("浼犵エ鍓嶉噸鏂版彙鎵嬶細%1").arg(taskId));
+    if (blockedReason) {
+        blockedReason->clear();
+    }
+    return true;
+}
+
+bool KeyManageController::isActiveHttpTransferTransactionFor(int sessionId, int bridgeEpoch) const
+{
+    return m_httpTransferTransactionActive
+            && sessionId > 0
+            && bridgeEpoch > 0
+            && sessionId == m_httpTransferTransactionSessionId
+            && bridgeEpoch == m_httpTransferTransactionBridgeEpoch;
+}
+
+void KeyManageController::setHttpTransferTransaction(const QString &taskId,
+                                                     int sessionId,
+                                                     int bridgeEpoch)
+{
+    m_httpTransferTransactionActive = true;
+    m_httpTransferTransactionTaskId = taskId;
+    m_httpTransferTransactionSessionId = sessionId;
+    m_httpTransferTransactionBridgeEpoch = bridgeEpoch;
+    m_httpTransactionSafetyTimer->start(); // 60 绉掑畨鍏ㄨ秴鏃?    qInfo().noquote()
+            << QStringLiteral("[KeyManageController] HTTP transfer transaction SET taskId=%1 session=%2 epoch=%3 safetyTimeout=60s")
+                  .arg(taskId, QString::number(sessionId), QString::number(bridgeEpoch));
+}
+
+void KeyManageController::clearHttpTransferTransaction(bool clearActiveTransfer)
+{
+    const QString taskId = m_httpTransferTransactionTaskId;
+    const int sessionId = m_httpTransferTransactionSessionId;
+
+    if (clearActiveTransfer
+            && !taskId.isEmpty()
+            && m_activeTransferTaskId == taskId
+            && m_activeTransferSessionId == sessionId) {
+        m_activeTransferTaskId.clear();
+        m_activeTransferSessionId = 0;
+        m_pendingTransferHandshakeTaskId.clear();
+        m_pendingTransferHandshakeJsonBytes.clear();
+        m_pendingTransferHandshakeDebugChunk = 0;
+    }
+
+    m_httpTransferTransactionActive = false;
+    m_httpTransferTransactionTaskId.clear();
+    m_httpTransferTransactionSessionId = 0;
+    m_httpTransferTransactionBridgeEpoch = 0;
+    m_httpTransactionSafetyTimer->stop(); // 姝ｅ父閲婃斁鏃跺仠姝㈠畨鍏ㄨ鏃跺櫒
+    qInfo().noquote()
+            << QStringLiteral("[KeyManageController] HTTP transfer transaction CLEARED taskId=%1 session=%2")
+                  .arg(taskId.isEmpty() ? QStringLiteral("<none>") : taskId,
+                       QString::number(sessionId));
+}
+
+bool KeyManageController::tryStartTicketTransfer(const QString &taskId,
+                                                 bool automatic,
+                                                 bool failInsteadOfDeferring,
+                                                 QString *blockedReason)
+{
+    if (taskId.trimmed().isEmpty()) {
+        qWarning().noquote()
+                << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked reason=empty-taskId automatic=%1")
+                      .arg(automatic ? QStringLiteral("true") : QStringLiteral("false"));
+        emit statusMessage(QStringLiteral("浼犵エ鍙戦€佸け璐ワ細taskId 涓虹┖"));
+        if (blockedReason) {
+            *blockedReason = QStringLiteral("浼犵エ鍙戦€佸け璐ワ細taskId 涓虹┖");
+        }
+        return false;
+    }
+
+    if (!m_activeTransferTaskId.isEmpty()) {
+        const QString reason = QStringLiteral("褰撳墠宸叉湁鍏朵粬浼犵エ浠诲姟姝ｅ湪鎵ц锛岃绋嶅悗閲嶈瘯");
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=active-transfer activeTransfer=%2 automatic=%3")
+                      .arg(taskId,
+                           m_activeTransferTaskId,
+                           automatic ? QStringLiteral("true") : QStringLiteral("false"));
+        if (!automatic || failInsteadOfDeferring) {
+            emit statusMessage(reason);
+        }
+        if (blockedReason) {
+            *blockedReason = reason;
+        }
+        if (failInsteadOfDeferring) {
+            m_ticketStore->updateTransferState(taskId, QStringLiteral("failed"), reason);
+        }
+        return false;
+    }
+
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    const SystemTicketDto ticket = m_ticketStore->ticketById(taskId);
+
+    if (ticket.valid
+            && !ticket.cancelState.isEmpty()
+            && ticket.cancelState != QLatin1String("none")) {
+        const QString reason = QStringLiteral("璇ョ郴缁熺エ宸插彈鐞嗘挙閿€锛屽綋鍓嶄笉鍐嶅弬涓庝紶绁?");
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=cancel-pending cancelState=%2 automatic=%3")
+                      .arg(taskId,
+                           ticket.cancelState,
+                           automatic ? QStringLiteral("true") : QStringLiteral("false"));
+        if (blockedReason) {
+            *blockedReason = reason;
+        }
+        emit statusMessage(reason);
+        return false;
+    }
+
+    if (ticket.valid && ticket.transferState == QLatin1String("success")) {
+        const QString reason = QStringLiteral("璇ョ郴缁熺エ宸蹭紶绁ㄥ埌閽ュ寵锛屾湰娆′笉閲嶅涓嬪彂");
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=already-success automatic=%2")
+                      .arg(taskId,
+                           automatic ? QStringLiteral("true") : QStringLiteral("false"));
+        emit statusMessage(reason);
+        if (blockedReason) {
+            *blockedReason = reason;
+        }
+        return false;
+    }
+    if (ticket.valid && ticket.transferState == QLatin1String("sending")) {
+        const QString reason = QStringLiteral("璇ョ郴缁熺エ姝ｅ湪浼犵エ涓紝璇风◢鍚庡啀璇?");
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=already-sending automatic=%2")
+                      .arg(taskId,
+                           automatic ? QStringLiteral("true") : QStringLiteral("false"));
+        emit statusMessage(reason);
+        if (blockedReason) {
+            *blockedReason = reason;
+        }
+        return false;
+    }
+
+    if (!snapshot.connected) {
+        const QString reason = automatic
+                ? QStringLiteral("绯荤粺绁ㄥ凡鍏ユ睜锛岀瓑寰呬覆鍙ｈ繛鎺ュ悗鑷姩浼犵エ")
+                : QStringLiteral("涓插彛鏈繛鎺ワ紝鏃犳硶鍙戦€佷紶绁?");
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=serial-disconnected automatic=%2")
+                      .arg(taskId,
+                           automatic ? QStringLiteral("true") : QStringLiteral("false"));
+        if (automatic) {
+            m_ticketStore->updateTransferState(taskId, QStringLiteral("auto-pending"));
+            emit statusMessage(reason);
+        } else {
+            emit statusMessage(reason);
+            if (failInsteadOfDeferring) {
+                m_ticketStore->updateTransferState(taskId, QStringLiteral("failed"), reason);
+            }
+        }
+        if (blockedReason) {
+            *blockedReason = reason;
+        }
+        return false;
+    }
+
+    if (!snapshot.keyPresent || !snapshot.keyStable) {
+        const QString reason = automatic
+                ? QStringLiteral("绯荤粺绁ㄥ凡鍏ユ睜锛岀瓑寰呴挜鍖欏氨缁悗鑷姩浼犵エ")
+                : QStringLiteral("閽ュ寵鏈氨缁紝鏃犳硶鍙戦€佷紶绁?");
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=key-not-ready keyPresent=%2 keyStable=%3 automatic=%4")
+                      .arg(taskId,
+                           snapshot.keyPresent ? QStringLiteral("true") : QStringLiteral("false"),
+                           snapshot.keyStable ? QStringLiteral("true") : QStringLiteral("false"),
+                           automatic ? QStringLiteral("true") : QStringLiteral("false"));
+        if (automatic) {
+            m_ticketStore->updateTransferState(taskId, QStringLiteral("auto-pending"));
+            emit statusMessage(reason);
+        } else {
+            emit statusMessage(reason);
+            if (failInsteadOfDeferring) {
+                m_ticketStore->updateTransferState(taskId, QStringLiteral("failed"), reason);
+            }
+        }
+        if (blockedReason) {
+            *blockedReason = reason;
+        }
+        return false;
+    }
+
+    if (!snapshot.sessionReady) {
+        const QString reason = automatic
+                ? QStringLiteral("绯荤粺绁ㄥ凡鍏ユ睜锛岀瓑寰呮彙鎵嬪畬鎴愬悗鑷姩浼犵エ")
+                : QStringLiteral("閽ュ寵閫氳浼氳瘽鏈氨缁紝鏃犳硶鍙戦€佷紶绁?");
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=session-not-ready automatic=%2 currentSession=%3")
+                      .arg(taskId,
+                           automatic ? QStringLiteral("true") : QStringLiteral("false"),
+                           QString::number(m_keySessionId));
+        if (automatic) {
+            m_ticketStore->updateTransferState(taskId, QStringLiteral("auto-pending"));
+            emit statusMessage(reason);
+        } else {
+            emit statusMessage(reason);
+            if (failInsteadOfDeferring) {
+                m_ticketStore->updateTransferState(taskId, QStringLiteral("failed"), reason);
+            }
+        }
+        if (blockedReason) {
+            *blockedReason = reason;
+        }
+        return false;
+    }
+
+    if (snapshot.commandInFlight) {
+        const QString reason = automatic
+                ? QStringLiteral("绯荤粺绁ㄥ凡鍏ユ睜锛岀瓑寰呭綋鍓嶅崗璁懡浠ゅ畬鎴愬悗鑷姩浼犵エ")
+                : QStringLiteral("褰撳墠搴曞眰浠嶆湁鍗忚鍛戒护鍦ㄩ€旓紝鏃犳硶鍙戦€佷紶绁?");
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=command-in-flight automatic=%2")
+                      .arg(taskId,
+                           automatic ? QStringLiteral("true") : QStringLiteral("false"));
+        if (automatic) {
+            m_ticketStore->updateTransferState(taskId, QStringLiteral("auto-pending"));
+            emit statusMessage(reason);
+        } else {
+            emit statusMessage(reason);
+            if (failInsteadOfDeferring) {
+                m_ticketStore->updateTransferState(taskId, QStringLiteral("failed"), reason);
+            }
+        }
+        if (blockedReason) {
+            *blockedReason = reason;
+        }
+        return false;
+    }
+
+    if (snapshot.recoveryWindowActive) {
+        const QString reason = automatic
+                ? QStringLiteral("绯荤粺绁ㄥ凡鍏ユ睜锛岀瓑寰呴挜鍖欓€氳鎭㈠鍚庤嚜鍔ㄤ紶绁?")
+                : QStringLiteral("褰撳墠閽ュ寵閫氳姝ｅ湪鎭㈠涓紝鏃犳硶鍙戦€佷紶绁?");
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=recovery-window automatic=%2")
+                      .arg(taskId,
+                           automatic ? QStringLiteral("true") : QStringLiteral("false"));
+        if (automatic) {
+            m_ticketStore->updateTransferState(taskId, QStringLiteral("auto-pending"));
+            emit statusMessage(reason);
+        } else {
+            emit statusMessage(reason);
+            if (failInsteadOfDeferring) {
+                m_ticketStore->updateTransferState(taskId, QStringLiteral("failed"), reason);
+            }
+        }
+        if (blockedReason) {
+            *blockedReason = reason;
+        }
+        return false;
+    }
+
+    const QByteArray jsonBytes = m_ticketStore->rawJsonById(taskId);
+    if (jsonBytes.isEmpty()) {
+        const QString reason = QStringLiteral("閫変腑绯荤粺绁ㄧ己灏戝師濮?JSON锛屾棤娉曞彂閫佷紶绁?");
+        qWarning().noquote()
+                << QStringLiteral("[KeyManageController] tryStartTicketTransfer blocked taskId=%1 reason=raw-json-missing automatic=%2")
+                      .arg(taskId,
+                           automatic ? QStringLiteral("true") : QStringLiteral("false"));
+        m_ticketStore->updateTransferState(taskId, QStringLiteral("failed"),
+                                           QStringLiteral("raw json missing"));
+        emit statusMessage(reason);
+        if (blockedReason) {
+            *blockedReason = reason;
+        }
+        return false;
+    }
+
+    m_activeTransferTaskId = taskId;
+    m_activeTransferSessionId = m_keySessionId;
+    m_ticketStore->updateTransferTriggerSource(taskId,
+                                               automatic ? QStringLiteral("automatic")
+                                                         : QStringLiteral("manual"));
+    m_pendingTransferHandshakeTaskId = taskId;
+    m_pendingTransferHandshakeJsonBytes = jsonBytes;
+    m_pendingTransferHandshakeDebugChunk = ConfigManager::instance()
+            ->value("ticket/debugFrameChunkSize", 0).toInt();
+    qInfo().noquote()
+            << QStringLiteral("[KeyManageController] tryStartTicketTransfer SET_COM handshake before TICKET taskId=%1 automatic=%2 session=%3 payloadBytes=%4")
+                  .arg(taskId,
+                       automatic ? QStringLiteral("true") : QStringLiteral("false"),
+                       QString::number(m_keySessionId),
+                       QString::number(jsonBytes.size()));
+    m_ticketStore->updateTransferState(taskId, QStringLiteral("sending"));
+    CommandRequest req;
+    req.id = CommandId::SetCom;
+    req.opId = nextOpId();
+    m_session->execute(req);
+    emit statusMessage(QStringLiteral("%1浼犵エ鍓嶉噸鏂版彙鎵嬶細%2")
+                           .arg(automatic ? QStringLiteral("鑷姩") : QStringLiteral("鎵ц"))
+                           .arg(taskId));
+    if (blockedReason) {
+        blockedReason->clear();
+    }
+    return true;
+}
+
+void KeyManageController::tryAutoTransferPendingTicket()
+{
+    if (m_suppressSessionAutomation) {
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] tryAutoTransferPendingTicket skipped reason=key-port-apply-in-progress epoch=%1")
+                      .arg(QString::number(m_keyPortApplyEpoch));
+        return;
+    }
+
+    if (m_httpTransferTransactionActive) {
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] tryAutoTransferPendingTicket skipped reason=http-transfer-transaction-active taskId=%1 session=%2 epoch=%3")
+                      .arg(m_httpTransferTransactionTaskId.isEmpty()
+                                   ? QStringLiteral("<none>")
+                                   : m_httpTransferTransactionTaskId,
+                           QString::number(m_httpTransferTransactionSessionId),
+                           QString::number(m_httpTransferTransactionBridgeEpoch));
+        return;
+    }
+
+    if (!autoTransferEnabled()) {
+        qInfo().noquote() << QStringLiteral("[KeyManageController] tryAutoTransferPendingTicket skipped reason=auto-transfer-disabled");
+        return;
+    }
+
+    if (!m_activeTransferTaskId.isEmpty()
+            || !m_activeReturnTaskId.isEmpty()
+            || !m_pendingReturnHandshakeTaskId.isEmpty()
+            || !m_pendingDeletedSystemTicketId.isEmpty()
+            || !m_pendingCancelSystemTicketId.isEmpty()) {
+        // busy 鐘舵€佷細琚珮棰戣Е鍙戯紝闄嶇骇涓?debug 閬垮厤鏃ュ織鍒峰睆
+        qDebug().noquote()
+                << QStringLiteral("[KeyManageController] tryAutoTransferPendingTicket skipped reason=busy activeTransfer=%1 activeReturn=%2 pendingHandshake=%3 pendingDelete=%4 pendingCancel=%5")
+                      .arg(m_activeTransferTaskId.isEmpty() ? QStringLiteral("<none>") : m_activeTransferTaskId,
+                           m_activeReturnTaskId.isEmpty() ? QStringLiteral("<none>") : m_activeReturnTaskId,
+                           m_pendingReturnHandshakeTaskId.isEmpty() ? QStringLiteral("<none>") : m_pendingReturnHandshakeTaskId,
+                           m_pendingDeletedSystemTicketId.isEmpty() ? QStringLiteral("<none>") : m_pendingDeletedSystemTicketId,
+                           m_pendingCancelSystemTicketId.isEmpty() ? QStringLiteral("<none>") : m_pendingCancelSystemTicketId);
+        return;
+    }
+
+    const QList<SystemTicketDto> tickets = systemTickets();
+    for (const SystemTicketDto &ticket : tickets) {
+        // 宸插彈鐞嗘挙閿€鐨勭エ涓嶅弬涓庤嚜鍔ㄤ紶绁?        if (!ticket.cancelState.isEmpty()
+                && ticket.cancelState != QLatin1String("none")) {
+            continue;
+        }
+        if (ticket.transferState == QLatin1String("received")
+                || ticket.transferState == QLatin1String("auto-pending")) {
+            qInfo().noquote()
+                    << QStringLiteral("[KeyManageController] tryAutoTransferPendingTicket selected taskId=%1 transferState=%2 returnState=%3 poolSize=%4")
+                          .arg(ticket.taskId,
+                               ticket.transferState,
+                               ticket.returnState,
+                               QString::number(tickets.size()));
+            emit statusMessage(QStringLiteral("鍙戠幇鍙嚜鍔ㄤ紶绁ㄤ换鍔★細%1").arg(ticket.taskId));
+            tryStartTicketTransfer(ticket.taskId, true);
+            return;
+        }
+    }
+    // 绌烘睜鎴栨棤绗﹀悎鏉′欢鐨勭エ鏃朵笉鎵撴棩蹇楋紝閬垮厤鍒峰睆锛堟瘡娆?KeyStateChanged 閮戒細瑙﹀彂鏈嚱鏁帮級
+}
+
+bool KeyManageController::hasPendingApplySensitiveBusiness() const
+{
+    if (m_ticketCancelCoordinator->hasPendingWork()) {
+        return true;
+    }
+    if (!m_activeTransferTaskId.isEmpty()
+            || !m_activeReturnTaskId.isEmpty()
+            || !m_pendingReturnHandshakeTaskId.isEmpty()
+            || !m_pendingDeletedSystemTicketId.isEmpty()
+            || !m_pendingCancelSystemTicketId.isEmpty()) {
+        return true;
+    }
+
+    const QList<SystemTicketDto> tickets = systemTickets();
+    for (const SystemTicketDto &ticket : tickets) {
+        if (ticket.transferState == QLatin1String("sending")
+                || ticket.transferState == QLatin1String("auto-pending")
+                || ticket.returnState == QLatin1String("return-interrupted-retryable")
+                || ticket.returnState == QLatin1String("return-handshake")
+                || ticket.returnState == QLatin1String("return-log-requesting")
+                || ticket.returnState == QLatin1String("return-log-receiving")
+                || ticket.returnState == QLatin1String("return-uploading")
+                || ticket.returnState == QLatin1String("return-delete-pending")
+                || ticket.returnState == QLatin1String("return-delete-verifying")
+                || ticket.returnState == QLatin1String("return-upload-success")
+                || ticket.cancelState == QLatin1String("cancel-accepted")
+                || ticket.cancelState == QLatin1String("cancel-pending")
+                || ticket.cancelState == QLatin1String("cancel-executing")) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool KeyManageController::isKeyPortApplyBusy(QString *reason) const
+{
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+
+    QString busyReason;
+    if (m_keyPortApplyInProgress) {
+        busyReason = QStringLiteral("褰撳墠姝ｅ湪搴旂敤閽ュ寵涓插彛閰嶇疆锛岃绛夊緟鏈鍒囨崲瀹屾垚");
+    } else if (hasPendingApplySensitiveBusiness()) {
+        busyReason = QStringLiteral("褰撳墠閽ュ寵涓氬姟灏氭湭鏀跺彛锛屽寘鍚紶绁?鍥炰紶/鍒犻櫎楠岃瘉涓殑閾捐矾锛岃绋嶅悗鍐嶈瘯");
+    } else if (snapshot.commandInFlight) {
+        busyReason = QStringLiteral("褰撳墠搴曞眰浠嶆湁鍗忚鍛戒护鍦ㄩ€旓紝璇风瓑寰呭綋鍓嶄覆鍙ｅ懡浠ゅ畬鎴愬悗鍐嶅垏鎹?");
+    } else if (m_keyProvisioning->isBusy()) {
+        busyReason = QStringLiteral("褰撳墠姝ｅ湪鎵ц INIT 鎴栦笅杞?RFID锛岃绛夊緟褰撳墠鍙栨暟涓庝笅鍙戝畬鎴?");
+    } else if (snapshot.recoveryWindowActive) {
+        busyReason = QStringLiteral("褰撳墠澶勪簬鑷姩鎭㈠绐楀彛锛屾殏涓嶅厑璁稿垏鎹㈤挜鍖欎覆鍙?");
+    } else if (snapshot.connected && snapshot.keyPresent && !snapshot.sessionReady) {
+        busyReason = QStringLiteral("褰撳墠閽ュ寵浼氳瘽姝ｅ湪鎻℃墜鎴栫瓑寰呴€氫俊纭锛屾殏涓嶅厑璁稿垏鎹㈤挜鍖欎覆鍙?");
+    } else if (m_autoQuerySessionId == m_keySessionId && m_keySessionId > 0) {
+        busyReason = QStringLiteral("褰撳墠閽ュ寵鍒氳繘鍏?ready 杈规部鑷姩 Q_TASK 绐楀彛锛屾殏涓嶅厑璁稿垏鎹㈤挜鍖欎覆鍙?");
+    }
+
+    if (reason) {
+        *reason = busyReason;
+    }
+    return !busyReason.isEmpty();
+}
+
+void KeyManageController::refreshKeySerialApplyStatus(const QString &overrideState,
+                                                      const QString &overrideMessage)
+{
+    const KeySessionSnapshot snapshot = m_session->snapshot();
+    const QString configuredPort = ConfigManager::instance()->keySerialPort().trimmed();
+    const QString runtimePort = snapshot.portName.trimmed();
+
+    QString nextState = overrideState;
+    QString nextMessage = overrideMessage;
+
+    if (nextState.isEmpty()) {
+        if (m_keyPortApplyInProgress) {
+            nextState = QStringLiteral("applying");
+        } else if (!configuredPort.isEmpty()
+                   && configuredPort == runtimePort
+                   && snapshot.connected
+                   && (!snapshot.keyPresent || (snapshot.sessionReady && snapshot.protocolHealthy))) {
+            nextState = QStringLiteral("applied");
+        } else if (m_keySerialApplyState == QLatin1String("apply_failed")) {
+            nextState = QStringLiteral("apply_failed");
+        } else {
+            nextState = QStringLiteral("saved_not_applied");
+        }
+    }
+
+    if (nextMessage.isEmpty()) {
+        if (nextState == QLatin1String("applying")) {
+            const QString targetPort = m_keyPortApplyTargetPort.isEmpty() ? configuredPort : m_keyPortApplyTargetPort;
+            if (!targetPort.isEmpty() && runtimePort == targetPort && snapshot.connected) {
+                if (snapshot.keyPresent && (!snapshot.sessionReady || !snapshot.protocolHealthy)) {
+                    nextMessage = QStringLiteral("鏂颁覆鍙?%1 宸叉墦寮€锛屾鍦ㄧ瓑寰?SET_COM/閫氳纭瀹屾垚").arg(targetPort);
+                } else {
+                    nextMessage = QStringLiteral("鏂颁覆鍙?%1 宸叉帴绠¤繍琛屾€侊紝绛夊緟鏈€缁堢姸鎬佺‘璁?").arg(targetPort);
+                }
+            } else {
+                nextMessage = QStringLiteral("姝ｅ湪搴旂敤閽ュ寵涓插彛閰嶇疆锛岃绛夊緟鍒囨崲缁撴灉");
+            }
+        } else if (nextState == QLatin1String("applied")) {
+            if (configuredPort.isEmpty()) {
+                nextMessage = QStringLiteral("褰撳墠鏈厤缃挜鍖欎覆鍙?");
+            } else if (!snapshot.keyPresent) {
+                nextMessage = QStringLiteral("杩愯鎬佸凡鍒囨崲鍒?%1锛屽綋鍓嶆湭妫€娴嬪埌閽ュ寵锛屽緟鏀剧ǔ鍚庡啀瀹屾垚閫氳纭").arg(configuredPort);
+            } else {
+                nextMessage = QStringLiteral("閰嶇疆鎬佷笌杩愯鎬佷竴鑷达紝褰撳墠杩愯涓插彛锛?1").arg(configuredPort);
+            }
+        } else if (nextState == QLatin1String("apply_failed")) {
+            nextMessage = m_keySerialApplyMessage.isEmpty()
+                    ? QStringLiteral("閰嶇疆宸蹭繚瀛橈紝浣嗗皻鏈垚鍔熷簲鐢ㄥ埌杩愯鎬?")
+                    : m_keySerialApplyMessage;
+        } else {
+            nextMessage = QStringLiteral("閰嶇疆宸蹭繚瀛橈紝褰撳墠杩愯鎬佷粛閿氬畾鏃т覆鍙ｏ紝闇€鎵嬪姩鈥滃簲鐢ㄥ苟閲嶈繛鈥?");
+        }
+    }
+
+    m_keySerialApplyState = nextState;
+    m_keySerialApplyMessage = nextMessage;
+    emit keySerialApplyStatusChanged(keySerialApplyStatus());
+}
+
+bool KeyManageController::isCurrentKeySession(int sessionId) const
+{
+    return sessionId > 0 && sessionId == m_keySessionId;
+}
+
+void KeyManageController::openNewKeySession()
+{
+    m_keySessionId = ++m_keySessionSeed;
+    m_acceptedBridgeEpoch = m_session->snapshot().bridgeEpoch;
+    m_autoQuerySessionId = 0;
+    emit statusMessage(QStringLiteral("閽ュ寵浼氳瘽宸插缓绔嬶細session=%1").arg(m_keySessionId));
+}
+
+void KeyManageController::invalidateCurrentKeySession(const QString &reason)
+{
+    if (m_keySessionId <= 0) {
+        return;
+    }
+
+    const int expiredSessionId = m_keySessionId;
+    m_keySessionId = 0;
+    m_autoQuerySessionId = 0;
+    // 浼氳瘽澶辨晥鏃舵竻绌洪挜鍖欎换鍔＄紦瀛橈紝闃叉闄堟棫鏁版嵁褰卞搷涓嬫 success 鐘舵€佸垽鏂?    m_lastKeyTasks.clear();
+    m_pendingDeleteRetryCount = 0;
+
+    emit statusMessage(
+            reason.trimmed().isEmpty()
+            ? QStringLiteral("閽ュ寵浼氳瘽宸插け鏁堬細session=%1").arg(expiredSessionId)
+            : QStringLiteral("閽ュ寵浼氳瘽宸插け鏁堬細session=%1锛屽師鍥?%2")
+                  .arg(expiredSessionId)
+                  .arg(reason));
+}
+
+void KeyManageController::scheduleAutoTransferRetry(const QString &reason)
+{
+    if (m_autoTransferRetryScheduled) {
+        return;
+    }
+
+    m_autoTransferRetryScheduled = true;
+    qInfo().noquote()
+            << QStringLiteral("[KeyManageController] scheduleAutoTransferRetry reason=%1 currentSession=%2")
+                  .arg(reason.isEmpty() ? QStringLiteral("<none>") : reason,
+                       QString::number(m_keySessionId));
+    QTimer::singleShot(300, this, [this]() {
+        m_autoTransferRetryScheduled = false;
+        qInfo().noquote()
+                << QStringLiteral("[KeyManageController] auto transfer retry timer fired currentSession=%1")
+                      .arg(QString::number(m_keySessionId));
+        tryAutoTransferPendingTicket();
+    });
+}
+
+void KeyManageController::tryAutoConnectKeyPort()
+{
+    const int cfgBaud = ConfigManager::instance()->baudRate();
+    const int baud = (cfgBaud > 0) ? cfgBaud : 115200;
+    const QString configPort = ConfigManager::instance()->keySerialPort().trimmed();
+
+    const KeySessionSnapshot snap = m_session->snapshot();
+    QStringList candidates;
+    if (m_keySerialApplyState == QLatin1String("saved_not_applied")) {
+        if (!snap.verifiedPortName.isEmpty()) {
+            candidates << snap.verifiedPortName;
+        } else if (!snap.portName.trimmed().isEmpty()) {
+            candidates << snap.portName.trimmed();
+        }
+    } else if (!configPort.isEmpty()) {
+        candidates << configPort;
+    } else if (!snap.verifiedPortName.isEmpty()) {
+        candidates << snap.verifiedPortName;
+    }
+
+    if (candidates.isEmpty()) {
+        emit statusMessage(QStringLiteral("鏈娴嬪埌鍙敤涓插彛"));
+        emit sessionSnapshotChanged(m_session->snapshot());
+        return;
+    }
+
+    for (const QString &port : candidates) {
+        if (m_session->connectPort(port, baud)) {
+            if (m_keySerialApplyState == QLatin1String("saved_not_applied")) {
+                emit statusMessage(QStringLiteral("涓插彛缁х画閿氬畾鏃ц繍琛岀鍙? %1").arg(port));
+            } else if (!configPort.isEmpty()) {
+                emit statusMessage(QStringLiteral("涓插彛宸茶繛鎺?閰嶇疆绔彛): %1").arg(port));
+            } else {
+                emit statusMessage(QStringLiteral("涓插彛宸茶繛鎺?宸查獙璇佺鍙?: %1").arg(port));
+            }
+            emit sessionSnapshotChanged(m_session->snapshot());
+            refreshKeySerialApplyStatus();
+            return;
+        }
+    }
+
+    emit statusMessage(QStringLiteral("涓插彛杩炴帴澶辫触锛岃妫€鏌ュ簳搴ф垨閰嶇疆"));
+    emit sessionSnapshotChanged(m_session->snapshot());
+    refreshKeySerialApplyStatus();
+}
+
+int KeyManageController::nextOpId()
+{
+    return m_nextOpId++;
+}
+
+QList<KeyTaskDto> KeyManageController::toTaskDtos(const QVariantList &taskList) const
+{
+    QList<KeyTaskDto> tasks;
+    tasks.reserve(taskList.size());
+
+    for (const QVariant &v : taskList) {
+        const QVariantMap item = v.toMap();
+        KeyTaskDto task;
+        task.taskId = item.value("taskId").toByteArray();
+        task.status = static_cast<quint8>(item.value("status").toInt());
+        task.type = static_cast<quint8>(item.value("type").toInt());
+        task.source = static_cast<quint8>(item.value("source").toInt());
+        task.reserved = static_cast<quint8>(item.value("reserved").toInt());
+        tasks.append(task);
+    }
+
+    return tasks;
+}

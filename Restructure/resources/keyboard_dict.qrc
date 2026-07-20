@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/keyboard/dict">
+        <file alias="dict_pinyin.dat">../src/features/keyboard/resources/dict/dict_pinyin.dat</file>
+    </qresource>
+</RCC>

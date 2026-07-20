@@ -1,0 +1,7 @@
+<RCC>
+    <qresource prefix="/branding">
+        <file>logo.png</file>
+        <file>chevron_down.svg</file>
+        <file>window_icon.png</file>
+    </qresource>
+</RCC>

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="320" height="120" viewBox="0 0 320 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="blueGlow" x1="24" y1="12" x2="280" y2="108" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2E88FF"/>
+      <stop offset="1" stop-color="#0B55B7"/>
+    </linearGradient>
+    <filter id="softGlow" x="0" y="0" width="320" height="120" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="6.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <g filter="url(#softGlow)" opacity="0.98">
+    <path d="M30 20H90L122 68L154 20H214L182 100H122L90 52L58 100H0L30 20Z" fill="url(#blueGlow)"/>
+    <path d="M178 96L212 54H268L216 110H150L178 96Z" fill="url(#blueGlow)"/>
+    <text x="205" y="102" fill="url(#blueGlow)" font-size="34" font-family="Microsoft YaHei, SimHei, sans-serif" font-weight="700">云望科技</text>
+  </g>
+</svg>
