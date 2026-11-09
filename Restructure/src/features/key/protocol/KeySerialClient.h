@@ -32,7 +32,7 @@
  *   - ISerialTransport / QTimer / QElapsedTimer（协议层只依赖传输抽象）
  *   - KeyProtocolDefs.h（协议常量）
  *   - KeyCrc16.h（CRC16 计算，通过 calcCrc 间接调用）
- *   - LogItem.h（结构化日志条目）
+ *   - shared/contracts/LogItem.h（结构化日志条目）
  *
  * 被依赖：
  *   - KeySessionService（装配具体传输并转发会话事件）
@@ -49,7 +49,10 @@
 #include <QStringList>
 #include "platform/serial/ISerialTransport.h"
 #include "KeyProtocolDefs.h"
-#include "LogItem.h"
+#include "shared/contracts/LogItem.h"
+#include "KeyTaskInfo.h"
+#include "KeyRequestType.h"
+#include "KeyRequestTracker.h"
 #include "features/key/protocol/TicketPayloadEncoder.h"
 #include "features/key/protocol/TicketFrameBuilder.h"
 
@@ -59,6 +62,11 @@
 // 避免在 .cpp 中频繁写 KeyProtocol:: 前缀。
 // ============================================================
 namespace KeyProto {
+
+static constexpr quint8 CMD_I_RFID = KeyProtocol::CmdIRfid;
+static constexpr quint8 CMD_UP_RFID = KeyProtocol::CmdUpRfid;
+static constexpr quint8 INFLIGHT_CAPTURE_RFID =
+        static_cast<quint8>(KeyRequestType::CaptureRfid);
 
 // --- 帧头 ---
 static constexpr quint8 HEADER_0 = KeyProtocol::FrameHeader0;  ///< 帧头第一字节 0x7E
@@ -107,7 +115,6 @@ static constexpr int QTASK_RECOVERY_DELAY_MS = 500;      ///< Q_TASK 软超时�
 static constexpr int QTASK_RECOVERY_ROUNDS = 2;          ///< Q_TASK 软超时最大重试轮数
 // --- 数据长度约束 ---
 static const int MAX_DATA_LEN     = 514;  ///< Data 区最大字节数（协议上限，超过视为 Len 异常）
-static const int TASK_INFO_LEN    = 20;   ///< 单条任务信息长度：taskId(16) + status(1) + type(1) + source(1) + reserved(1)
 static const int TASK_ID_LEN      = 16;   ///< 任务 ID 固定 16 字节（GUID 二进制形式）
 
 // --- NAK 错误码别名 ---
@@ -117,45 +124,18 @@ static constexpr quint8 ERR_GUID_MISSING = KeyProtocol::ErrGuidMissing;  ///< 0x
 
 // --- inFlight 状态标识 ---
 // 标识当前正在等待响应的命令类型，用于匹配 ACK/NAK 和超时处理
-static const quint8 INFLIGHT_NONE   = 0;  ///< 空闲，无待响应命令
-static const quint8 INFLIGHT_SETCOM = 1;  ///< 正在等待 SET_COM 的 ACK
-static const quint8 INFLIGHT_QTASK  = 2;  ///< 正在等待 Q_TASK 的响应帧
-static const quint8 INFLIGHT_DEL    = 3;  ///< 正在等待 DEL 的 ACK
-static const quint8 INFLIGHT_TICKET = 4;  ///< 正在等待传票分帧 ACK
-static const quint8 INFLIGHT_TASKLOG = 5; ///< 正在等待 I_TASK_LOG 的响应帧
-static const quint8 INFLIGHT_INIT_TRANSFER = 6; ///< 正在等待 INIT 分帧 ACK
-static const quint8 INFLIGHT_RFID_TRANSFER = 7; ///< 正在等待 DN_RFID 分帧 ACK
-static const quint8 INFLIGHT_QKEYEQ = 8; ///< 正在等待 Q_KEYEQ 的响应帧
-static const quint8 INFLIGHT_SETTIME = 9; ///< 正在等待 SET_TIME 的 ACK
+static constexpr quint8 INFLIGHT_NONE = static_cast<quint8>(KeyRequestType::None);  ///< 空闲，无待响应命令
+static constexpr quint8 INFLIGHT_SETCOM = static_cast<quint8>(KeyRequestType::SetCom);  ///< 正在等待 SET_COM 的 ACK
+static constexpr quint8 INFLIGHT_QTASK = static_cast<quint8>(KeyRequestType::QTask);  ///< 正在等待 Q_TASK 的响应帧
+static constexpr quint8 INFLIGHT_DEL = static_cast<quint8>(KeyRequestType::DeleteTask);  ///< 正在等待 DEL 的 ACK
+static constexpr quint8 INFLIGHT_TICKET = static_cast<quint8>(KeyRequestType::Ticket);  ///< 正在等待传票分帧 ACK
+static constexpr quint8 INFLIGHT_TASKLOG = static_cast<quint8>(KeyRequestType::TaskLog); ///< 正在等待 I_TASK_LOG 的响应帧
+static constexpr quint8 INFLIGHT_INIT_TRANSFER = static_cast<quint8>(KeyRequestType::InitTransfer); ///< 正在等待 INIT 分帧 ACK
+static constexpr quint8 INFLIGHT_RFID_TRANSFER = static_cast<quint8>(KeyRequestType::RfidTransfer); ///< 正在等待 DN_RFID 分帧 ACK
+static constexpr quint8 INFLIGHT_QKEYEQ = static_cast<quint8>(KeyRequestType::QueryBattery); ///< 正在等待 Q_KEYEQ 的响应帧
+static constexpr quint8 INFLIGHT_SETTIME = static_cast<quint8>(KeyRequestType::SetTime); ///< 正在等待 SET_TIME 的 ACK
 
 } // namespace KeyProto
-
-// ============================================================
-// 任务信息结构体
-// Q_TASK 响应帧中每条任务的解析结果，20 字节对应一个 KeyTaskInfo
-// ============================================================
-/**
- * @brief 钥匙上的任务信息
- *
- * 对应 Q_TASK 响应帧 Data 区中每 20 字节的一条任务记录。
- * 字段布局：[taskId 16B] [status 1B] [type 1B] [source 1B] [reserved 1B]
- *
- * taskId 是后端系统分配的 GUID（二进制形式），用于 DEL 命令删除指定任务。
- */
-struct KeyTaskInfo {
-    QByteArray taskId;   ///< 任务 ID，固定 16 字节原始二进制（GUID）
-    quint8 status;       ///< 任务状态（协议定义，具体含义参见设备文档）
-    quint8 type;         ///< 任务类型（协议定义）
-    quint8 source;       ///< 任务来源（协议定义）
-    quint8 reserved;     ///< 保留字段（协议预留，当前未使用）
-
-    KeyTaskInfo() : status(0), type(0), source(0), reserved(0) {}
-
-    /** @brief 将 taskId 转为大写十六进制字符串（空格分隔），用于日志和 UI 显示 */
-    QString taskIdHex() const {
-        return QString(taskId.toHex(' ').toUpper());
-    }
-};
 
 // ============================================================
 // KeySerialClient - X5 钥匙柜串口协议客户端
@@ -189,13 +169,12 @@ public:
     void disconnectPort();
     bool isConnected() const;
     bool hasInFlightCommand() const;
-    void setPortSwitchInProgress(bool inProgress);
-    void clearVerifiedPort();
 
     void queryTasksAll();
     void queryBattery(quint8 seat = 0x01);
     void refreshHandshake();
     void requestTaskLog(const QByteArray &taskId16);
+    void requestCaptureRfid(const QByteArray &taskId16);
     void deleteTask(const QByteArray &taskId16);
     void deleteFirstTask();
     void syncDeviceTime(quint8 seat = 0x01);
@@ -204,6 +183,8 @@ public:
     void transferTicketJson(const QByteArray &jsonBytes,
                             quint8 stationId = 0x01,
                             int debugFrameChunkSize = 0);
+    void transferTicketPayload(const QByteArray &payload,
+                               quint8 stationId = 0x01);
 
     // --- 双座辅助链 ---
     enum AuxCommandAfterSetCom {
@@ -300,14 +281,18 @@ signals:
     void nakReceived(quint8 origCmd, quint8 errCode);
     /// 收到并解析完整的任务回传日志（支持按 seq 累积多帧日志）
     void taskLogReady(const QVariantMap &payload);
+    /// Reports a terminal task-log protocol failure so the application can close the return operation.
+    void taskLogFailed(const QString &reason);
+    void captureRfidReady(const QVariantMap &payload);
+    void captureRfidFailed(const QString &taskId, const QString &reason);
     /// 传票发送进度（frameIndex 从 1 开始）
     void ticketTransferProgress(int frameIndex, int totalFrames, quint8 cmd);
     /// 传票发送完成
     void ticketTransferFinished();
     /// 传票发送失败
     void ticketTransferFailed(const QString &reason);
-    /// 命令超时（重试耗尽），what 为超时描述（供 UI 显示）
-    void timeoutOccurred(const QString &what);
+    /// 命令超时（重试耗尽）；command=0 表示串口链路事件而非业务命令。
+    void timeoutOccurred(quint8 command, const QString &what);
     /// 用户友好通知（如"钥匙已就绪"），供 UI 层 statusBar 或 toast 显示
     void notice(const QString &what);
     /// B 座在位状态变化
@@ -329,14 +314,60 @@ private:
                           const QByteArray &addr2);           ///< 组装完整协议帧
     int tryExtractOneFrame(QByteArray &buf, QByteArray &outFrame); ///< 从缓冲区提取一帧（含 resync）
     void handleFrame(const QByteArray &frame);                ///< 帧解析与命令分发
+    void handleKeyEventFrame(const QByteArray &frame,
+                           quint16 lenField,
+                           int dataLen,
+                           const QByteArray &data);
+    void handleBatteryResponseFrame(const QByteArray &frame,
+                           quint16 lenField,
+                           int dataLen,
+                           const QByteArray &data);
+    void handleAckResponseFrame(const QByteArray &frame,
+                           quint16 lenField,
+                           int dataLen,
+                           const QByteArray &data);
+    void applyMatchedSetComAck();
+    void applyMatchedSetTimeAck();
+    void advanceDataTransferAfterAck(quint8 ackedCmd, quint16 lenField);
+    void advanceTicketTransferAfterAck(quint8 ackedCmd, quint16 lenField);
+    void startDeleteVerificationAfterAck();
+    void handleTaskLogStartResponseFrame(const QByteArray &frame,
+                           quint16 lenField,
+                           int dataLen,
+                           const QByteArray &data);
+    void handleNakResponseFrame(const QByteArray &frame,
+                           quint16 lenField,
+                           int dataLen,
+                           const QByteArray &data);
+    void handleTaskListResponseFrame(const QByteArray &frame,
+                           quint16 lenField,
+                           int dataLen,
+                           const QByteArray &data);
+    void handleTaskLogUploadFrame(const QByteArray &frame,
+                           quint16 lenField,
+                           int dataLen,
+                           const QByteArray &data);
 
     // --- 发送与重试机制 ---
     void sendFrame(const QByteArray &frame, quint8 expectedAckCmd,
                    quint8 inFlightType);                      ///< 发送帧并启动重试定时器
-    void beginInFlightContext(quint8 inFlightType, quint8 expectedAckCmd);
+    void beginInFlightContext(quint8 inFlightType,
+                              quint8 expectedAckCmd,
+                              const QByteArray &frame);
     void startRetryTimer(quint8 expectedAckCmd);              ///< 启动重试定时器
     void stopRetryTimer();                                    ///< 停止重试定时器并清理
     void clearInFlight();                                     ///< 清除 inFlight 状态
+    QString requestCommandName(quint8 inFlightType,
+                               quint8 expectedAckCmd) const;
+    void resendCurrentRequest();
+    void failAuxiliarySeatBTimeout(quint8 timeoutCmd,
+                                   const QString &commandName);
+    void ignoreStartupProbeTimeout();
+    void scheduleQTaskRecoveryAfterTimeout();
+    void handleFinalRequestTimeout(quint8 timeoutCmd,
+                                   quint8 timeoutInFlight,
+                                   bool qtaskSawHeader,
+                                   const QString &commandName);
     void sendFrameNoWait(const QByteArray &frame,
                          quint8 cmd,
                          quint16 lenField,
@@ -395,7 +426,9 @@ private:
     // --- 成员变量 ---
 
     // 串口与接收缓冲
-    ISerialTransport *m_serial;    ///< 串口传输实例（默认 QtSerialTransport，可替换为 Replay）
+    ISerialTransport *m_serial;    // Runtime serial transport supplied by the adapter.
+    // [LEARNING] 地址来源：KeySessionService 创建 QtSerialTransport -> 传给本类构造参数 transport -> m_serial(transport)。
+    // 本成员是使用传输对象的指针；与 QtSerialTransport 内部的 QSerialPort m_serial 成员对象不同。
     QByteArray     m_recvBuffer;   ///< 接收缓冲区，累积 readyRead 数据直到拆出完整帧
     quint8         m_frameNo;      ///< 发送帧序号，每次 buildFrame 自增（0~255 循环）
     QList<KeyTaskInfo> m_tasks;    ///< 最近一次 Q_TASK 响应解析出的任务列表
@@ -405,16 +438,10 @@ private:
     QTimer        *m_keyStableTimer;   ///< 钥匙稳定性窗口定时器（singleShot）
     QTimer        *m_qtaskRecoveryTimer; ///< Q_TASK 软超时恢复定时器（singleShot）
     QTimer        *m_taskLogWaitTimer;   ///< I_TASK_LOG 确认后等待 UP_TASK_LOG 的定时器
-    QByteArray     m_lastSentFrame;    ///< 最后发送的帧（用于重试时重发）
-    quint8         m_expectedAckCmd;   ///< 当前期望的 ACK 命令码
-    int            m_retryCount;       ///< 当前已重试次数（0~MAX_RETRIES）
-    quint32        m_inFlightGeneration; ///< 当前在途命令的代次
-    quint32        m_retryTimerGeneration; ///< 当前重试定时器绑定的代次
+    KeyRequestTracker m_request;       ///< Owns one correlated serial request and its retry evidence.
     quint32        m_taskLogWaitGeneration; ///< 当前任务日志等待绑定的代次
 
     // 状态机
-    bool           m_inFlight;             ///< true=有命令正在等待响应，禁止发送新命令
-    quint8         m_inFlightType;         ///< 当前 inFlight 的命令类型（INFLIGHT_xxx）
     bool           m_pendingAfterDelQuery; ///< DEL 成功后是否自动发起 Q_TASK 验证
     bool           m_keyPlaced;            ///< 钥匙在位标志（KEY_EVENT 0x01 置 true，0x00 置 false）
     bool           m_keyStable;            ///< 钥匙稳定标志（稳定性窗口到期且无噪声时置 true）
@@ -441,7 +468,6 @@ private:
     QElapsedTimer  m_keyPlacedElapsed;     ///< 钥匙放上时刻计时器（用于稳定性窗口判定）
     QElapsedTimer  m_lastNoiseElapsed;     ///< 最后一次噪声时刻计时器（用于静默窗口判定）
     // 诊断与恢复
-    bool           m_qtaskSawFrameHeader;  ///< Q_TASK inFlight 期间是否观察到 7E6C 帧头（用于超时诊断）
     bool           m_qtaskProbeInFlight;   ///< 当前 Q_TASK 是否为 startup probe（超时不报错）
     quint32        m_resyncDropBytes;      ///< 累计 resync 丢弃的脏数据字节数（诊断统计）
     quint32        m_noHeaderDropBytes;    ///< 累计无帧头丢弃的字节数（诊断统计）
@@ -486,6 +512,21 @@ private:
     quint16            m_taskLogExpectedSeq;   ///< 下一帧期望的日志序号（从 0 开始）
     QByteArray         m_taskLogPayloadBuffer; ///< 已累计的回传日志 payload（去掉每帧 seq）
     QByteArray         m_expectedTaskIdForResponse; ///< 当前业务链期望的任务ID（用于回传上下文）
+    // Capture RFID transport state is isolated from application workflow state.
+    void clearCaptureRfidState();
+    void armCaptureRfidWaitTimeout(quint32 generation);
+    void sendCaptureRfidAck(quint16 frameSeq);
+    bool parseAndEmitCaptureRfidPayload(const QByteArray &payload,
+                                        quint16 totalFrames,
+                                        quint16 lastFrameSeq,
+                                        quint16 lenField,
+                                        const QByteArray &rawFrame);
+    QTimer *m_captureRfidWaitTimer;
+    quint32 m_captureRfidWaitGeneration;
+    QByteArray m_pendingCaptureRfidTaskId;
+    quint16 m_pendingCaptureRfidFrames;
+    quint16 m_captureRfidExpectedSeq;
+    QByteArray m_captureRfidPayloadBuffer;
 };
 
 #endif // KEYSERIALCLIENT_H

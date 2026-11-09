@@ -52,6 +52,7 @@ KeyboardContainer::KeyboardContainer(QWidget *parent)
       m_candidateBar(nullptr),
       m_pinyinEngine(new KeyboardPinyinEngine(this)),
       m_baseKeyboardHeight(230),
+      m_keyboardMaximumHeight(260),
       m_normalKeyboard(new NormalKeyboard(this)),
       m_numKeyboard(new NumKeyboard(this)),
       m_symbolKeyboard(new SymbolKeyboard(this)),
@@ -165,13 +166,22 @@ void KeyboardContainer::setKeyboardHeight(int height)
         return;
     }
 
-    m_baseKeyboardHeight = height;
+    m_baseKeyboardHeight = qMin(height, m_keyboardMaximumHeight);
     setFixedHeight(m_baseKeyboardHeight);
     if (isVisible())
     {
         updateOverlayGeometry();
         emit visibilityChanged(true, keyboardHeight());
     }
+}
+
+void KeyboardContainer::setKeyboardMaximumHeight(int maximumHeight)
+{
+    if (maximumHeight <= 0)
+        return;
+    m_keyboardMaximumHeight = maximumHeight;
+    if (m_baseKeyboardHeight > m_keyboardMaximumHeight)
+        setKeyboardHeight(m_keyboardMaximumHeight);
 }
 
 void KeyboardContainer::showFor(QLineEdit *target, keyboard::KeyboardMode mode, bool allowUrlSwitch)

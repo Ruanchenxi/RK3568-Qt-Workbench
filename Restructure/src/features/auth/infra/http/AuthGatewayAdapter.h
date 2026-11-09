@@ -15,7 +15,7 @@ class AuthGatewayAdapter : public IAuthGateway
 {
     Q_OBJECT
 public:
-    explicit AuthGatewayAdapter(IAuthService *auth = nullptr, QObject *parent = nullptr);
+    explicit AuthGatewayAdapter(IAuthService *auth, QObject *parent = nullptr);
     ~AuthGatewayAdapter() override = default;
 
     void loginByPassword(const PasswordCredential &credential) override;

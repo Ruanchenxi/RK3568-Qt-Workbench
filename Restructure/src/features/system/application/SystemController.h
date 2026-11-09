@@ -17,12 +17,13 @@
 class QNetworkAccessManager;
 class QNetworkReply;
 class QNetworkRequest;
+class IAuthService;
 
 class SystemController : public QObject
 {
     Q_OBJECT
 public:
-    explicit SystemController(QObject *parent = nullptr);
+    explicit SystemController(IAuthService *authService, QObject *parent = nullptr);
     ~SystemController() override = default;
 
     SystemSettingsDto loadSettings() const;
@@ -64,6 +65,7 @@ private:
     void finishCardUpdateRequest(QNetworkReply *reply);
     void finishFingerprintUpdateRequest(QNetworkReply *reply);
 
+    IAuthService *m_authService;
     QNetworkAccessManager *m_networkManager;
     QList<SystemIdentityUserDto> m_users;
     QPointer<QNetworkReply> m_pendingUserListReply;

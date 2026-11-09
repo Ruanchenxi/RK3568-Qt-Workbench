@@ -27,20 +27,61 @@ SOURCES += \
     $$PWD/keyboard/ui/NumKeyboard.cpp \
     $$PWD/keyboard/ui/SymbolKeyboard.cpp \
     $$PWD/keyboard/ui/UrlKeyboard.cpp \
+    $$PWD/key/ui/TicketStatusPresenter.cpp \
     $$PWD/key/ui/keymanagepage.cpp \
     $$PWD/key/application/KeySessionService.cpp \
+    $$PWD/key/application/CaptureTicketUseCase.cpp \
+    $$PWD/key/application/CaptureTicketWorkflowService.cpp \
+    $$PWD/key/application/CaptureTicketHttpClient.cpp \
+    $$PWD/key/application/KeyMaintenanceService.cpp \
+    $$PWD/key/application/KeyPortRuntimeCoordinator.cpp \
+    $$PWD/key/application/KeyTaskObservationService.cpp \
+    $$PWD/key/application/KeyTaskPresentationService.cpp \
+    $$PWD/key/application/KeyManageObservabilityService.cpp \
+    $$PWD/key/application/KeyManageSelectionService.cpp \
+    $$PWD/key/application/KeyManualActionUseCase.cpp \
+    $$PWD/key/application/KeyManageEventUseCase.cpp \
+    $$PWD/key/application/KeyTaskUpdateUseCase.cpp \
     $$PWD/key/application/KeyManageController.cpp \
+    $$PWD/key/application/KeyManageControllerEvents.cpp \
+    $$PWD/key/application/KeyManageControllerWorkflows.cpp \
+    $$PWD/key/application/KeyManageControllerRemoval.cpp \
+    $$PWD/key/application/KeyManageControllerCommands.cpp \
+    $$PWD/key/application/KeyManageControllerAdapters.cpp \
+    $$PWD/key/application/KeyManageControllerSession.cpp \
+    $$PWD/key/application/KeyManageControllerCapture.cpp \
+    $$PWD/key/application/TicketTransferUseCase.cpp \
+    $$PWD/key/application/TicketTransferWorkflowService.cpp \
+    $$PWD/key/application/TicketReturnUseCase.cpp \
+    $$PWD/key/application/TicketReturnWorkflowService.cpp \
+    $$PWD/key/application/TicketCancelUseCase.cpp \
+    $$PWD/key/application/TicketDeleteUseCase.cpp \
+    $$PWD/key/application/TicketDeleteWorkflowService.cpp \
+    $$PWD/key/application/VerifiedKeyTaskRemoval.cpp \
     $$PWD/key/application/TicketCancelCoordinator.cpp \
+    $$PWD/key/application/TicketCancelTrackingService.cpp \
+    $$PWD/key/application/TicketCancelWorkflowService.cpp \
     $$PWD/key/application/SerialLogManager.cpp \
     $$PWD/key/application/KeyProvisioningService.cpp \
     $$PWD/key/application/TicketReturnHttpClient.cpp \
+    $$PWD/key/application/TicketReturnUploadService.cpp \
+    $$PWD/key/application/TicketTerminationClient.cpp \
+    $$PWD/key/application/AdminTicketTerminationService.cpp \
     $$PWD/key/application/TicketStore.cpp \
     $$PWD/key/application/TicketIngressService.cpp \
     $$PWD/key/protocol/InitPayloadEncoder.cpp \
+    $$PWD/key/protocol/CaptureTicketPayloadEncoder.cpp \
+    $$PWD/key/protocol/CaptureRfidPayloadParser.cpp \
     $$PWD/key/protocol/RfidPayloadEncoder.cpp \
     $$PWD/key/protocol/KeyDataFrameBuilder.cpp \
     $$PWD/key/protocol/TicketPayloadEncoder.cpp \
     $$PWD/key/protocol/TicketFrameBuilder.cpp \
+    $$PWD/key/protocol/KeyFrameStreamParser.cpp \
+    $$PWD/key/protocol/KeyTaskListParser.cpp \
+    $$PWD/key/protocol/KeyTaskLogPayloadParser.cpp \
+    $$PWD/key/protocol/KeyTaskLogSequencePolicy.cpp \
+    $$PWD/key/protocol/KeyRequestPolicy.cpp \
+    $$PWD/key/protocol/KeyRequestTracker.cpp \
     $$PWD/key/protocol/KeySerialClient.cpp \
     $$PWD/system/ui/systempage.cpp \
     $$PWD/system/application/SystemController.cpp \
@@ -77,23 +118,68 @@ HEADERS += \
     $$PWD/keyboard/ui/NumKeyboard.h \
     $$PWD/keyboard/ui/SymbolKeyboard.h \
     $$PWD/keyboard/ui/UrlKeyboard.h \
+    $$PWD/key/ui/TicketStatusPresenter.h \
     $$PWD/key/ui/keymanagepage.h \
     $$PWD/key/application/KeySessionService.h \
+    $$PWD/key/application/CaptureTicketUseCase.h \
+    $$PWD/key/application/CaptureTicketOperationContext.h \
+    $$PWD/key/application/CaptureTicketWorkflowService.h \
+    $$PWD/key/application/CaptureTicketHttpClient.h \
+    $$PWD/key/application/KeyMaintenanceService.h \
+    $$PWD/key/application/KeyPortRuntimeCoordinator.h \
+    $$PWD/key/application/KeyTaskObservationService.h \
+    $$PWD/key/application/KeyTaskPresentationService.h \
+    $$PWD/key/application/KeyManageObservabilityService.h \
+    $$PWD/key/application/KeyManageSelectionService.h \
+    $$PWD/key/application/KeyManualActionUseCase.h \
+    $$PWD/key/application/KeyManageEventUseCase.h \
+    $$PWD/key/application/KeyTaskUpdateUseCase.h \
     $$PWD/key/application/KeyManageController.h \
+    $$PWD/key/application/TicketTransferUseCase.h \
+    $$PWD/key/application/TicketTransferOperationContext.h \
+    $$PWD/key/application/HttpTransferTransactionContext.h \
+    $$PWD/key/application/TicketTransferWorkflowService.h \
+    $$PWD/key/application/TicketReturnUseCase.h \
+    $$PWD/key/application/TicketReturnWorkflowService.h \
+    $$PWD/key/domain/TicketReturnState.h \
+    $$PWD/key/domain/TicketTransferState.h \
+    $$PWD/key/domain/TicketCancelState.h \
+    $$PWD/key/application/TicketReturnOperationContext.h \
+    $$PWD/key/application/ProgressiveReturnOperationContext.h \
+    $$PWD/key/application/TicketCancelUseCase.h \
+    $$PWD/key/application/TicketDeleteUseCase.h \
+    $$PWD/key/application/TicketDeleteOperationContext.h \
+    $$PWD/key/application/TicketDeleteWorkflowService.h \
+    $$PWD/key/application/TicketCancelOperationContext.h \
+    $$PWD/key/application/VerifiedKeyTaskRemoval.h \
     $$PWD/key/application/TicketCancelCoordinator.h \
+    $$PWD/key/application/TicketCancelTrackingService.h \
+    $$PWD/key/application/TicketCancelWorkflowService.h \
     $$PWD/key/application/SerialLogManager.h \
     $$PWD/key/application/KeyProvisioningService.h \
     $$PWD/key/application/TicketReturnHttpClient.h \
+    $$PWD/key/application/TicketReturnUploadService.h \
+    $$PWD/key/application/TicketTerminationClient.h \
+    $$PWD/key/application/AdminTicketTerminationService.h \
     $$PWD/key/application/TicketStore.h \
     $$PWD/key/application/TicketIngressService.h \
     $$PWD/key/protocol/InitPayloadEncoder.h \
+    $$PWD/key/protocol/CaptureTicketPayloadEncoder.h \
+    $$PWD/key/protocol/CaptureRfidPayloadParser.h \
     $$PWD/key/protocol/RfidPayloadEncoder.h \
     $$PWD/key/protocol/KeyDataFrameBuilder.h \
     $$PWD/key/protocol/TicketPayloadEncoder.h \
     $$PWD/key/protocol/TicketFrameBuilder.h \
+    $$PWD/key/protocol/KeyFrameStreamParser.h \
+    $$PWD/key/protocol/KeyTaskListParser.h \
+    $$PWD/key/protocol/KeyTaskLogPayloadParser.h \
+    $$PWD/key/protocol/KeyTaskLogSequencePolicy.h \
+    $$PWD/key/protocol/KeyRequestPolicy.h \
+    $$PWD/key/protocol/KeyRequestTracker.h \
+    $$PWD/key/protocol/KeyRequestType.h \
+    $$PWD/key/protocol/KeyTaskInfo.h \
     $$PWD/key/protocol/KeySerialClient.h \
     $$PWD/key/protocol/KeyProtocolDefs.h \
-    $$PWD/key/protocol/LogItem.h \
     $$PWD/key/protocol/KeyCrc16.h \
     $$PWD/system/ui/systempage.h \
     $$PWD/system/application/SystemController.h \

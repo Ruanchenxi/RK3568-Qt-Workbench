@@ -315,10 +315,31 @@ void ConfigManager::loadDefaults()
             setValue("service/ports", "8081,9000,9001");
         }
 #else
-        setValue("service/ports", "8081,9000,9001");
+        setValue("service/ports", "80,3306,6379,8081,9000,9090");
 #endif
     }
-    if (!m_settings->contains("service/logFiles"))
+    if (!m_settings->contains("service/readinessPort"))
+    {
+        setValue("service/readinessPort", 8081);
+    }
+    if (!m_settings->contains("service/readinessTimeoutSeconds"))
+    {
+        // 板端 Spring Boot 冷启动可能超过一分钟，默认等待两分钟后再转为低频探测。
+        setValue("service/readinessTimeoutSeconds", 120);
+    }
+#ifdef Q_OS_WIN
+    if (!m_settings->contains("service/portsManagedSuiteMigratedV1"))
+    {
+        const QString currentPorts = m_settings->value("service/ports").toString().trimmed();
+        if (currentPorts.isEmpty()
+            || currentPorts == QLatin1String("8081,9000")
+            || currentPorts == QLatin1String("8081,9000,9001"))
+        {
+            setValue("service/ports", "80,3306,6379,8081,9000,9090");
+        }
+        setValue("service/portsManagedSuiteMigratedV1", true);
+    }
+#endif    if (!m_settings->contains("service/logFiles"))
     {
         // 外部日志跟踪文件列表（支持绝对路径或相对 service/workDir 的相对路径）
         // 格式示例：
@@ -327,7 +348,12 @@ void ConfigManager::loadDefaults()
     }
     if (!m_settings->contains("service/externalLogTailEnabled"))
     {
-        setValue("service/externalLogTailEnabled", true);
+        setValue("service/externalLogTailEnabled", false);
+    }
+    if (!m_settings->contains("service/externalLogTailDisabledMigratedV1"))
+    {
+        setValue("service/externalLogTailEnabled", false);
+        setValue("service/externalLogTailDisabledMigratedV1", true);
     }
     if (!m_settings->contains("service/externalLogTailIntervalMs"))
     {
@@ -336,6 +362,13 @@ void ConfigManager::loadDefaults()
     if (!m_settings->contains("service/autoCleanPorts"))
     {
         setValue("service/autoCleanPorts", false);
+    }
+    if (!m_settings->contains("service/recoverDegradedLocalService"))
+    {
+        // Local mode may inherit only part of a previous outage stack. Recover
+        // managed, whitelisted processes as one unit instead of deadlocking on
+        // an occupied port while a required service remains unavailable.
+        setValue("service/recoverDegradedLocalService", true);
     }
     if (!m_settings->contains("service/forceRestartScript"))
     {
@@ -586,7 +619,14 @@ void ConfigManager::loadDefaults()
     }
     if (!m_settings->contains("ticket/progressiveStepReturnEnabled"))
     {
-        setValue("ticket/progressiveStepReturnEnabled", false);
+        setValue("ticket/progressiveStepReturnEnabled", true);
+    }
+    // Existing deployments previously stored false by default. Migrate once
+    // so completed steps are returned progressively without manual setup.
+    if (!m_settings->contains("ticket/progressiveStepReturnEnabledMigratedV1"))
+    {
+        setValue("ticket/progressiveStepReturnEnabled", true);
+        setValue("ticket/progressiveStepReturnEnabledMigratedV1", true);
     }
     if (!m_settings->contains("auth/accountListUrl"))
     {
@@ -594,13 +634,17 @@ void ConfigManager::loadDefaults()
     }
     if (!m_settings->contains("auth/accountListEnabled"))
     {
-#ifdef Q_OS_WIN
-        // PC deployments use direct password login and must not poll the account-list API.
-        setValue("auth/accountListEnabled", false);
-#else
-        // Preserve the existing board behavior unless it is explicitly disabled.
         setValue("auth/accountListEnabled", true);
-#endif
+    }
+    if (!m_settings->contains("auth/accountListLocalOnlyMigratedV1"))
+    {
+        // Account selection exists only on localhost; remote mode hides it.
+        setValue("auth/accountListEnabled", true);
+        setValue("auth/accountListLocalOnlyMigratedV1", true);
+    }
+    if (!m_settings->contains("auth/requestTimeoutSeconds"))
+    {
+        setValue("auth/requestTimeoutSeconds", 5);
     }
     if (!m_settings->contains("auth/cardLoginUrl"))
     {
@@ -696,6 +740,16 @@ void ConfigManager::setTenantCode(const QString &code)
 }
 
 // ========== 串口配置 ==========
+
+QString ConfigManager::disabledSerialPortValue()
+{
+    return QStringLiteral("__disabled__");
+}
+
+bool ConfigManager::isSerialPortDisabled(const QString &port)
+{
+    return port.trimmed() == disabledSerialPortValue();
+}
 
 QString ConfigManager::keySerialPort() const
 {

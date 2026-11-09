@@ -15,7 +15,7 @@ class AuthFlowCoordinator : public QObject
 {
     Q_OBJECT
 public:
-    explicit AuthFlowCoordinator(IAuthGateway *gateway = nullptr, QObject *parent = nullptr);
+    explicit AuthFlowCoordinator(IAuthGateway *gateway, QObject *parent = nullptr);
     ~AuthFlowCoordinator() override = default;
 
     void loginByPassword(const QString &userName, const QString &password, const QString &tenantId);

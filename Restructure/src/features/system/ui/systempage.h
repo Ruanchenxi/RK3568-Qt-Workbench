@@ -14,10 +14,14 @@
 #include "features/auth/domain/AuthTypes.h"
 #include "shared/contracts/SystemIdentityUserDto.h"
 #include "features/system/application/SystemController.h"
+#include "shared/ui/UiLayoutProfile.h"
 
 class QLineEdit;
+class QEvent;
+class IAuthService;
 class CardSerialSource;
 class FingerprintSource;
+
 namespace Ui
 {
     class SystemPage;
@@ -28,11 +32,14 @@ class SystemPage : public QWidget
     Q_OBJECT
 
 public:
-    explicit SystemPage(QWidget *parent = nullptr);
+    explicit SystemPage(IAuthService *authService, QWidget *parent = nullptr);
     ~SystemPage();
+    // Applies responsive presentation metrics without owning settings data.
+    void applyLayoutProfile(const UiLayoutProfile &profile);
 
 protected:
     void showEvent(QShowEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 signals:
     void cardReaderStatusChanged(int status, const QString &message);
@@ -83,6 +90,7 @@ private:
     bool currentUserCanManageIdentityMedia() const;
     bool currentUserCanManageSerialPorts() const;
     int selectedUserRow() const;
+    IAuthService *m_authService;
     QString displayNameForUser(const SystemIdentityUserDto &user) const;
 
     Ui::SystemPage *ui;

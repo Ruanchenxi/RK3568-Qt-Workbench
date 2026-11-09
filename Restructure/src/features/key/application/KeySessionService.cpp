@@ -1,34 +1,16 @@
 /**
  * @file KeySessionService.cpp
- * @brief 钥匙会话服务默认实现（真机串口/回放串口注入点）
+ * @brief Adapts the real Qt serial transport to the key-session contract.
  *
- * Layer:
- *   features/key/application
- *
- * Responsibilities:
- *   1) 按配置选择传输层（replay 或真实串口）并注入 KeySerialClient
- *   2) 从 ConfigManager 读取"当前站号"并注入协议层（影响 DEL 命令 Addr2）
- *   3) 监听 ConfigManager::configChanged，站号变更时实时同步到协议层
- *   4) 桥接 KeySerialClient 信号与上层 IKeySessionService 契约事件
- *
- * Dependencies:
- *   - Allowed : IKeySessionService, KeySerialClient, ISerialTransport,
- *               QtSerialTransport, ReplaySerialTransport, ConfigManager
- *   - Forbidden: UI page classes, QSerialPort 直接使用
- *
- * Constraints:
- *   - 协议帧语义由 KeySerialClient/KeyProtocolDefs 维护，此文件不直接组帧
- *   - replay 脚本加载失败必须回退真实串口（已有日志输出）
- *   - stationId 为空或非正整数时静默回退为 1（见 parseStationId 注释）
+ * The product has one runtime transport. Protocol state remains in
+ * KeySerialClient, while this service maps typed commands and events.
  */
 #include "features/key/application/KeySessionService.h"
 
 #include <QDebug>
-#include <QFile>
 
 #include "core/ConfigManager.h"
 #include "platform/serial/QtSerialTransport.h"
-#include "platform/serial/ReplaySerialTransport.h"
 
 /**
  * @brief 将配置中的 stationId 字符串转为协议层 quint16
@@ -51,28 +33,10 @@ KeySessionService::KeySessionService(QObject *parent)
     : IKeySessionService(parent)
     , m_client(nullptr)
 {
-    ISerialTransport *transport = nullptr;
-    const bool replayEnabled = ConfigManager::instance()->value("serial/replayEnabled", false).toBool();
-    if (replayEnabled) {
-        auto *replay = new ReplaySerialTransport(this);
-        const QString scriptPath = ConfigManager::instance()
-                                       ->value("serial/replayScript", "test/replay/scenario_half_and_sticky.jsonl")
-                                       .toString();
-        QString error;
-        if (replay->loadScript(scriptPath, &error)) {
-            transport = replay;
-            qInfo().noquote() << "[KeySessionService] Replay enabled, script:" << scriptPath;
-        } else {
-            qWarning().noquote() << "[KeySessionService] Replay script load failed:" << error
-                                 << ", fallback to real serial transport.";
-            replay->deleteLater();
-        }
-    }
-
-    if (!transport) {
-        transport = new QtSerialTransport(this);
-    }
+    auto *transport = new QtSerialTransport(this);
     m_client = new KeySerialClient(transport, this);
+    // [LEARNING] 上面先创建具体传输对象，再把它的地址交给 KeySerialClient。
+    // KeySerialClient 构造函数用 m_serial(transport) 保存地址；没有创建第二份传输对象。
 
     // ── 注入当前站号（DEL Addr2 来源）────────────────────────────────────────
     // WHY：系统设置界面"当前站号"（如 001/002）决定 DEL 命令 Addr2 字段的值：
@@ -122,6 +86,33 @@ KeySessionService::KeySessionService(QObject *parent)
         emit eventOccurred(event);
         emitStateChanged();
     });
+    connect(m_client, &KeySerialClient::taskLogFailed, this, [this](const QString &reason) {
+        KeySessionEvent event;
+        event.kind = KeySessionEvent::TaskLogFailed;
+        event.data.insert(QStringLiteral("what"), reason);
+        stampEvent(event);
+        emit eventOccurred(event);
+        emitStateChanged();
+    });
+    connect(m_client, &KeySerialClient::captureRfidReady,
+            this, [this](const QVariantMap &payload) {
+        KeySessionEvent event;
+        event.kind = KeySessionEvent::CaptureRfidReady;
+        event.data = payload;
+        stampEvent(event);
+        emit eventOccurred(event);
+        emitStateChanged();
+    });
+    connect(m_client, &KeySerialClient::captureRfidFailed,
+            this, [this](const QString &taskId, const QString &reason) {
+        KeySessionEvent event;
+        event.kind = KeySessionEvent::CaptureRfidFailed;
+        event.data.insert(QStringLiteral("taskId"), taskId);
+        event.data.insert(QStringLiteral("what"), reason);
+        stampEvent(event);
+        emit eventOccurred(event);
+        emitStateChanged();
+    });
     connect(m_client, &KeySerialClient::ackReceived, this, [this](quint8 ackedCmd) {
         KeySessionEvent event;
         event.kind = KeySessionEvent::Ack;
@@ -139,9 +130,11 @@ KeySessionService::KeySessionService(QObject *parent)
         emit eventOccurred(event);
         emitStateChanged();
     });
-    connect(m_client, &KeySerialClient::timeoutOccurred, this, [this](const QString &what) {
+    connect(m_client, &KeySerialClient::timeoutOccurred, this,
+            [this](quint8 command, const QString &what) {
         KeySessionEvent event;
         event.kind = KeySessionEvent::Timeout;
+        event.data.insert("command", static_cast<int>(command));
         event.data.insert("what", what);
         stampEvent(event);
         emit eventOccurred(event);
@@ -207,15 +200,6 @@ void KeySessionService::disconnectPort()
     m_client->disconnectPort();
 }
 
-void KeySessionService::setPortSwitchInProgress(bool inProgress)
-{
-    m_client->setPortSwitchInProgress(inProgress);
-}
-
-void KeySessionService::clearVerifiedPort()
-{
-    m_client->clearVerifiedPort();
-}
 
 KeySessionSnapshot KeySessionService::snapshot() const
 {
@@ -268,6 +252,9 @@ void KeySessionService::execute(const CommandRequest &request)
     case CommandId::QueryTaskLog:
         m_client->requestTaskLog(request.payload);
         break;
+    case CommandId::QueryCaptureRfid:
+        m_client->requestCaptureRfid(request.payload);
+        break;
     case CommandId::DeleteTask:
         if (request.payload.isEmpty()) {
             m_client->deleteFirstTask();
@@ -283,45 +270,44 @@ void KeySessionService::execute(const CommandRequest &request)
     }
 }
 
-void KeySessionService::startAuxSequence(quint8 seat, int mode, int origin, const QString &reason)
+// Maps the application maintenance request onto the protocol adapter's
+// existing sequence enum; protocol timing remains owned by KeySerialClient.
+void KeySessionService::startAuxSequence(
+        quint8 seat,
+        KeyAuxSequenceMode mode,
+        KeyAuxSequenceOrigin origin,
+        const QString &reason)
 {
-    m_client->startAuxSequence(seat,
-                               static_cast<KeySerialClient::AuxSequenceMode>(mode),
-                               static_cast<KeySerialClient::AuxSequenceOrigin>(origin),
-                               reason);
+    m_client->startAuxSequence(
+                seat,
+                static_cast<KeySerialClient::AuxSequenceMode>(mode),
+                static_cast<KeySerialClient::AuxSequenceOrigin>(origin),
+                reason);
 }
 
+// Accepts only the in-memory workbench payload; file-based transfer was an
+// unused development path and must not become a second product input source.
 void KeySessionService::transferTicket(const TicketTransferRequest &request)
 {
-    QByteArray jsonBytes = request.jsonBytes;
-    if (jsonBytes.isEmpty() && !request.jsonPath.trimmed().isEmpty()) {
-        QFile f(request.jsonPath);
-        if (!f.open(QIODevice::ReadOnly)) {
-            KeySessionEvent event;
-            event.kind = KeySessionEvent::Notice;
-            event.data.insert("what",
-                              QStringLiteral("传票发送失败：无法读取 JSON 文件 %1")
-                                  .arg(request.jsonPath));
-            emit eventOccurred(event);
-            return;
-        }
-        jsonBytes = f.readAll();
-        f.close();
-    }
-
-    if (jsonBytes.isEmpty()) {
+    if (request.jsonBytes.isEmpty() && request.encodedPayload.isEmpty()) {
         KeySessionEvent event;
         event.kind = KeySessionEvent::Notice;
-        event.data.insert("what", QStringLiteral("传票发送失败：JSON 内容为空"));
+        event.data.insert("what", QStringLiteral("\u4F20\u7968\u53D1\u9001\u5931\u8D25\uFF1AJSON \u5185\u5BB9\u4E3A\u7A7A"));
         emit eventOccurred(event);
         return;
     }
 
-    if (request.opId >= 0)
+    if (request.opId >= 0) {
         m_client->setCurrentOpId(request.opId);
-    m_client->transferTicketJson(jsonBytes,
-                                 request.stationId,
-                                 request.debugFrameChunkSize);
+    }
+    if (!request.encodedPayload.isEmpty()) {
+        m_client->transferTicketPayload(request.encodedPayload,
+                                        request.stationId);
+    } else {
+        m_client->transferTicketJson(request.jsonBytes,
+                                     request.stationId,
+                                     request.debugFrameChunkSize);
+    }
 }
 
 QVariantList KeySessionService::toTaskVariantList(const QList<KeyTaskInfo> &tasks) const

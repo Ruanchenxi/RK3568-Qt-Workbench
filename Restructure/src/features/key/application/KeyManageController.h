@@ -16,27 +16,69 @@
 #include <QList>
 #include <QSet>
 #include <QTimer>
-#include <QVariantMap>
 #include <QVariantList>
 
 #include "shared/contracts/IKeySessionService.h"
 #include "shared/contracts/KeyTaskDto.h"
+#include "shared/contracts/KeyTaskDisplayDto.h"
 #include "shared/contracts/SystemTicketDto.h"
 #include "features/key/application/SerialLogManager.h"
+#include "features/key/application/TicketIngressService.h"
+#include "features/key/application/TicketDeleteUseCase.h"
+#include "features/key/application/KeyManualActionUseCase.h"
+#include "features/key/application/KeyManageEventUseCase.h"
 
-class QNetworkAccessManager;
 class TicketStore;
-class TicketIngressService;
-class TicketReturnHttpClient;
+class TicketReturnUploadService;
+class AdminTicketTerminationService;
 class KeyProvisioningService;
-class TicketCancelCoordinator;
+class TicketCancelWorkflowService;
+class TicketDeleteWorkflowService;
+class TicketTransferWorkflowService;
+class TicketReturnWorkflowService;
+class CaptureTicketWorkflowService;
+class CaptureTicketHttpClient;
+struct CaptureTicketWorkflowEffect;
+struct TicketTransferWorkflowEffect;
+struct TicketReturnWorkflowEffect;
+struct TicketReturnStartRequest;
+class KeyMaintenanceService;
+class KeyPortRuntimeCoordinator;
+class KeyTaskObservationService;
+class KeyManageObservabilityService;
+class KeyManageSelectionService;
+
+// Lists every service required by the key-management application module.
+// Only the application composition root may assemble concrete implementations.
+struct KeyManageDependencies
+{
+    IKeySessionService *session = nullptr;
+    SerialLogManager *logManager = nullptr;
+    TicketStore *ticketStore = nullptr;
+    TicketTransferWorkflowService *ticketTransferWorkflow = nullptr;
+    TicketReturnWorkflowService *ticketReturnWorkflow = nullptr;
+    TicketIngressService *ticketIngress = nullptr;
+    TicketReturnUploadService *returnUploadService = nullptr;
+    KeyProvisioningService *keyProvisioning = nullptr;
+    TicketCancelWorkflowService *ticketCancelWorkflow = nullptr;
+    TicketDeleteWorkflowService *ticketDeleteWorkflow = nullptr;
+    AdminTicketTerminationService *adminTerminationService = nullptr;
+    KeyMaintenanceService *maintenanceService = nullptr;
+    KeyPortRuntimeCoordinator *keyPortRuntime = nullptr;
+    KeyTaskObservationService *keyTaskObservation = nullptr;
+    KeyManageObservabilityService *observability = nullptr;
+    KeyManageSelectionService *selection = nullptr;
+    CaptureTicketWorkflowService *captureWorkflow = nullptr;
+    CaptureTicketHttpClient *captureHttpClient = nullptr;
+
+    bool isComplete() const;
+};
 
 class KeyManageController : public QObject
 {
     Q_OBJECT
 public:
-    explicit KeyManageController(IKeySessionService *session = nullptr,
-                                 SerialLogManager *logManager = nullptr,
+    explicit KeyManageController(const KeyManageDependencies &dependencies,
                                  QObject *parent = nullptr);
     ~KeyManageController() override = default;
 
@@ -47,10 +89,10 @@ public:
     void onQueryBatteryClicked();
     void onSyncDeviceTimeClicked();
     void onQueryTasksClicked();
+    void onCaptureTicketClicked(int stationNo);
     void onDeleteClicked();
     void onTransferSelectedTicket();
     void onReturnSelectedTicket();
-    void onGetSystemTicketListClicked();
     void onSystemTicketSelected(int row);
     void onKeyTaskSelected(int row);
 
@@ -59,21 +101,25 @@ public:
     void onClearLogsClicked();
     void onClearHttpClientLogsClicked();
     void onClearHttpServerLogsClicked();
-    void requestApplyConfiguredKeyPort();
-    bool exportLogs(const QString &path, QString *error) const;
+    // Captures bounded log snapshots immediately and writes them off the GUI thread.
+    bool exportLogsAsync(const QString &path);
 
     QList<LogItem> visibleLogs() const;
     bool shouldDisplay(const LogItem &item) const;
+    QString serialCommandText(quint8 cmd) const;
     KeySessionSnapshot currentSnapshot() const;
     QList<SystemTicketDto> systemTickets() const;
+    // Supplies business display semantics without exposing protocol bytes to UI.
+    QList<KeyTaskDisplayDto> keyTaskDisplayRows(
+            const QList<KeyTaskDto> &tasks) const;
     QString httpServerLogText() const;
     QString httpClientLogText() const;
-    QVariantMap keySerialApplyStatus() const;
     bool canStartManualReturn(const QString &taskId, QString *blockedReason = nullptr) const;
-    void onClearOrphanKeyTaskClicked();
-    bool isSelectedKeyTaskOrphan() const;
-    void onForceCleanFailedTicketClicked();
-    bool isSelectedSystemTicketForceClearable() const;
+    void onClearUnregisteredKeyTaskClicked();
+    bool isSelectedKeyTaskUnregistered() const;
+    // Exposes only the selected task's display category so UI can present the
+    // stronger capture-delete confirmation without parsing protocol fields.
+    bool isSelectedKeyTaskCapture() const;
 
 signals:
     void statusMessage(const QString &message);
@@ -83,40 +129,78 @@ signals:
     void selectedSystemTicketChanged(const SystemTicketDto &ticket);
     void httpServerLogAppended(const QString &text);
     void httpClientLogAppended(const QString &text);
-    void keySerialApplyStatusChanged(const QVariantMap &status);
     void ackReceived(quint8 ackedCmd);
     void nakReceived(quint8 origCmd, quint8 errCode);
     void timeoutOccurred(const QString &what);
+    /// Reports a typed Q_TASK timeout so the page never parses protocol text.
+    void taskQueryTimedOut();
     void logRowAppended(const LogItem &item);
     void logTableRefreshRequested();
     void logsCleared();
+    void logExportFinished(bool success, const QString &result);
     void workbenchRefreshRequested();
 
 private slots:
     void handleSessionEvent(const KeySessionEvent &event);
     void handleLogItem(const LogItem &item);
     void handleSystemTicketsChanged(const QList<SystemTicketDto> &tickets);
-    void handleJsonReceived(const QByteArray &jsonBytes, const QString &savedPath);
     void handleHttpServerLog(const QString &text);
     void handleHttpClientLog(const QString &text);
     void handleInitPayloadReady(const QByteArray &payload);
     void handleRfidPayloadReady(const QByteArray &payload);
     void handleProvisionRequestFailed(const QString &reason);
-    void handleReturnUploadSucceeded(const QString &taskId);
-    void handleReturnUploadFailed(const QString &taskId, const QString &reason);
+    void handleReturnUploadSucceeded(const QString &taskId,
+                                     int keySessionId);
+    void handleReturnUploadFailed(const QString &taskId,
+                                  int keySessionId,
+                                  const QString &reason);
     void handleCancelDeferredRequestExpired(const QString &taskId);
+    void handleCaptureClaimSucceeded(int operationId, const QJsonObject &data);
+    void handleCaptureClaimFailed(int operationId, const QString &reason);
+    void handleCaptureFinishSucceeded(int operationId, const QString &taskId);
+    void handleCaptureFinishFailed(int operationId, const QString &taskId,
+                                   const QString &reason);
 
 private:
+    /// Handles one workbench transfer request after HTTP parsing.
+    TicketIngressService::IngressResult handleTicketIngress(
+            const QByteArray &jsonBytes);
+    /// Handles one workbench termination request after HTTP parsing.
+    TicketIngressService::IngressResult handleCancelIngress(
+            const QString &taskId);
+    /// Closes the affected workflow context after a protocol timeout.
+    void handleTimeoutEvent(quint8 command, const QString &what);
+    /// Routes an ACK only to the workflow waiting for that command.
+    void handleAckEvent(quint8 ackedCmd);
+    /// Preserves deletion intent when a protocol command is rejected.
+    void handleNakEvent(quint8 origCmd, quint8 errCode);
+    /// Applies one fresh Q_TASK observation in the established business order.
+    void handleTasksUpdatedEvent(const QVariantList &taskData, int eventBridgeEpoch);
+    /// Finalizes the active transfer only from its correlated Q_TASK observation.
+    bool finalizeActiveTransferConfirmation(const QList<KeyTaskDto> &tasks,
+                                            int eventBridgeEpoch);
+    /// Closes a pending Q_TASK confirmation after timeout, NAK, or link loss.
+    void failActiveTransferConfirmation(const QString &reason);
+    /// Routes one task-log payload to progressive or whole-ticket return.
+    void handleTaskLogReadyEvent(const KeySessionEvent &event);
+    /// Converts a protocol task-log rejection into a retryable return failure.
+    void handleTaskLogFailedEvent(const QString &reason);
+    void handleCaptureRfidReadyEvent(const KeySessionEvent &event);
+    void handleCaptureRfidFailedEvent(const KeySessionEvent &event);
+    /// Projects transfer frame progress for the active transfer operation.
+    void handleTicketTransferProgressEvent(int frameIndex, int totalFrames);
+    /// Closes a successful transfer and starts its final Q_TASK confirmation.
+    void handleTicketTransferFinishedEvent(int eventBridgeEpoch);
+    /// Applies a typed transfer failure result and releases its operation context.
+    void handleTicketTransferFailedEvent(const QString &what, int eventBridgeEpoch);
+    /// Invalidates operation-local proofs when the key link is interrupted.
+    void handleKeyLinkInterrupted(const KeySessionSnapshot &snapshot);
+    /// Reconciles one key-presence snapshot with all operation-local contexts.
+    void handleKeyStateChangedEvent(const KeySessionSnapshot &snapshot);
     bool isCurrentKeySession(int sessionId) const;
     void openNewKeySession();
     void invalidateCurrentKeySession(const QString &reason = QString());
     void scheduleAutoTransferRetry(const QString &reason = QString());
-    bool ingestWorkbenchJson(const QByteArray &jsonBytes,
-                             const QString &savedPath,
-                             QString *taskId = nullptr,
-                             QString *resultMessage = nullptr,
-                             bool scheduleAutoTransfer = true);
-    void tryAutoConnectKeyPort();
     bool autoTransferEnabled() const;
     void tryAutoRefreshKeyTasksOnReady(const KeySessionSnapshot &snapshot);
     void reconcileSystemTicketsFromKeyTasks(const QList<KeyTaskDto> &tasks);
@@ -134,132 +218,72 @@ private:
     void tryStartProgressiveStepReturnSweep(const QList<KeyTaskDto> &tasks);
     void startNextProgressiveStepReturn();
     void handleProgressiveTaskLog(const KeySessionEvent &event);
-    void uploadNextProgressiveStep();
+    void uploadNextCompletedProgressiveStep();
     bool canDeleteProgressiveStepTicket() const;
     void finishProgressiveStepReturn(bool continueSweep);
-    void beginProgressiveStepDelete();
     void clearProgressiveStepReturnContext(bool clearCandidates);
 
-    bool isKeyPortApplyBusy(QString *reason = nullptr) const;
-    void refreshKeySerialApplyStatus(const QString &overrideState = QString(),
-                                     const QString &overrideMessage = QString());
-    bool hasPendingApplySensitiveBusiness() const;
     void failActiveReturnHandshake(const QString &reason);
-    void clearActiveReturnContext(bool clearHandshakeOnly = false);
-    void markReturnDeletePending(const QString &taskId, const QByteArray &taskIdRaw);
+    void markReturnDeletePending(const QString &taskId,
+                                 const QByteArray &taskIdRaw,
+                                 int keySessionId);
     void finalizePendingReturnDelete(const QList<KeyTaskDto> &tasks);
-    bool retryPendingReturnDelete(const QString &reason);
-    void reconcileStaleOrphanTickets(const QList<KeyTaskDto> &tasks);
-    void callTermination(const QString &taskId);
-    void callTerminationThenRemove(const QString &taskId);
     bool isKeyPresenceFresh(const SystemTicketDto &ticket) const;
+    KeyManualActionDecision evaluateManualAction(KeyManualAction action) const;
+    KeyCommandEventContext commandEventContext() const;
     bool canProcessCancelNow(QString *blockedReason = nullptr) const;
     void schedulePendingCancelReconcile(const QString &reason = QString(), int delayMs = 300);
     void tryProcessPendingCancelTasks(const QList<KeyTaskDto> &tasks);
     void finalizePendingCancelDelete(const QList<KeyTaskDto> &tasks);
+    /// Builds immutable L3 admission facts without acquiring the return workflow.
+    TicketReturnStartRequest buildReturnStartRequest(
+            const QString &taskId, bool automatic) const;
     bool canStartTicketReturn(const QString &taskId,
                               bool automatic,
                               QByteArray *taskIdRaw = nullptr,
                               QString *blockedReason = nullptr) const;
     QString activeReturnChainTaskId() const;
-    QByteArray findKeyTaskIdRaw(const QString &taskId, quint8 *status = nullptr) const;
     static QString taskIdFromRaw(const QByteArray &taskIdRaw);
-    bool taskExistsInList(const QList<KeyTaskDto> &tasks, const QString &taskId) const;
-    bool hasBlockingIncompleteKeyTask(const QList<KeyTaskDto> &tasks,
-                                      QString *blockingTaskId = nullptr,
-                                      const QByteArray &excludeTaskIdRaw = QByteArray()) const;
-    bool startDirectWorkbenchTransfer(const QString &taskId,
-                                      const QByteArray &jsonBytes,
-                                      int expectedSessionId,
-                                      int expectedBridgeEpoch,
-                                      QString *blockedReason = nullptr);
-    // 设置 HTTP 传票互斥锁，同时启动 60 秒安全超时防止死锁
-    void setHttpTransferTransaction(const QString &taskId, int sessionId, int bridgeEpoch);
-    // 释放 HTTP 传票互斥锁并停止安全计时器（clearActiveTransfer=false 表示不联动清除 m_activeTransferTaskId）
-    void clearHttpTransferTransaction(bool clearActiveTransfer = true);
-    bool isActiveHttpTransferTransactionFor(int sessionId, int bridgeEpoch) const;
+    /// Executes only the L1 serial/HTTP/UI effects selected by transfer L2.
+    void applyTransferEffect(const TicketTransferWorkflowEffect &effect);
+    /// Executes only the L1 serial, HTTP, UI, and scheduling effects selected by return L2.
+    void applyReturnEffect(const TicketReturnWorkflowEffect &effect);
+    void applyCaptureEffect(const CaptureTicketWorkflowEffect &effect);
     int nextOpId();
     QList<KeyTaskDto> toTaskDtos(const QVariantList &taskList) const;
-
-    // --- 双座辅助链 ---
-    void tryAutoSeat1MaintenanceAfterTasksUpdated(const KeySessionSnapshot &snapshot,
-                                                  const QList<KeyTaskDto> &tasks);
-    void onAutoBatteryRefreshTimeout();   ///< A座 5 分钟定期电量刷新
-    void onAutoBatteryRefreshTimeoutB();  ///< B座 10 分钟定期电量刷新
-
-    QTimer *m_autoBatteryRefreshTimer  = nullptr;  ///< A座定时器（5 min）
-    QTimer *m_autoBatteryRefreshTimerB = nullptr;  ///< B座定时器（10 min）
 
     IKeySessionService *m_session;
     SerialLogManager *m_logManager;
     TicketStore *m_ticketStore;
+    TicketTransferWorkflowService *m_ticketTransferWorkflow;
+    TicketReturnWorkflowService *m_ticketReturnWorkflow;
+    // 构造时从 dependencies.ticketIngress 保存地址；服务由 AppComposition 创建和拥有，
+    // Controller 通过此指针注册业务回调、启动监听及完成 HTTP 回复。
     TicketIngressService *m_ticketIngress;
-    TicketReturnHttpClient *m_ticketReturnClient;
+    TicketReturnUploadService *m_returnUploadService;
     KeyProvisioningService *m_keyProvisioning;
-    TicketCancelCoordinator *m_ticketCancelCoordinator;
-    QNetworkAccessManager *m_terminationNetwork;
+    TicketCancelWorkflowService *m_ticketCancelWorkflow;
+    TicketDeleteWorkflowService *m_ticketDeleteWorkflow;
+    AdminTicketTerminationService *m_adminTerminationService;
+    KeyMaintenanceService *m_maintenanceService;
+    KeyPortRuntimeCoordinator *m_keyPortRuntime;
+    KeyTaskObservationService *m_keyTaskObservation;
+    KeyManageObservabilityService *m_observability;
+    KeyManageSelectionService *m_selection;
+    CaptureTicketWorkflowService *m_captureWorkflow;
+    CaptureTicketHttpClient *m_captureHttpClient;
+    bool m_started = false;
     int m_nextOpId;
-    QString m_selectedSystemTicketId;
-    QByteArray m_selectedKeyTaskRaw;
-    QString m_activeTransferTaskId;
-    QString m_pendingTransferHandshakeTaskId;
-    QByteArray m_pendingTransferHandshakeJsonBytes;
-    int m_pendingTransferHandshakeDebugChunk = 0;
-    QString m_activeReturnTaskId;
-    QByteArray m_activeReturnTaskIdRaw;
-    QString m_pendingReturnHandshakeTaskId;
-    QByteArray m_pendingReturnHandshakeTaskIdRaw;
-    QString m_pendingDeletedSystemTicketId;
-    QByteArray m_pendingDeletedKeyTaskRaw;
-    bool m_pendingDeleteAllowsRetransfer = false;
-    int m_pendingDeleteRetryCount = 0;
-    int m_pendingDeleteReconcileCount = 0;
-    int m_pendingDeleteInFlightStallCount = 0;
-    QString m_pendingCancelSystemTicketId;
-    QByteArray m_pendingCancelKeyTaskRaw;
     int m_keySessionId = 0;
     int m_keySessionSeed = 0;
-    int m_activeTransferSessionId = 0;
-    int m_activeReturnSessionId = 0;
-    enum class DeleteOrigin { None, ManualDelete, AutoReturnCleanup, AdminClearOrphan };
-    DeleteOrigin m_pendingDeleteOrigin = DeleteOrigin::None;
-    int m_pendingDeleteSessionId = 0;
-    int m_pendingCancelSessionId = 0;
-    int m_autoQuerySessionId = 0;
-    bool m_httpTransferTransactionActive = false;
-    QString m_httpTransferTransactionTaskId;
-    int m_httpTransferTransactionSessionId = 0;
-    int m_httpTransferTransactionBridgeEpoch = 0;
+
     // 安全超时：防止互斥锁因极端异常永久未释放（60 秒强制清锁）
     QTimer *m_httpTransactionSafetyTimer = nullptr;
     bool m_autoTransferRetryScheduled = false;
     bool m_cancelReconcileScheduled = false;
-    bool m_keyPortApplyInProgress = false;
-    bool m_suppressSessionAutomation = false;
-    int m_keyPortApplyEpoch = 0;
-    int m_acceptedBridgeEpoch = 0;
-    QString m_keySerialApplyState = QStringLiteral("applied");
-    QString m_keySerialApplyMessage;
-    QString m_keyPortApplyTargetPort;
-    QList<KeyTaskDto> m_lastKeyTasks;
-    bool m_lastReadyState = false;
-    QStringList m_httpClientLogLines;
-    QStringList m_httpServerLogLines;
+    bool m_logExportInProgress = false;
     // 运行时追踪正在途的 termination HTTP 请求，区别于磁盘持久化的 adminDeleteStage
-    QSet<QString> m_terminationInFlightTaskIds;
-    bool m_progressiveReturnActive = false;
-    int m_progressiveSweepSessionId = 0;
-    int m_progressiveTotalSteps = 0;
-    int m_progressiveStationNo = 0;
-    QSet<int> m_progressiveObservedCompletedSteps;
-    QList<QJsonObject> m_progressivePendingItems;
-    QList<QByteArray> m_progressiveCandidateTaskIds;
-    QHash<QString, QSet<int>> m_progressiveUploadedSteps;
-    QString m_progressiveHttpTaskId;
-    int m_progressiveHttpSerialNumber = -1;
 
-    // P2：最近一次可信 Q_TASK 完成时的毫秒时间戳（0 = 本次会话尚未跑过 Q_TASK）
-    qint64 m_lastQueryTasksAtMs = 0;
 };
 
 #endif // KEYMANAGECONTROLLER_H

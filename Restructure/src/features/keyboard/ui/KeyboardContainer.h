@@ -28,6 +28,8 @@ class KeyboardContainer : public QWidget
 public:
     explicit KeyboardContainer(QWidget *parent = nullptr);
     void setKeyboardHeight(int height);
+    // Caps the overlay height so compact screens keep the active field visible.
+    void setKeyboardMaximumHeight(int maximumHeight);
     void showFor(QLineEdit *target, keyboard::KeyboardMode mode, bool allowUrlSwitch);
     void showStandalone(keyboard::KeyboardMode mode, bool allowUrlSwitch);
     void hideKeyboard();
@@ -60,6 +62,7 @@ private:
     CandidateBarWidget *m_candidateBar;
     KeyboardPinyinEngine *m_pinyinEngine;
     int m_baseKeyboardHeight;
+    int m_keyboardMaximumHeight;
     NormalKeyboard *m_normalKeyboard;
     NumKeyboard *m_numKeyboard;
     SymbolKeyboard *m_symbolKeyboard;

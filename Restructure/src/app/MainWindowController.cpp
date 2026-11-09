@@ -4,15 +4,13 @@
  */
 #include "app/MainWindowController.h"
 
-#include "features/auth/infra/password/AuthServiceAdapter.h"
+#include <QtGlobal>
 
 MainWindowController::MainWindowController(IAuthService *auth, QObject *parent)
     : QObject(parent)
     , m_auth(auth)
 {
-    if (!m_auth) {
-        m_auth = new AuthServiceAdapter(this);
-    }
+    Q_ASSERT(m_auth);
 
     connect(m_auth, &IAuthService::loginSuccess, this, [this](const QJsonObject &) {
         emitUserStateChanged();

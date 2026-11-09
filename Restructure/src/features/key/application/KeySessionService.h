@@ -20,12 +20,13 @@ public:
 
     bool connectPort(const QString &portName, int baud) override;
     void disconnectPort() override;
-    void setPortSwitchInProgress(bool inProgress) override;
-    void clearVerifiedPort() override;
     KeySessionSnapshot snapshot() const override;
     void execute(const CommandRequest &request) override;
     void transferTicket(const TicketTransferRequest &request) override;
-    void startAuxSequence(quint8 seat, int mode, int origin, const QString &reason) override;
+    void startAuxSequence(quint8 seat,
+                          KeyAuxSequenceMode mode,
+                          KeyAuxSequenceOrigin origin,
+                          const QString &reason) override;
 
 private:
     QVariantList toTaskVariantList(const QList<KeyTaskInfo> &tasks) const;

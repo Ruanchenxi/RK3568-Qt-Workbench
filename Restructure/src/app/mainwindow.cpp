@@ -5,6 +5,9 @@
  * @date 2026-01-29
  */
 
+#include "app/AppComposition.h"
+#include "app/ProductProfile.h"
+#include "app/UiLayoutProfileResolver.h"
 #include "app/mainwindow.h"
 #include "ui_mainwindow.h"
 #include "features/auth/infra/device/CardSerialSource.h"
@@ -17,9 +20,9 @@
 #include "features/key/ui/keymanagepage.h"
 #include "features/system/ui/systempage.h"
 #include "features/log/ui/logpage.h"
-#include "core/ConfigManager.h"
+#include "shared/contracts/IProcessService.h"
 #include "platform/logging/LogService.h"
-#include "platform/process/ProcessService.h"
+#include "shared/ui/DesktopUiMetrics.h"
 #include <QGuiApplication>
 #include <QPushButton>
 #include <QScreen>
@@ -27,6 +30,10 @@
 #include <QEvent>
 #include <QShowEvent>
 #include <QStyle>
+#include <QMoveEvent>
+#include <QResizeEvent>
+#include <QSettings>
+#include <QWindow>
 
 namespace
 {
@@ -55,8 +62,9 @@ void setStatusDot(QLabel *dot, const QString &color)
  *
  * 初始化主窗口，设置UI、信号槽连接和定时器
  */
-MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
+MainWindow::MainWindow(AppComposition &composition, QWidget *parent) : QMainWindow(parent),
                                           ui(new Ui::MainWindow),
+                                          m_composition(composition),
                                           m_loginPage(nullptr),
                                           m_workbenchPage(nullptr),
                                           m_keyManagePage(nullptr),
@@ -64,14 +72,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
                                           m_logPage(nullptr),
                                           m_keyboardContainer(nullptr),
                                           m_keyboardController(nullptr),
-                                          m_processService(new ProcessService(this)),
-                                          m_mainController(new MainWindowController(nullptr, this)),
+                                          m_processService(composition.processService()),
+                                          m_mainController(composition.mainWindowController()),
                                           m_timeTimer(nullptr),
                                           m_inactivityTimer(nullptr)
 {
     // 初始化核心服务，确保主窗口壳体和页面替换流程进入稳定默认态。
-    ConfigManager::instance();
-    LogService::instance();
 
     LOG_INFO("MainWindow", "应用程序启动");
 
@@ -79,13 +85,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
 
     // 创建登录页面并添加到QStackedWidget，保持 .ui 壳体与真实页面 mixed 替换。
     setupPages();
-    if (m_processService)
-    {
-        m_processService->startAuto();
-    }
     setupCustomKeyboard();
     applyInitialWindowGeometry();
-    
+    scheduleLayoutProfileUpdate();
+
     // 初始化各模块
     setupConnections(); // 连接信号槽
     setupTimer();       // 设置定时器
@@ -99,6 +102,93 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
     updateStatusBar();
 
     LOG_INFO("MainWindow", "主窗口初始化完成");
+}
+
+QScreen *MainWindow::currentScreen() const
+{
+    QScreen *screen = QGuiApplication::screenAt(frameGeometry().center());
+    return screen ? screen : QGuiApplication::primaryScreen();
+}
+
+void MainWindow::scheduleLayoutProfileUpdate()
+{
+    if (m_layoutProfileUpdatePending)
+        return;
+    m_layoutProfileUpdatePending = true;
+    QTimer::singleShot(0, this, [this]() {
+        m_layoutProfileUpdatePending = false;
+        applyLayoutProfile();
+    });
+}
+
+void MainWindow::onWindowScreenChanged(QScreen *screen)
+{
+    if (screen) {
+        connect(screen, &QScreen::availableGeometryChanged,
+                this, &MainWindow::scheduleLayoutProfileUpdate, Qt::UniqueConnection);
+        connect(screen, &QScreen::logicalDotsPerInchChanged,
+                this, &MainWindow::scheduleLayoutProfileUpdate, Qt::UniqueConnection);
+    }
+    scheduleLayoutProfileUpdate();
+}
+
+void MainWindow::applyLayoutProfile()
+{
+    const UiLayoutProfile next = UiLayoutProfileResolver::resolve(currentScreen(), size());
+    if (m_layoutProfileApplied && next == m_layoutProfile)
+        return;
+
+    m_layoutProfile = next;
+    m_layoutProfileApplied = true;
+    const bool narrow = m_layoutProfile.isNarrowWidth;
+    if (ui) {
+        ui->headerLayout->setContentsMargins(
+                    m_layoutProfile.contentHorizontalMargin, 0,
+                    m_layoutProfile.contentHorizontalMargin, 0);
+        ui->footerLayout->setContentsMargins(
+                    m_layoutProfile.contentHorizontalMargin, 0,
+                    m_layoutProfile.contentHorizontalMargin, 0);
+        ui->companyLabel->setVisible(!narrow);
+        ui->timeLabel->setVisible(!narrow);
+        ui->divider1->setVisible(!narrow);
+        ui->systemTitle->setVisible(
+                    ui->contentStackedWidget->currentIndex() != PAGE_LOGIN);
+#ifdef Q_OS_WIN
+        ui->btnKeyboard->setVisible(false);
+        ui->btnKeyboard->setEnabled(false);
+        ui->navTabsLayout->setSpacing(
+                    narrow ? 2 : (m_layoutProfile.mode == UiLayoutMode::Wide ? 8 : 5));
+
+        const QList<QPushButton *> navigationButtons = {
+            ui->btnWorkbench, ui->btnKeys, ui->btnSystem, ui->btnService
+        };
+        const int navigationMinimumWidth = narrow ? 88 : 104;
+        const int navigationMaximumWidth = narrow ? 118
+                : (m_layoutProfile.mode == UiLayoutMode::Wide ? 160 : 140);
+        for (QPushButton *button : navigationButtons) {
+            DesktopUiMetrics::applyButton(
+                        button, m_layoutProfile.navigationFontPointSize,
+                        m_layoutProfile.navigationButtonMinimumHeight);
+            button->setMinimumWidth(navigationMinimumWidth);
+            button->setMaximumWidth(navigationMaximumWidth);
+            button->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        }
+        DesktopUiMetrics::applyButton(
+                    ui->logoutBtn, m_layoutProfile.buttonFontPointSize,
+                    m_layoutProfile.buttonMinimumHeight);
+#else
+        ui->btnKeyboard->setVisible(true);
+#endif
+    }
+
+    if (m_keyboardContainer)
+        m_keyboardContainer->setKeyboardMaximumHeight(
+                    m_layoutProfile.keyboardMaximumHeight);
+    if (m_loginPage) m_loginPage->applyLayoutProfile(m_layoutProfile);
+    if (m_systemPage) m_systemPage->applyLayoutProfile(m_layoutProfile);
+    if (m_keyManagePage) m_keyManagePage->applyLayoutProfile(m_layoutProfile);
+    if (m_workbenchPage) m_workbenchPage->applyLayoutProfile(m_layoutProfile);
+    if (m_logPage) m_logPage->applyLayoutProfile(m_layoutProfile);
 }
 
 /**
@@ -149,7 +239,10 @@ void MainWindow::setupPages()
     };
 
     // ========== 创建登录页面 ==========
-    m_loginPage = new LoginPage(this);
+    m_loginPage = new LoginPage(m_composition.authFlow(),
+                                 m_composition.authService(),
+                                 m_composition.processService(),
+                                 this);
     if (!replacePlaceholderPage(ui->loginPage, m_loginPage, "loginPage"))
     {
         delete m_loginPage;
@@ -165,19 +258,34 @@ void MainWindow::setupPages()
     }
 
     // ========== 创建工作台页面 ==========
-    m_workbenchPage = new WorkbenchPage(this);
-    if (!replacePlaceholderPage(ui->workbenchPage, m_workbenchPage, "workbenchPage"))
+    if (isPageEnabled(PAGE_WORKBENCH))
     {
-        delete m_workbenchPage;
-        m_workbenchPage = nullptr;
+        m_workbenchPage = new WorkbenchPage(m_composition.authService(), this);
+        if (!replacePlaceholderPage(ui->workbenchPage, m_workbenchPage, "workbenchPage"))
+        {
+            delete m_workbenchPage;
+            m_workbenchPage = nullptr;
+        }
+    }
+    else
+    {
+        ui->btnWorkbench->hide();
     }
 
     // ========== 创建钥匙管理页面 ==========
-    m_keyManagePage = new KeyManagePage(this);
-    if (!replacePlaceholderPage(ui->keyManagePage, m_keyManagePage, "keyManagePage"))
+    if (isPageEnabled(PAGE_KEYS))
     {
-        delete m_keyManagePage;
-        m_keyManagePage = nullptr;
+        m_keyManagePage = new KeyManagePage(
+                    m_composition.keyManageController(), this);
+        if (!replacePlaceholderPage(ui->keyManagePage, m_keyManagePage, "keyManagePage"))
+        {
+            delete m_keyManagePage;
+            m_keyManagePage = nullptr;
+        }
+    }
+    else
+    {
+        ui->btnKeys->hide();
     }
 
     // 回传/撤销完成后刷新工作台
@@ -192,24 +300,39 @@ void MainWindow::setupPages()
     }
 
     // ========== 创建系统设置页面 ==========
-    m_systemPage = new SystemPage(this);
-    if (!replacePlaceholderPage(ui->systemPage, m_systemPage, "systemPage"))
+    if (isPageEnabled(PAGE_SYSTEM))
     {
-        delete m_systemPage;
-        m_systemPage = nullptr;
+        m_systemPage = new SystemPage(m_composition.authService(), this);
+        if (!replacePlaceholderPage(ui->systemPage, m_systemPage, "systemPage"))
+        {
+            delete m_systemPage;
+            m_systemPage = nullptr;
+        }
+        else
+        {
+            connect(m_systemPage, &SystemPage::cardReaderStatusChanged,
+                    this, &MainWindow::onCardReaderStatusChanged);
+
+        }
     }
     else
     {
-        connect(m_systemPage, &SystemPage::cardReaderStatusChanged,
-                this, &MainWindow::onCardReaderStatusChanged);
+        ui->btnSystem->hide();
     }
 
     // ========== 创建服务日志页面 ==========
-    m_logPage = new LogPage(m_processService, this);
-    if (!replacePlaceholderPage(ui->logPage, m_logPage, "logPage"))
+    if (isPageEnabled(PAGE_LOG))
     {
-        delete m_logPage;
-        m_logPage = nullptr;
+        m_logPage = new LogPage(m_processService, this);
+        if (!replacePlaceholderPage(ui->logPage, m_logPage, "logPage"))
+        {
+            delete m_logPage;
+            m_logPage = nullptr;
+        }
+    }
+    else
+    {
+        ui->btnService->hide();
     }
 
 }
@@ -284,6 +407,12 @@ void MainWindow::setupTimer()
 
 void MainWindow::setupCustomKeyboard()
 {
+    if (!m_composition.productProfile().isEnabled(ProductFeature::Keyboard))
+    {
+        ui->btnKeyboard->hide();
+        return;
+    }
+
     m_keyboardContainer = new KeyboardContainer(ui->contentStackedWidget);
     m_keyboardContainer->hide();
     m_keyboardController = new KeyboardController(this);
@@ -312,6 +441,15 @@ void MainWindow::setupCustomKeyboard()
 
 void MainWindow::applyInitialWindowGeometry()
 {
+#ifdef Q_OS_WIN
+    QScreen *screen = QGuiApplication::primaryScreen();
+    const QSize available = screen
+            ? screen->availableGeometry().size() : QSize(960, 640);
+    setMinimumSize(qMin(1200, available.width()),
+                   qMin(740, available.height()));
+    restoreWindowsWindowState();
+    return;
+#endif
     constexpr int kDeviceWindowWidth = 1024;
     constexpr int kDeviceWindowHeight = 768;
 
@@ -340,6 +478,66 @@ void MainWindow::applyInitialWindowGeometry()
         setMinimumSize(960, 640);
         resize(desiredSize);
     }
+}
+
+void MainWindow::restoreWindowsWindowState()
+{
+#ifdef Q_OS_WIN
+    QSettings settings(QStringLiteral("RK3568"), QStringLiteral("RK3568"));
+    const QRect saved = settings.value(
+                QStringLiteral("window/normalGeometry")).toRect();
+    const QString savedScreenName = settings.value(
+                QStringLiteral("window/screenName")).toString();
+    const bool maximized = settings.value(
+                QStringLiteral("window/maximized"), true).toBool();
+    if (!saved.isValid()) {
+        showMaximized();
+        return;
+    }
+
+    QScreen *screen = nullptr;
+    for (QScreen *candidate : QGuiApplication::screens()) {
+        if (candidate && !savedScreenName.isEmpty()
+                && candidate->name() == savedScreenName) {
+            screen = candidate;
+            break;
+        }
+    }
+    for (QScreen *candidate : QGuiApplication::screens()) {
+        if (!screen && candidate
+                && candidate->availableGeometry().intersects(saved)) {
+            screen = candidate;
+            break;
+        }
+    }
+    if (!screen)
+        screen = QGuiApplication::primaryScreen();
+    if (!screen)
+        return;
+
+    const QRect available = screen->availableGeometry();
+    const QSize boundedSize(qMin(saved.width(), available.width()),
+                            qMin(saved.height(), available.height()));
+    QRect bounded(saved.topLeft(), boundedSize);
+    bounded.moveLeft(qBound(available.left(), bounded.left(),
+                            available.right() - bounded.width() + 1));
+    bounded.moveTop(qBound(available.top(), bounded.top(),
+                           available.bottom() - bounded.height() + 1));
+    setGeometry(bounded);
+    if (maximized)
+        showMaximized();
+#endif
+}
+
+void MainWindow::saveWindowsWindowState() const
+{
+#ifdef Q_OS_WIN
+    QSettings settings(QStringLiteral("RK3568"), QStringLiteral("RK3568"));
+    settings.setValue(QStringLiteral("window/normalGeometry"), normalGeometry());
+    settings.setValue(QStringLiteral("window/maximized"), isMaximized());
+    if (QScreen *screen = currentScreen())
+        settings.setValue(QStringLiteral("window/screenName"), screen->name());
+#endif
 }
 
 void MainWindow::fitWindowToAvailableGeometry()
@@ -386,6 +584,15 @@ void MainWindow::showEvent(QShowEvent *event)
 {
     QMainWindow::showEvent(event);
 
+    if (windowHandle()) {
+        connect(windowHandle(), &QWindow::screenChanged,
+                this, &MainWindow::onWindowScreenChanged, Qt::UniqueConnection);
+        onWindowScreenChanged(windowHandle()->screen());
+    } else {
+        scheduleLayoutProfileUpdate();
+    }
+
+#ifdef Q_OS_LINUX
     // WHY:
     // XFCE / X11 下窗口装饰和可用区约束往往在 show 之后才完全稳定；
     // 仅在构造阶段修正一次，容易出现 frame 仍为 768 高、footer 被截掉。
@@ -399,6 +606,7 @@ void MainWindow::showEvent(QShowEvent *event)
             }
         });
     }
+#endif
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -408,7 +616,20 @@ void MainWindow::closeEvent(QCloseEvent *event)
                  .arg(event && event->isAccepted() ? "true" : "false")
                  .arg(isVisible() ? "true" : "false")
                  .arg(event && event->spontaneous() ? "true" : "false"));
+    saveWindowsWindowState();
     QMainWindow::closeEvent(event);
+}
+
+void MainWindow::resizeEvent(QResizeEvent *event)
+{
+    QMainWindow::resizeEvent(event);
+    scheduleLayoutProfileUpdate();
+}
+
+void MainWindow::moveEvent(QMoveEvent *event)
+{
+    QMainWindow::moveEvent(event);
+    scheduleLayoutProfileUpdate();
 }
 
 /**
@@ -426,6 +647,9 @@ bool MainWindow::event(QEvent *event)
 {
     if (event) {
         switch (event->type()) {
+        case QEvent::ApplicationFontChange:
+            scheduleLayoutProfileUpdate();
+            break;
         case QEvent::TouchBegin:
         case QEvent::TouchUpdate:
         case QEvent::TouchEnd:
@@ -480,6 +704,12 @@ void MainWindow::updateTime()
  */
 void MainWindow::switchToPage(PageIndex page)
 {
+    if (!isPageEnabled(page))
+    {
+        LOG_WARNING("MainWindow", QString("disabled page requested: %1").arg(static_cast<int>(page)));
+        return;
+    }
+
     const int targetIndex = static_cast<int>(page);
     const int pageCount = ui->contentStackedWidget->count();
     if (targetIndex < 0 || targetIndex >= pageCount)
@@ -495,6 +725,7 @@ void MainWindow::switchToPage(PageIndex page)
     }
 
     ui->contentStackedWidget->setCurrentIndex(targetIndex);
+    ui->systemTitle->setVisible(targetIndex != PAGE_LOGIN);
     updateNavButtonState();
     updateKeyboardButtonState();
 }
@@ -552,6 +783,12 @@ void MainWindow::updateKeyboardButtonState()
 {
     if (!ui || !ui->btnKeyboard || !ui->contentStackedWidget)
     {
+        return;
+    }
+    if (!m_composition.productProfile().isEnabled(ProductFeature::Keyboard))
+    {
+        ui->btnKeyboard->setEnabled(false);
+        ui->btnKeyboard->hide();
         return;
     }
 
@@ -729,6 +966,39 @@ bool MainWindow::checkLoginRequired(PageIndex page)
 bool MainWindow::pageRequiresLogin(PageIndex page) const
 {
     return page == PAGE_WORKBENCH || page == PAGE_KEYS;
+}
+
+bool MainWindow::isPageEnabled(PageIndex page) const
+{
+    switch (page) {
+    case PAGE_LOGIN:
+        return true;
+    case PAGE_WORKBENCH:
+        return m_composition.productProfile().isEnabled(ProductFeature::Workbench);
+    case PAGE_KEYS:
+        return m_composition.productProfile().isEnabled(ProductFeature::KeyManagement);
+    case PAGE_SYSTEM:
+        return m_composition.productProfile().isEnabled(ProductFeature::SystemManagement);
+    case PAGE_LOG:
+        return m_composition.productProfile().isEnabled(ProductFeature::ServiceOperations);
+    }
+    return false;
+}
+
+MainWindow::PageIndex MainWindow::landingPageAfterLogin() const
+{
+    const PageIndex candidates[] = {
+        PAGE_WORKBENCH,
+        PAGE_KEYS,
+        PAGE_SYSTEM,
+        PAGE_LOG
+    };
+    for (PageIndex page : candidates) {
+        if (isPageEnabled(page)) {
+            return page;
+        }
+    }
+    return PAGE_LOGIN;
 }
 
 // ==================== 导航按钮槽函数实现 ====================
@@ -921,7 +1191,7 @@ void MainWindow::onUserLoggedIn(const QString &username, const QString &role)
     updateUserDisplay();
 
     // 登录成功后跳转到工作台
-    switchToPage(PAGE_WORKBENCH);
+    switchToPage(landingPageAfterLogin());
 
     if (m_inactivityTimer) {
         m_inactivityTimer->start(INACTIVITY_TIMEOUT_MS);

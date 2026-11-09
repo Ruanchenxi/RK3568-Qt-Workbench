@@ -4,7 +4,7 @@
  */
 #include "features/auth/infra/http/AuthGatewayAdapter.h"
 
-#include "features/auth/infra/password/AuthServiceAdapter.h"
+#include <QtGlobal>
 #include "shared/contracts/IAuthService.h"
 
 namespace {
@@ -37,9 +37,7 @@ AuthGatewayAdapter::AuthGatewayAdapter(IAuthService *auth, QObject *parent)
     : IAuthGateway(parent)
     , m_auth(auth)
 {
-    if (!m_auth) {
-        m_auth = new AuthServiceAdapter(this);
-    }
+    Q_ASSERT(m_auth);
 
     connect(m_auth, &IAuthService::loginSuccess,
             this, &AuthGatewayAdapter::onAuthLoginSuccess);

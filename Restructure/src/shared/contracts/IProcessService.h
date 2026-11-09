@@ -21,9 +21,13 @@ public:
 
     virtual void startAuto() = 0;
     virtual void stopAll() = 0;
+    virtual bool isServiceReady() const = 0;
+    virtual QString serviceReadyMessage() const = 0;
+    virtual bool usesLocalService() const = 0;
 
 signals:
     void logGenerated(const QString &message);
+    void serviceReadyChanged(bool ready, const QString &message);
 };
 
 #endif // IPROCESSSERVICE_H

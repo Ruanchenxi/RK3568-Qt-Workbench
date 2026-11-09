@@ -9,12 +9,11 @@
 #include <QWidget>
 #include <QHideEvent>
 #include <QShowEvent>
-#include <QTimer>
-#include <QUrl>
 #include <QStringList>
 #include <QVariant>
 #include "features/auth/application/LoginController.h"
 #include "features/auth/domain/AuthTypes.h"
+#include "shared/ui/UiLayoutProfile.h"
 
 // 前向声明UI类
 namespace Ui
@@ -23,9 +22,10 @@ namespace Ui
 }
 
 class CardSerialSource;
+class IAuthService;
+class IProcessService;
+class AuthFlowCoordinator;
 class FingerprintSource;
-class QNetworkAccessManager;
-class QNetworkReply;
 
 /**
  * @class LoginPage
@@ -35,8 +35,11 @@ class LoginPage : public QWidget
 {
 Q_OBJECT // 启用信号槽机制
 
-    public : explicit LoginPage(QWidget *parent = nullptr);
+    public : explicit LoginPage(AuthFlowCoordinator *authFlow, IAuthService *authService, IProcessService *processService, QWidget *parent = nullptr);
     ~LoginPage();
+
+    // Applies presentation-only metrics without changing login behavior or text.
+    void applyLayoutProfile(const UiLayoutProfile &profile);
 
 signals:
     /**
@@ -59,6 +62,7 @@ private slots:
     void onFingerprintSourceError(const QString &message);
     void onConfigChanged(const QString &key, const QVariant &value);
     void refreshServiceReadyState();
+    void onServiceReadyChanged(bool ready, const QString &message);
 
     // 登录响应回调
     void onLoginSucceeded(const QString &username, const QString &roleName);
@@ -76,8 +80,6 @@ private:
     void setLoginInProgress(bool inProgress);
     void setAccountListLoading(bool inProgress);
     void setServiceReady(bool ready, const QString &message = QString());
-    void startServiceReadyProbe();
-    void cancelServiceReadyProbe();
     bool isAccountListEnabled() const;
     void showAccountDropdown();
     void invalidateAccountListCache();
@@ -86,17 +88,15 @@ private:
     bool m_loginInProgress;
     bool m_accountListLoading;
     bool m_pendingAccountPopup;
+    bool m_accountPopupOpen;
     // 账号列表缓存及其对应的请求键
     QStringList m_cachedAccounts;
     QString m_cachedAccountListKey;
     QString m_pendingAccountListKey;
     LoginController *m_controller;
+    IProcessService *m_processService;
     CardSerialSource *m_cardSource;
     FingerprintSource *m_fingerprintSource;
-    QNetworkAccessManager *m_probeManager;
-    QNetworkReply *m_probeReply;
-    bool m_probeInFlight;
-    QTimer *m_serviceReadyTimer;
     bool m_serviceReady;
     QString m_serviceReadyMessage;
 

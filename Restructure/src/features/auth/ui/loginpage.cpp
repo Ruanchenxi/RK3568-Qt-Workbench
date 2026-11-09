@@ -7,8 +7,10 @@
 #include "ui_loginpage.h"
 #include <QApplication>
 #include "core/ConfigManager.h"
+#include "shared/contracts/IProcessService.h"
 #include "features/auth/infra/device/CardSerialSource.h"
 #include "features/auth/infra/device/FingerprintSource.h"
+#include "shared/ui/DesktopUiMetrics.h"
 #include <QAbstractButton>
 #include <QDebug>
 #include <QDialog>
@@ -21,32 +23,45 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QMessageBox>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
-#include <QNetworkRequest>
 #include <QPixmap>
 #include <QScreen>
 #include <QStyle>
-#include <QTimer>
-#include <QUrl>
 #include <QVBoxLayout>
+
+void LoginPage::applyLayoutProfile(const UiLayoutProfile &profile)
+{
+    const bool narrow = profile.isNarrowWidth;
+    const bool shortHeight = profile.isShortHeight;
+    ui->leftPanel->setMinimumWidth(narrow ? 300 : 360);
+    ui->leftPanel->setMaximumWidth(narrow ? 340 : 384);
+    ui->rightLayout->setContentsMargins(narrow ? 24 : 64, shortHeight ? 16 : 32,
+                                        narrow ? 24 : 64, shortHeight ? 16 : 32);
+    ui->loginCard->setMinimumWidth(narrow ? 400 : 420);
+    ui->loginCard->setMaximumWidth(profile.mode == UiLayoutMode::Wide ? 520 : 440);
+    ui->loginCardLayout->setContentsMargins(narrow ? 24 : 34, shortHeight ? 20 : 32,
+                                            narrow ? 24 : 34, shortHeight ? 20 : 32);
+#ifdef Q_OS_WIN
+    DesktopUiMetrics::applyButton(ui->loginBtn, profile.navigationFontPointSize,
+                                  qMax(profile.navigationButtonMinimumHeight, 44));
+    DesktopUiMetrics::applyButton(ui->selectAccountBtn, profile.buttonFontPointSize,
+                                  profile.buttonMinimumHeight);
+#endif
+}
 
 /**
  * @brief 构造函数
  * @param parent 父窗口指针
  */
-LoginPage::LoginPage(QWidget *parent) : QWidget(parent),
+LoginPage::LoginPage(AuthFlowCoordinator *authFlow, IAuthService *authService, IProcessService *processService, QWidget *parent) : QWidget(parent),
                                         ui(new Ui::LoginPage),
                                         m_loginInProgress(false),
                                         m_accountListLoading(false),
                                         m_pendingAccountPopup(false),
-                                        m_controller(new LoginController(nullptr, this)),
+                                        m_accountPopupOpen(false),
+                                        m_controller(new LoginController(authFlow, authService, this)),
+                                        m_processService(processService),
                                         m_cardSource(new CardSerialSource(this)),
                                         m_fingerprintSource(new FingerprintSource(this)),
-                                        m_probeManager(new QNetworkAccessManager(this)),
-                                        m_probeReply(nullptr),
-                                        m_probeInFlight(false),
-                                        m_serviceReadyTimer(new QTimer(this)),
                                         m_serviceReady(false)
 {
     ui->setupUi(this); // 加载 loginpage.ui 界面
@@ -75,6 +90,10 @@ LoginPage::LoginPage(QWidget *parent) : QWidget(parent),
             this, &LoginPage::onLoginButtonClicked);
     connect(ui->selectAccountBtn, &QAbstractButton::clicked,
             this, &LoginPage::onSelectAccountClicked);
+#ifdef Q_OS_WIN
+    // A mouse click opens the picker without moving keyboard focus out of the field.
+    ui->selectAccountBtn->setFocusPolicy(Qt::NoFocus);
+#endif
 
     // 连接 Controller 信号
     connect(m_controller, &LoginController::loginSucceeded,
@@ -101,14 +120,14 @@ LoginPage::LoginPage(QWidget *parent) : QWidget(parent),
             this, &LoginPage::onFingerprintSourceError);
     connect(ConfigManager::instance(), &ConfigManager::configChanged,
             this, &LoginPage::onConfigChanged);
+    if (m_processService)
+    {
+        connect(m_processService, &IProcessService::serviceReadyChanged,
+                this, &LoginPage::onServiceReadyChanged);
+    }
     connect(qApp, &QApplication::focusChanged, this, [this](QWidget *, QWidget *) {
         updateAccountRowHighlight();
     });
-    connect(m_serviceReadyTimer, &QTimer::timeout,
-            this, &LoginPage::refreshServiceReadyState);
-    m_serviceReadyTimer->setInterval(1500);
-    m_serviceReadyTimer->setSingleShot(false);
-
     setLoginInProgress(false);
     setAccountListLoading(false);
     setServiceReady(false, QStringLiteral("后台服务启动中，请稍候..."));
@@ -131,7 +150,6 @@ LoginPage::LoginPage(QWidget *parent) : QWidget(parent),
  */
 LoginPage::~LoginPage()
 {
-    cancelServiceReadyProbe();
     delete ui;
 }
 
@@ -141,10 +159,17 @@ LoginPage::~LoginPage()
  */
 void LoginPage::onLoginButtonClicked()
 {
-    // PC remote mode may reject /list-account while /login-by-password still works.
-    // Password login must not be blocked by the account-list readiness probe.
+    // Password login is gated by backend process readiness, not optional account-list availability.
     if (m_loginInProgress)
     {
+        return;
+    }
+    if (!m_serviceReady)
+    {
+        QMessageBox::information(this, QStringLiteral("\u670d\u52a1\u672a\u5c31\u7eea"),
+                                 m_serviceReadyMessage.isEmpty()
+                                     ? QStringLiteral("\u540e\u53f0\u670d\u52a1\u5c1a\u672a\u5c31\u7eea\uff0c\u8bf7\u7a0d\u5019\u518d\u8bd5\u3002")
+                                     : m_serviceReadyMessage);
         return;
     }
 
@@ -365,9 +390,8 @@ void LoginPage::invalidateAccountListCache()
 
 void LoginPage::updateInteractionState()
 {
-    // Keep manual password login available even when the optional account list
-    // service is unavailable; the account picker still depends on that probe.
-    const bool loginEnabled = !m_loginInProgress;
+    // All credential methods wait for backend readiness; the account picker adds its own loading gate.
+    const bool loginEnabled = m_serviceReady && !m_loginInProgress;
     const bool accountPickerEnabled = isAccountListEnabled()
             && m_serviceReady && !m_loginInProgress && !m_accountListLoading;
     ui->loginBtn->setEnabled(loginEnabled);
@@ -376,9 +400,10 @@ void LoginPage::updateInteractionState()
 
 bool LoginPage::isAccountListEnabled() const
 {
-    return ConfigManager::instance()
+    const bool enabled = ConfigManager::instance()
             ->value(QStringLiteral("auth/accountListEnabled"), true)
             .toBool();
+    return enabled && m_processService && m_processService->usesLocalService();
 }
 
 void LoginPage::updateAccountRowHighlight()
@@ -389,11 +414,19 @@ void LoginPage::updateAccountRowHighlight()
     }
 
     QWidget *focusWidget = QApplication::focusWidget();
-    const bool accountRowActive = (focusWidget == ui->usernameEdit || focusWidget == ui->selectAccountBtn);
-    ui->selectAccountBtn->setProperty("linkedFocus", accountRowActive);
-    ui->selectAccountBtn->style()->unpolish(ui->selectAccountBtn);
-    ui->selectAccountBtn->style()->polish(ui->selectAccountBtn);
-    ui->selectAccountBtn->update();
+    const bool accountRowActive = m_accountPopupOpen
+            || focusWidget == ui->usernameEdit
+            || focusWidget == ui->selectAccountBtn;
+    const QList<QWidget *> accountRowWidgets = {
+        ui->usernameEdit, ui->selectAccountBtn
+    };
+    for (QWidget *widget : accountRowWidgets)
+    {
+        widget->setProperty("linkedFocus", accountRowActive);
+        widget->style()->unpolish(widget);
+        widget->style()->polish(widget);
+        widget->update();
+    }
 }
 
 void LoginPage::onKeyboardVisibilityChanged(bool visible, int height)
@@ -416,6 +449,12 @@ void LoginPage::showAccountDropdown()
     QDialog *popup = new QDialog(this, Qt::Popup | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);
     popup->setAttribute(Qt::WA_DeleteOnClose);
     popup->setAttribute(Qt::WA_TranslucentBackground);
+    m_accountPopupOpen = true;
+    updateAccountRowHighlight();
+    connect(popup, &QObject::destroyed, this, [this]() {
+        m_accountPopupOpen = false;
+        updateAccountRowHighlight();
+    });
 
     QVBoxLayout *layout = new QVBoxLayout(popup);
     layout->setContentsMargins(14, 14, 14, 14);
@@ -511,8 +550,12 @@ void LoginPage::showAccountDropdown()
     list->setFixedHeight(listHeight);
     popup->adjustSize();
 
-    const QPoint anchorBelow = ui->usernameEdit->mapToGlobal(
-        QPoint(0, ui->usernameEdit->height() + 8));
+    const QMargins popupMargins = layout->contentsMargins();
+    const QPoint fieldTopLeft = ui->usernameEdit->mapToGlobal(QPoint(0, 0));
+    const QPoint fieldBottomLeft = ui->usernameEdit->mapToGlobal(
+        QPoint(0, ui->usernameEdit->height()));
+    const QPoint anchorBelow(fieldBottomLeft.x() - popupMargins.left(),
+                             fieldBottomLeft.y() + 6 - popupMargins.top());
 
     QRect availableGeometry;
     if (QScreen *screen = QGuiApplication::screenAt(anchorBelow))
@@ -540,9 +583,9 @@ void LoginPage::showAccountDropdown()
 
         if (y + popup->height() > availableGeometry.bottom())
         {
-            const QPoint anchorAbove = ui->usernameEdit->mapToGlobal(
-                QPoint(0, -popup->height() - 8));
-            y = qMax(anchorAbove.y(), availableGeometry.top() + 12);
+            const int anchorAboveY = fieldTopLeft.y() - 6 - popup->height()
+                    + popupMargins.bottom();
+            y = qMax(anchorAboveY, availableGeometry.top() + 12);
         }
     }
 
@@ -561,12 +604,6 @@ void LoginPage::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
 
-    cancelServiceReadyProbe();
-    if (m_serviceReadyTimer)
-    {
-        m_serviceReadyTimer->stop();
-    }
-
     if (!isAccountListEnabled())
     {
         // PC direct-password mode: keep the business endpoint completely idle.
@@ -575,7 +612,7 @@ void LoginPage::showEvent(QShowEvent *event)
         ui->usernameEdit->style()->unpolish(ui->usernameEdit);
         ui->usernameEdit->style()->polish(ui->usernameEdit);
         ui->usernameEdit->update();
-        setServiceReady(true, QStringLiteral("\u670d\u52a1\u5df2\u5c31\u7eea"));
+        refreshServiceReadyState();
         if (ui->accountLoginDescLabel)
         {
             ui->accountLoginDescLabel->setText(QStringLiteral("\u8bf7\u8f93\u5165\u64cd\u4f5c\u5458\u8d26\u53f7\u548c\u767b\u5f55\u5bc6\u7801\u3002"));
@@ -593,19 +630,13 @@ void LoginPage::showEvent(QShowEvent *event)
     ui->usernameEdit->style()->unpolish(ui->usernameEdit);
     ui->usernameEdit->style()->polish(ui->usernameEdit);
     ui->usernameEdit->update();
-    setServiceReady(true, QStringLiteral("\u670d\u52a1\u5df2\u5c31\u7eea"));
+    refreshServiceReadyState();
 }
 
 void LoginPage::hideEvent(QHideEvent *event)
 {
     QWidget::hideEvent(event);
 
-    if (m_serviceReadyTimer)
-    {
-        m_serviceReadyTimer->stop();
-    }
-
-    cancelServiceReadyProbe();
 
     if (m_cardSource)
     {
@@ -619,18 +650,24 @@ void LoginPage::hideEvent(QHideEvent *event)
 
 void LoginPage::refreshServiceReadyState()
 {
-    cancelServiceReadyProbe();
-    if (m_serviceReadyTimer)
+    if (!m_processService)
     {
-        m_serviceReadyTimer->stop();
+        setServiceReady(false, QStringLiteral("后台服务未就绪"));
+        return;
     }
-    setServiceReady(true, QStringLiteral("\u670d\u52a1\u5df2\u5c31\u7eea"));
+
+    setServiceReady(m_processService->isServiceReady(),
+                    m_processService->serviceReadyMessage());
+}
+
+void LoginPage::onServiceReadyChanged(bool ready, const QString &message)
+{
+    setServiceReady(ready, message);
 }
 
 void LoginPage::setServiceReady(bool ready, const QString &message)
 {
-    // m_serviceReady now represents account-list/readiness status, not whether
-    // manual password login is allowed.
+    // Login methods stay fail-closed until the process service passes its health gate.
     m_serviceReady = ready;
     m_serviceReadyMessage = ready
         ? QStringLiteral("服务已就绪，可进行账号密码登录。")
@@ -640,14 +677,14 @@ void LoginPage::setServiceReady(bool ready, const QString &message)
     {
         ui->accountLoginDescLabel->setText(m_serviceReady
             ? QStringLiteral("请输入操作员账号和登录密码。")
-            : QStringLiteral("可手动输入账号密码登录；账号选择需等待账号列表服务。"));
+            : m_serviceReadyMessage);
     }
 
     if (ui->loginFootHint)
     {
         ui->loginFootHint->setText(m_serviceReady
             ? QStringLiteral("可手动输入账号密码登录。")
-            : QStringLiteral("%1 账号密码登录可手动尝试。").arg(m_serviceReadyMessage));
+            : QStringLiteral("后台服务就绪后即可登录。"));
     }
 
     if (m_cardSource)
@@ -675,122 +712,4 @@ void LoginPage::setServiceReady(bool ready, const QString &message)
     }
 
     updateInteractionState();
-}
-
-void LoginPage::startServiceReadyProbe()
-{
-    if (!isAccountListEnabled())
-    {
-        return;
-    }
-
-    QString accountListUrl = ConfigManager::instance()->value(QStringLiteral("auth/accountListUrl"), QString()).toString().trimmed();
-    QString apiUrlText = ConfigManager::instance()->apiUrl().trimmed();
-    QString tenantCode = ConfigManager::instance()->tenantCode().trimmed();
-
-    if (m_probeInFlight || !m_probeManager)
-    {
-        return;
-    }
-
-    if (tenantCode.isEmpty())
-    {
-        tenantCode = QStringLiteral("000000");
-    }
-
-    if (accountListUrl.isEmpty())
-    {
-        if (apiUrlText.isEmpty())
-        {
-            setServiceReady(false, QStringLiteral("服务地址未配置，请先检查接口地址。"));
-            return;
-        }
-
-        while (apiUrlText.endsWith('/'))
-        {
-            apiUrlText.chop(1);
-        }
-        accountListUrl = apiUrlText + QStringLiteral("/list-account");
-    }
-
-    const QUrl requestUrl = QUrl::fromUserInput(accountListUrl);
-    if (!requestUrl.isValid())
-    {
-        setServiceReady(false, QStringLiteral("账号列表地址无效，请检查接口配置。"));
-        return;
-    }
-
-    QNetworkRequest request(requestUrl);
-    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    request.setRawHeader("kids-requested-with", "KidsHttpRequest");
-    request.setRawHeader("Authorization", "Basic cmlkZXI6cmlkZXJfc2VjcmV0");
-
-    const QByteArray body = QJsonDocument(QJsonObject{
-        {QStringLiteral("tenantId"), tenantCode}
-    }).toJson(QJsonDocument::Compact);
-
-    m_probeReply = m_probeManager->post(request, body);
-    m_probeInFlight = true;
-
-    QNetworkReply *reply = m_probeReply;
-    QTimer::singleShot(1200, this, [this, reply]() {
-        if (reply && reply == m_probeReply && reply->isRunning())
-        {
-            reply->setProperty("probeTimedOut", true);
-            reply->abort();
-        }
-    });
-
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        if (!reply)
-        {
-            return;
-        }
-
-        if (reply != m_probeReply)
-        {
-            reply->deleteLater();
-            return;
-        }
-
-        m_probeReply = nullptr;
-        m_probeInFlight = false;
-
-        const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        const QByteArray responseData = reply->readAll();
-
-        if (reply->error() != QNetworkReply::NoError)
-        {
-            const bool timedOut = reply->property("probeTimedOut").toBool();
-            setServiceReady(false, QStringLiteral("后台服务连接中，请稍候..."));
-            reply->deleteLater();
-            return;
-        }
-
-        if (httpStatus < 200 || httpStatus >= 300)
-        {
-            const QString bodyText = QString::fromUtf8(responseData).trimmed();
-            setServiceReady(false, QStringLiteral("后台服务连接中，请稍候..."));
-            reply->deleteLater();
-            return;
-        }
-
-        setServiceReady(true, QStringLiteral("服务已就绪"));
-        reply->deleteLater();
-    });
-}
-
-void LoginPage::cancelServiceReadyProbe()
-{
-    if (!m_probeReply)
-    {
-        m_probeInFlight = false;
-        return;
-    }
-
-    QNetworkReply *reply = m_probeReply;
-    m_probeReply = nullptr;
-    m_probeInFlight = false;
-    reply->abort();
-    reply->deleteLater();
 }

@@ -13,7 +13,6 @@
 #include <QUrl>
 
 #include "core/ConfigManager.h"
-#include "features/auth/infra/password/AuthServiceAdapter.h"
 #include "features/key/protocol/InitPayloadEncoder.h"
 #include "features/key/protocol/RfidPayloadEncoder.h"
 
@@ -23,9 +22,7 @@ KeyProvisioningService::KeyProvisioningService(IAuthService *auth, QObject *pare
     , m_network(new QNetworkAccessManager(this))
     , m_requestInFlight(false)
 {
-    if (!m_auth) {
-        m_auth = new AuthServiceAdapter(this);
-    }
+    Q_ASSERT(m_auth);
 }
 
 void KeyProvisioningService::requestInitPayload(int stationNo)

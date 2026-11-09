@@ -36,12 +36,14 @@ public:
 
     bool isConfigured() const;
     QString configuredUrl() const;
-    void uploadReturnPayload(const QJsonObject &payload);
+    // Carries the opaque key-session correlation through the async reply.
+    void uploadReturnPayload(const QJsonObject &payload, int keySessionId);
 
 signals:
     void logAppended(const QString &text);
-    void uploadSucceeded(const QString &taskId);
-    void uploadFailed(const QString &taskId, const QString &reason);
+    void uploadSucceeded(const QString &taskId, int keySessionId);
+    void uploadFailed(const QString &taskId, int keySessionId,
+                      const QString &reason);
 
 private:
     int uploadTimeoutMs() const;

@@ -14,7 +14,7 @@ class WorkbenchController : public QObject
 {
     Q_OBJECT
 public:
-    explicit WorkbenchController(IAuthService *auth = nullptr, QObject *parent = nullptr);
+    explicit WorkbenchController(IAuthService *auth, QObject *parent = nullptr);
     ~WorkbenchController() override = default;
 
     bool shouldLoadNow();

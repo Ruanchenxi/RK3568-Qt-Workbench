@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
  <class>KeyManagePage</class>
  <widget class="QWidget" name="KeyManagePage">
@@ -138,7 +138,7 @@
    <item>
     <widget class="QStackedWidget" name="contentStack">
      <property name="currentIndex">
-      <number>0</number>
+      <number>1</number>
      </property>
      <widget class="QWidget" name="pageKey">
       <layout class="QVBoxLayout" name="pageKeyLayout">
@@ -739,48 +739,6 @@ QPushButton:disabled { background: #F5F5F5; color: #BDBDBD; border-color: #E0E0E
                      </property>
                     </spacer>
                    </item>
-                   <item>
-                    <widget class="QPushButton" name="btnGetSystemTicketList">
-                     <property name="styleSheet">
-                      <string notr="true">QPushButton {
-  background: #FFFFFF;
-  border: 1px solid #4CAF50;
-  border-radius: 4px;
-  padding: 2px 10px;
-  font-size: 12px;
-  color: #4CAF50;
-}
-QPushButton:hover { background: #E8F5E9; }
-QPushButton:pressed { background: #C8E6C9; }</string>
-                     </property>
-                     <property name="text">
-                      <string>获取系统票列表</string>
-                     </property>
-                    </widget>
-                   </item>
-                   <item>
-                    <widget class="QPushButton" name="btnForceCleanFailedTicket">
-                     <property name="enabled">
-                      <bool>false</bool>
-                     </property>
-                     <property name="styleSheet">
-                      <string notr="true">QPushButton {
-  background: #FFFFFF;
-  border: 1px solid #D32F2F;
-  border-radius: 4px;
-  padding: 2px 10px;
-  font-size: 12px;
-  color: #D32F2F;
-}
-QPushButton:hover { background: #FFEBEE; }
-QPushButton:pressed { background: #FFCDD2; }
-QPushButton:disabled { border-color: #BDBDBD; color: #BDBDBD; }</string>
-                     </property>
-                     <property name="text">
-                      <string>强制清理失败系统票</string>
-                     </property>
-                    </widget>
-                   </item>
                   </layout>
                  </widget>
                 </item>
@@ -927,7 +885,7 @@ QPushButton:pressed { background: #C8E6C9; }</string>
                     </widget>
                    </item>
                    <item>
-                    <widget class="QPushButton" name="btnClearOrphanKeyTask">
+                    <widget class="QPushButton" name="btnClearUnregisteredKeyTask">
                      <property name="enabled">
                       <bool>false</bool>
                      </property>

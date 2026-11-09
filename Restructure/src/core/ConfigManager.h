@@ -57,6 +57,10 @@ public:
 
     // ========== 串口配置 ==========
 
+    // Stores an explicit disabled choice without confusing it with Linux defaults.
+    static QString disabledSerialPortValue();
+    static bool isSerialPortDisabled(const QString &port);
+
     QString keySerialPort() const;
     void setKeySerialPort(const QString &port);
 

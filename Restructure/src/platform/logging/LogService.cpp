@@ -13,36 +13,46 @@
 
 namespace
 {
-const int kMaxLogBackupFiles = 5;
+const int kCurrentRunLineLimit = 10000;
+const qint64 kNormalArchiveLimit = 100LL * 1024 * 1024;
+const qint64 kIncidentArchiveLimit = 20LL * 1024 * 1024;
 
+// Retention is enforced only at startup/rotation so logging never adds a polling loop.
 void cleanupLogBackups(const QString &logFilePath)
 {
     const QFileInfo logInfo(logFilePath);
     QDir dir = logInfo.dir();
-    if (!dir.exists())
-    {
-        return;
+    if (!dir.exists()) return;
+    const bool incident = logInfo.fileName() == QStringLiteral("incident.log");
+    const int retentionDays = incident ? 90 : 30;
+    const qint64 totalLimit = incident ? kIncidentArchiveLimit : kNormalArchiveLimit;
+    const QString pattern = logInfo.fileName() + QStringLiteral(".*");
+    QFileInfoList backups = dir.entryInfoList(QStringList() << pattern, QDir::Files, QDir::Time);
+    const QDateTime cutoff = QDateTime::currentDateTime().addDays(-retentionDays);
+    qint64 total = 0;
+    for (const QFileInfo &backup : backups) {
+        if (backup.lastModified() < cutoff) QFile::remove(backup.absoluteFilePath());
+        else total += backup.size();
     }
-
-    const QString backupPrefix = logInfo.fileName() + QStringLiteral(".");
-    const QFileInfoList backups = dir.entryInfoList(QStringList() << (backupPrefix + QStringLiteral("*")),
-                                                    QDir::Files,
-                                                    QDir::Time);
-    for (int i = kMaxLogBackupFiles; i < backups.size(); ++i)
-    {
+    backups = dir.entryInfoList(QStringList() << pattern, QDir::Files, QDir::Time);
+    for (int i = backups.size() - 1; i >= 0 && total > totalLimit; --i) {
+        total -= backups.at(i).size();
         QFile::remove(backups.at(i).absoluteFilePath());
     }
 }
 }
-
 LogService *LogService::s_instance = nullptr;
 
 LogService::LogService(QObject *parent)
-    : QObject(parent), m_minLevel(LogLevel::Info), m_consoleOutput(true), m_fileOutput(true), m_logFile(nullptr), m_logStream(nullptr), m_maxFileSize(10 * 1024 * 1024) // 10MB
+    : QObject(parent), m_minLevel(LogLevel::Info), m_consoleOutput(true), m_fileOutput(true), m_logFile(nullptr), m_logStream(nullptr), m_maxFileSize(10 * 1024 * 1024), m_logDate(QDate::currentDate()) // 10MB
 {
     // 默认日志路径
     QString appDir = QCoreApplication::applicationDirPath();
     m_logFilePath = appDir + "/logs/app.log";
+    const QFileInfo existingLog(m_logFilePath);
+    if (existingLog.exists()) {
+        m_logDate = existingLog.lastModified().date();
+    }
 
     // 确保日志目录存在
     QDir dir(appDir);
@@ -55,6 +65,7 @@ LogService::LogService(QObject *parent)
     if (m_fileOutput)
     {
         cleanupLogBackups(m_logFilePath);
+        cleanupLogBackups(QFileInfo(m_logFilePath).dir().filePath(QStringLiteral("incident.log")));
 
         m_logFile = new QFile(m_logFilePath);
         if (m_logFile->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text))
@@ -113,6 +124,40 @@ void LogService::fatal(const QString &module, const QString &message)
     log(LogLevel::Fatal, module, message);
 }
 
+void LogService::incident(const QString &module, const QString &message)
+{
+    QMutexLocker locker(&m_mutex);
+    LogEntry entry;
+    entry.timestamp = QDateTime::currentDateTime();
+    entry.level = LogLevel::Error;
+    entry.module = module;
+    entry.message = message;
+    entry.userId = AppContext::instance()->currentUser().userId;
+
+    const QString normalPath = m_logFilePath;
+    const QString incidentPath = QFileInfo(normalPath).dir().filePath(QStringLiteral("incident.log"));
+    QFileInfo incidentInfo(incidentPath);
+    if (incidentInfo.exists()
+            && (incidentInfo.size() >= m_maxFileSize
+                || incidentInfo.lastModified().date() != entry.timestamp.date())) {
+        const QString archive = incidentPath + QLatin1Char('.')
+                + QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_hhmmss"));
+        QFile::rename(incidentPath, archive);
+        cleanupLogBackups(incidentPath);
+    }
+    QFile file(incidentPath);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text))
+    {
+        QTextStream stream(&file);
+        stream.setCodec("UTF-8");
+        stream << QStringLiteral("[%1] [INCIDENT] [%2] [%3] %4\n")
+                     .arg(entry.timestamp.toString(QStringLiteral("yyyy-MM-dd hh:mm:ss.zzz")))
+                     .arg(module)
+                     .arg(entry.userId.isEmpty() ? QStringLiteral("-") : entry.userId)
+                     .arg(message);
+        stream.flush();
+    }
+}
 void LogService::audit(const QString &operation, const QString &target,
                        bool result, const QString &details)
 {
@@ -159,6 +204,16 @@ void LogService::log(LogLevel level, const QString &module, const QString &messa
                                .arg(module)
                                .arg(message);
 
+    QString exportLine = QStringLiteral("[%1] [%2] [%3] [%4] %5")
+            .arg(entry.timestamp.toString(QStringLiteral("yyyy-MM-dd hh:mm:ss.zzz")))
+            .arg(levelToString(entry.level))
+            .arg(entry.module)
+            .arg(entry.userId.isEmpty() ? QStringLiteral("-") : entry.userId)
+            .arg(entry.message);
+    if (m_currentRunLines.size() >= kCurrentRunLineLimit)
+        m_currentRunLines.removeFirst();
+    m_currentRunLines.append(exportLine);
+
     // 控制台输出
     if (m_consoleOutput)
     {
@@ -196,7 +251,7 @@ void LogService::writeToFile(const LogEntry &entry)
         return;
 
     // 检查文件大小，需要时轮转
-    if (m_logFile && m_logFile->size() > m_maxFileSize)
+    if (m_logFile && (m_logFile->size() > m_maxFileSize || m_logDate != entry.timestamp.date()))
     {
         rotateLogFile();
         if (!m_logStream)
@@ -212,6 +267,7 @@ void LogService::writeToFile(const LogEntry &entry)
                        .arg(entry.userId.isEmpty() ? "-" : entry.userId)
                        .arg(entry.message);
 
+    m_logDate = entry.timestamp.date();
     *m_logStream << line;
     m_logStream->flush();
 }
@@ -326,4 +382,16 @@ void LogService::setConsoleOutput(bool enabled)
 void LogService::setFileOutput(bool enabled)
 {
     m_fileOutput = enabled;
+}
+
+QString LogService::currentRunLogText() const
+{
+    QMutexLocker locker(&m_mutex);
+    return m_currentRunLines.join(QLatin1Char('\n'));
+}
+
+QStringList LogService::currentRunLogLines() const
+{
+    QMutexLocker locker(&m_mutex);
+    return m_currentRunLines;
 }

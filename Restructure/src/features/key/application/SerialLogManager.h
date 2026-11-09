@@ -13,7 +13,7 @@
 #include <QObject>
 #include <QList>
 #include <QString>
-#include "features/key/protocol/LogItem.h"
+#include "shared/contracts/LogItem.h"
 
 class SerialLogManager : public QObject
 {
@@ -35,6 +35,13 @@ public:
     bool shouldDisplay(const LogItem &item) const;
 
     bool exportText(const QString &path, QString *error = nullptr) const;
+    // Writes an immutable snapshot so disk I/O can run outside the GUI thread.
+    static bool exportItemsText(const QList<LogItem> &items,
+                                const QString &path,
+                                QString *error = nullptr);
+
+    // Converts a raw command code into the stable label used by diagnostics.
+    static QString commandText(quint8 cmd);
 
 signals:
     void overflowDropped();
@@ -43,7 +50,7 @@ private:
     static const int kMaxItems = 5000;
 
     static QString dirText(LogDir dir);
-    static QString cmdText(quint8 cmd);
+
 
     QList<LogItem> m_items;
     bool m_expertMode;

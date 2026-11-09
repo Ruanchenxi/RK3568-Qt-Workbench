@@ -12,18 +12,21 @@
  */
 
 #include "systempage.h"
+#include "shared/ui/DesktopUiMetrics.h"
 #include "ui_systempage.h"
 #include "features/auth/infra/device/CardSerialSource.h"
 #include "features/auth/infra/device/FingerprintSource.h"
-#include "features/auth/infra/password/authservice.h"
+#include "shared/contracts/IAuthService.h"
 #include "core/ConfigManager.h"
 #include <QFrame>
 #include <QLineEdit>
 #include <QComboBox>
+#include <QEvent>
 #include <QListView>
 #include <QLabel>
 #include <QStyle>
 #include <QShowEvent>
+#include <QTimer>
 
 namespace {
 constexpr int kFixedBaudRate = 115200;
@@ -34,10 +37,13 @@ constexpr int kFixedDataBits = 8;
 #include <QTableWidget>
 #include <QScrollBar>
 #include <QMessageBox>
+#include <QPushButton>
 
-SystemPage::SystemPage(QWidget *parent) : QWidget(parent),
-                                          ui(new Ui::SystemPage),
-                                          m_controller(new SystemController(this)),
+SystemPage::SystemPage(IAuthService *authService, QWidget *parent)
+    : QWidget(parent),
+      ui(new Ui::SystemPage),
+                                          m_authService(authService),
+                                          m_controller(new SystemController(authService, this)),
                                           m_cardSource(new CardSerialSource(this)),
                                           m_fingerprintSource(new FingerprintSource(this)),
                                           m_keyboardTarget(nullptr),
@@ -54,6 +60,7 @@ SystemPage::SystemPage(QWidget *parent) : QWidget(parent),
                                           m_collectingFingerprint(false),
                                           m_clearingFingerprint(false)
 {
+    Q_ASSERT(m_authService);
     ui->setupUi(this);
 
     if (ui->basicSectionTitle)
@@ -91,7 +98,7 @@ SystemPage::SystemPage(QWidget *parent) : QWidget(parent),
         ui->advancedIntroCard->hide();
     }
 
-    auto configureComboPopup = [](QComboBox *combo) {
+    auto configureComboPopup = [this](QComboBox *combo) {
         if (!combo)
         {
             return;
@@ -136,6 +143,7 @@ SystemPage::SystemPage(QWidget *parent) : QWidget(parent),
             "  color: #1F2937;"
             "}"));
         combo->setView(listView);
+        listView->installEventFilter(this);
     };
     configureComboPopup(ui->keySerialCombo);
     configureComboPopup(ui->cardSerialCombo);
@@ -197,7 +205,7 @@ SystemPage::SystemPage(QWidget *parent) : QWidget(parent),
     {
         ui->serialFixedHintLabel->setWordWrap(true);
         ui->serialFixedHintLabel->setText(
-            QStringLiteral("钥匙串口和读卡串口的配置只会保存到配置文件。表单里显示的新串口只是已保存配置，当前运行中的串口不会立即切换，需在业务空闲后重启程序加载新配置。"));
+            QStringLiteral("钥匙串口和读卡串口配置只会保存到配置文件；请在当前任务完成后重启程序统一生效。"));
     }
 
     // 连接信号槽
@@ -205,7 +213,6 @@ SystemPage::SystemPage(QWidget *parent) : QWidget(parent),
 
     // 加载设置
     loadSettings();
-
     // 初始化标签状态
     updateTabStyles();
 }
@@ -213,6 +220,22 @@ SystemPage::SystemPage(QWidget *parent) : QWidget(parent),
 SystemPage::~SystemPage()
 {
     delete ui;
+}
+
+// Keeps the touch-friendly popup anchored at its explicit "None" choice.
+bool SystemPage::eventFilter(QObject *watched, QEvent *event)
+{
+    if (event && event->type() == QEvent::Show && ui
+            && (watched == ui->keySerialCombo->view()
+                || watched == ui->cardSerialCombo->view()))
+    {
+        const QPointer<QListView> listView = qobject_cast<QListView *>(watched);
+        QTimer::singleShot(0, this, [listView]() {
+            if (listView)
+                listView->scrollToTop();
+        });
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void SystemPage::showEvent(QShowEvent *event)
@@ -262,12 +285,12 @@ void SystemPage::setupConnections()
             ui->advancedActionHintLabel->setText(hint);
         }
     });
-    connect(AuthService::instance(), &AuthService::loginSuccess, this, [this](const QJsonObject &) {
+    connect(m_authService, &IAuthService::loginSuccess, this, [this](const QJsonObject &) {
         resetIdentityViewForSessionChange();
         updateIdentityPermissionState();
         updateSerialPermissionState();
     });
-    connect(AuthService::instance(), &AuthService::loggedOut, this, [this]() {
+    connect(m_authService, &IAuthService::loggedOut, this, [this]() {
         resetIdentityViewForSessionChange();
         updateIdentityPermissionState();
         updateSerialPermissionState();
@@ -328,7 +351,7 @@ void SystemPage::updateTabStyles()
         ui->saveBtn->setEnabled(basicActive);
         ui->saveBtn->setText(QStringLiteral("保存配置"));
         ui->saveBtn->setToolTip(basicActive
-                                    ? QStringLiteral("保存当前配置。钥匙串口和读卡串口会在下次重启程序时加载新配置")
+                                    ? QStringLiteral("保存当前配置；串口配置将在下次重启程序时生效")
                                     : QString());
         if (basicActive)
         {
@@ -609,42 +632,45 @@ void SystemPage::loadSettings()
         const QString &saved = savedPorts[i];
 
         combo->clear();
+        combo->addItem(QStringLiteral("无"), ConfigManager::disabledSerialPortValue());
         for (const QString &portName : availPorts) {
             if (!portName.trimmed().isEmpty())
             {
-                combo->addItem(portName);
+                combo->addItem(portName, portName);
             }
         }
         // 已保存端口若不在枚举列表中（设备未插 / 预配置），仍追加显示
-        if (!saved.isEmpty() && combo->findText(saved) < 0) {
-            combo->addItem(saved);
+        if (!saved.isEmpty()
+                && !ConfigManager::isSerialPortDisabled(saved)
+                && combo->findData(saved) < 0) {
+            combo->addItem(saved, saved);
         }
-        if (!saved.isEmpty())
+        if (ConfigManager::isSerialPortDisabled(saved))
         {
-            combo->setCurrentText(saved);
+            combo->setCurrentIndex(combo->findData(ConfigManager::disabledSerialPortValue()));
+        }
+        else if (!saved.isEmpty())
+        {
+            combo->setCurrentIndex(combo->findData(saved));
         }
         else if (combo->count() > 1)
         {
             // 第一阶段以“自动识别 / 自动回填”优先：
             // 如果已有可枚举端口，则默认选第一个有效项，减少手工配置。
-            combo->setCurrentIndex(0);
-        }
-        else if (combo->count() == 1)
-        {
-            combo->setCurrentIndex(0);
+            combo->setCurrentIndex(1);
         }
         else
         {
-            combo->setCurrentIndex(-1);
+            combo->setCurrentIndex(0);
         }
 
-        if (combo->count() == 0)
+        if (combo->count() == 1)
         {
-            combo->setToolTip(QStringLiteral("未检测到可用串口"));
+            combo->setToolTip(QStringLiteral("未检测到可用串口，可选择“无”停用"));
         }
         else
         {
-            combo->setToolTip(QStringLiteral("点击选择串口"));
+            combo->setToolTip(QStringLiteral("选择串口，或选择“无”停用"));
         }
     }
 
@@ -662,8 +688,8 @@ void SystemPage::saveSettings()
     dto.apiUrl = ui->apiUrlEdit->text().trimmed();
     dto.stationId = ui->stationIdEdit->text();
     dto.tenantCode = ui->tenantCodeEdit->text();
-    dto.keySerialPort = ui->keySerialCombo->currentText();
-    dto.cardSerialPort = ui->cardSerialCombo->currentText();
+    dto.keySerialPort = ui->keySerialCombo->currentData().toString();
+    dto.cardSerialPort = ui->cardSerialCombo->currentData().toString();
     dto.baudRate = kFixedBaudRate;
     dto.dataBits = kFixedDataBits;
 
@@ -1280,7 +1306,7 @@ void SystemPage::updateIdentityPermissionState()
 void SystemPage::updateSerialPermissionState()
 {
     m_canManageSerialPorts = currentUserCanManageSerialPorts();
-    const QString baseHint = QStringLiteral("钥匙串口和读卡串口的配置只会保存到配置文件。表单里显示的新串口只是已保存配置，当前运行中的串口不会立即切换，需在业务空闲后重启程序加载新配置。");
+    const QString baseHint = QStringLiteral("钥匙串口和读卡串口配置只会保存到配置文件；请在当前任务完成后重启程序统一生效。");
 
     auto applySerialPermission = [this](QComboBox *combo, const QString &editableTip) {
         if (!combo)
@@ -1331,7 +1357,7 @@ void SystemPage::updateSerialPermissionState()
 
 bool SystemPage::currentUserCanManageIdentityMedia() const
 {
-    const QJsonObject userInfo = AuthService::instance()->getUserInfo();
+    const QJsonObject userInfo = m_authService->userInfo();
     const QString account = userInfo.value(QStringLiteral("account")).toString().trimmed();
     const QString roleName = userInfo.value(QStringLiteral("role_name")).toString().trimmed();
 
@@ -1357,6 +1383,35 @@ bool SystemPage::currentUserCanManageIdentityMedia() const
 bool SystemPage::currentUserCanManageSerialPorts() const
 {
     return currentUserCanManageIdentityMedia();
+}
+
+void SystemPage::applyLayoutProfile(const UiLayoutProfile &profile)
+{
+    const bool narrow = profile.isNarrowWidth;
+    const bool shortHeight = profile.isShortHeight;
+    const int margin = narrow ? 12 : profile.contentHorizontalMargin;
+    ui->mainLayout->setContentsMargins(
+                margin, shortHeight ? 8 : 16, margin, shortHeight ? 8 : 16);
+    ui->formScrollArea->setWidgetResizable(true);
+    ui->formScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    ui->basicProfileLayout->setContentsMargins(
+                margin, shortHeight ? 12 : 20, margin, shortHeight ? 12 : 20);
+    ui->basicSerialLayout->setContentsMargins(
+                margin, shortHeight ? 12 : 20, margin, shortHeight ? 12 : 20);
+    ui->basicProfileLayout->setHorizontalSpacing(narrow ? 12 : 20);
+    ui->basicSerialLayout->setHorizontalSpacing(narrow ? 12 : 20);
+#ifdef Q_OS_WIN
+    const QList<QPushButton *> buttons = findChildren<QPushButton *>();
+    for (QPushButton *button : buttons)
+        DesktopUiMetrics::applyButton(button, profile.buttonFontPointSize,
+                                      profile.buttonMinimumHeight);
+    DesktopUiMetrics::applyButton(ui->tabBasic, profile.navigationFontPointSize,
+                                  profile.navigationButtonMinimumHeight);
+    DesktopUiMetrics::applyButton(ui->tabAdvanced, profile.navigationFontPointSize,
+                                  profile.navigationButtonMinimumHeight);
+#endif
+    if (m_keyboardVisible)
+        ensureKeyboardTargetVisible();
 }
 
 void SystemPage::onKeyboardVisibilityChanged(bool visible, int height)

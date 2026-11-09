@@ -16,7 +16,7 @@
 #include <QString>
 #include <QtGlobal>
 
-#include "features/key/protocol/LogItem.h"
+#include "shared/contracts/LogItem.h"
 #include "shared/contracts/TicketTransferRequest.h"
 
 enum class CommandId
@@ -27,6 +27,7 @@ enum class CommandId
     SyncDeviceTime,
     QueryTasks,
     QueryTaskLog,
+    QueryCaptureRfid,
     DeleteTask,
     DownloadRfid,
     Custom
@@ -40,6 +41,24 @@ struct CommandRequest
     QVariantMap options;
 };
 
+// Business-facing auxiliary maintenance vocabulary. The serial adapter maps
+// these values to its protocol sequence without exposing protocol enums.
+enum class KeyAuxSequenceMode
+{
+    None = 0,
+    BatteryOnly = 1,
+    SyncOnly = 2,
+    BatteryThenSync = 3
+};
+
+enum class KeyAuxSequenceOrigin
+{
+    None = 0,
+    ManualButton = 1,
+    AutoAfterTasks = 2,
+    AutoSeat2Placed = 3,
+    PeriodicRefresh = 4
+};
 struct KeySessionSnapshot
 {
     int bridgeEpoch = 0;
@@ -71,6 +90,9 @@ struct KeySessionEvent
         Nak,
         TasksUpdated,
         TaskLogReady,
+        TaskLogFailed,
+        CaptureRfidReady,
+        CaptureRfidFailed,
         KeyStateChanged,
         RawProtocol,
         TicketTransferProgress,
@@ -92,12 +114,13 @@ public:
 
     virtual bool connectPort(const QString &portName, int baud) = 0;
     virtual void disconnectPort() = 0;
-    virtual void setPortSwitchInProgress(bool inProgress) = 0;
-    virtual void clearVerifiedPort() = 0;
     virtual KeySessionSnapshot snapshot() const = 0;
     virtual void execute(const CommandRequest &request) = 0;
     virtual void transferTicket(const TicketTransferRequest &request) = 0;
-    virtual void startAuxSequence(quint8 seat, int mode, int origin, const QString &reason) = 0;
+    virtual void startAuxSequence(quint8 seat,
+                                  KeyAuxSequenceMode mode,
+                                  KeyAuxSequenceOrigin origin,
+                                  const QString &reason) = 0;
 
 signals:
     void eventOccurred(const KeySessionEvent &event);

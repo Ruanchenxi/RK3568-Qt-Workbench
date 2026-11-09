@@ -13,7 +13,7 @@ class MainWindowController : public QObject
 {
     Q_OBJECT
 public:
-    explicit MainWindowController(IAuthService *auth = nullptr, QObject *parent = nullptr);
+    explicit MainWindowController(IAuthService *auth, QObject *parent = nullptr);
     ~MainWindowController() override = default;
 
     bool isLoggedIn() const;

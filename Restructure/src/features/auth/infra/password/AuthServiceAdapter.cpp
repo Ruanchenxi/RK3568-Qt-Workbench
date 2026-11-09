@@ -15,6 +15,12 @@ AuthServiceAdapter::AuthServiceAdapter(QObject *parent)
             this, &AuthServiceAdapter::loginFailed);
     connect(AuthService::instance(), &AuthService::loginStateChanged,
             this, &AuthServiceAdapter::loginStateChanged);
+    connect(AuthService::instance(), &AuthService::accountListReady,
+            this, &AuthServiceAdapter::accountListReady);
+    connect(AuthService::instance(), &AuthService::accountListFailed,
+            this, &AuthServiceAdapter::accountListFailed);
+    connect(AuthService::instance(), &AuthService::accountListStateChanged,
+            this, &AuthServiceAdapter::accountListStateChanged);
     connect(AuthService::instance(), &AuthService::loggedOut,
             this, &AuthServiceAdapter::loggedOut);
 }
@@ -33,6 +39,11 @@ void AuthServiceAdapter::loginByFingerprint(const QByteArray &templateData, cons
 {
     AuthService::instance()->loginByFingerprint(templateData, tenantId);
 }
+void AuthServiceAdapter::fetchAccountList(const QString &tenantId)
+{
+    AuthService::instance()->fetchAccountList(tenantId);
+}
+
 
 QJsonObject AuthServiceAdapter::userInfo() const
 {
@@ -47,6 +58,11 @@ QString AuthServiceAdapter::accessToken() const
 QString AuthServiceAdapter::refreshToken() const
 {
     return AuthService::instance()->getRefreshToken();
+}
+
+QNetworkAccessManager *AuthServiceAdapter::networkAccessManager() const
+{
+    return AuthService::instance()->networkAccessManager();
 }
 
 void AuthServiceAdapter::clearToken()

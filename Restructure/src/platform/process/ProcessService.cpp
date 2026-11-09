@@ -1,1644 +1,1070 @@
-/**
- * @file ProcessService.cpp
- * @brief 服务进程治理实现
- */
-
 #include "platform/process/ProcessService.h"
-
 #include "core/ConfigManager.h"
-
+#include "platform/logging/LogService.h"
+#include "platform/process/ServiceStartupPolicy.h"
 #include <QCoreApplication>
-#include <QDate>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QIODevice>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QSet>
 #include <QTcpSocket>
 #include <QTextCodec>
+#include <QThread>
 #include <QTimer>
 #include <QUrl>
-#include <functional>
-
-namespace
-{
-const qint64 kServiceStartupLogMaxBytes = 10 * 1024 * 1024;
-
-QStringList collectAncestorDirs(const QString &startDir, int maxDepth)
-{
-    QStringList result;
-    QDir dir(QDir::cleanPath(startDir));
-    for (int depth = 0; depth < maxDepth && dir.exists(); ++depth)
-    {
-        const QString current = QDir::cleanPath(dir.absolutePath());
-        if (!current.isEmpty() && !result.contains(current))
-        {
-            result << current;
-        }
-        if (!dir.cdUp())
-        {
-            break;
-        }
-    }
-    return result;
+namespace {
+QString norm(QString v) {
+  v = QDir::cleanPath(v).toLower();
+  v.replace(QChar(92), QChar('/'));
+  return v;
 }
-
-bool dirContainsServiceArtifacts(const QString &dirPath)
-{
-    if (!QDir(dirPath).exists())
-    {
-        return false;
-    }
-
-    const QStringList artifacts = {
-        QStringLiteral("start-all.bat"),
-        QStringLiteral("start-all.sh"),
-        QStringLiteral("start.sh"),
-        QStringLiteral("service_startup.log")};
-
-    for (const QString &name : artifacts)
-    {
-        if (QFileInfo::exists(QDir(dirPath).filePath(name)))
-        {
-            return true;
-        }
-    }
-
+QString psQuote(QString v) {
+  v.replace(QChar(39), QString(2, QChar(39)));
+  return QStringLiteral("'%1'").arg(v);
+}
+QString decode(const QByteArray &d) {
+  QTextCodec *c = QTextCodec::codecForName("UTF-8");
+  if (c) {
+    QTextCodec::ConverterState s;
+    QString t = c->toUnicode(d.constData(), d.size(), &s);
+    if (!s.invalidChars)
+      return t;
+  }
+  return QString::fromLocal8Bit(d);
+}
+QStringList lines(QString t) {
+  t.replace("\r\n", "\n");
+  t.replace('\r', '\n');
+  QStringList r;
+  for (QString s : t.split('\n', QString::SkipEmptyParts)) {
+    s = s.trimmed();
+    if (!s.isEmpty())
+      r << s;
+  }
+  return r;
+}
+bool important(const QString &s) {
+  QString l = s.toLower();
+  return l.contains("warn") || l.contains("error") || l.contains("fatal") ||
+         l.contains("exception") || l.contains("failed");
+}
+bool run(QProcess *p, const QString &program, const QStringList &args,
+         int timeout) {
+  p->start(program, args);
+  if (!p->waitForStarted(3000))
     return false;
+  if (!p->waitForFinished(timeout)) {
+    p->kill();
+    p->waitForFinished(2000);
+    return false;
+  }
+  return p->exitStatus() == QProcess::NormalExit;
 }
-
-bool isOriginalOutageScript(const QString &scriptPath, const QString &workDir)
-{
-    const QString normalizedScript = QDir::cleanPath(scriptPath);
-    const QString normalizedWorkDir = QDir::cleanPath(workDir);
-    return normalizedScript == QStringLiteral("/home/linaro/outage/start.sh")
-           || (QFileInfo(normalizedScript).fileName() == QStringLiteral("start.sh")
-               && normalizedWorkDir == QStringLiteral("/home/linaro/outage"));
-}
-
-void appendExistingUniquePath(QStringList &paths, const QString &path)
-{
-    const QString normalized = QDir::cleanPath(path);
-    if (normalized.isEmpty() || paths.contains(normalized))
-    {
-        return;
-    }
-
-    if (!QFileInfo::exists(normalized))
-    {
-        return;
-    }
-
-    paths << normalized;
-}
-
-void appendLatestMatchingFile(QStringList &paths, const QString &dirPath, const QStringList &nameFilters)
-{
-    const QDir dir(dirPath);
-    if (!dir.exists())
-    {
-        return;
-    }
-
-    const QFileInfoList matches = dir.entryInfoList(nameFilters,
-                                                    QDir::Files | QDir::Readable,
-                                                    QDir::Time);
-    if (matches.isEmpty())
-    {
-        return;
-    }
-
-    appendExistingUniquePath(paths, matches.constFirst().absoluteFilePath());
-}
-
-QStringList collectOriginalOutageLogFiles()
-{
-    QStringList files;
-    const QString outageLogDir = QStringLiteral("/home/linaro/outage/target/kids/log");
-    const QString todayIso = QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd"));
-
-    appendExistingUniquePath(files, QStringLiteral("/home/linaro/outage/target/kids/log/info-%1.log").arg(todayIso));
-    appendExistingUniquePath(files, QStringLiteral("/home/linaro/outage/target/kids/log/error-%1.log").arg(todayIso));
-
-    appendLatestMatchingFile(files, outageLogDir, QStringList() << QStringLiteral("info-*.log"));
-    appendLatestMatchingFile(files, outageLogDir, QStringList() << QStringLiteral("error-*.log"));
-
-    return files;
-}
-
-QString decodeExternalLogData(const QByteArray &data)
-{
-    QTextCodec *utf8Codec = QTextCodec::codecForName("UTF-8");
-    if (utf8Codec)
-    {
-        QTextCodec::ConverterState state;
-        const QString utf8Text = utf8Codec->toUnicode(data.constData(), data.size(), &state);
-        if (state.invalidChars == 0)
-        {
-            return utf8Text;
-        }
-    }
-
-    return QString::fromLocal8Bit(data);
-}
-
-QStringList lastNonEmptyLinesFromData(const QByteArray &data, int maxLines)
-{
-    QString text = decodeExternalLogData(data);
-    text.replace("\r\n", "\n");
-    text.replace('\r', '\n');
-
-    const QStringList allLines = text.split('\n');
-    QStringList result;
-    for (int i = allLines.size() - 1; i >= 0 && result.size() < maxLines; --i)
-    {
-        const QString trimmed = allLines.at(i).trimmed();
-        if (!trimmed.isEmpty())
-        {
-            result.prepend(trimmed);
-        }
-    }
-    return result;
-}
-
-void appendHistoricalLogPreview(const QString &path, std::function<void(const QString &)> appendLog)
-{
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly))
-    {
-        return;
-    }
-
-    const qint64 fileSize = file.size();
-    const qint64 previewBytes = 16 * 1024;
-    const qint64 startPos = qMax<qint64>(0, fileSize - previewBytes);
-    if (!file.seek(startPos))
-    {
-        file.close();
-        return;
-    }
-
-    QByteArray previewData = file.readAll();
-    file.close();
-
-    const QStringList previewLines = lastNonEmptyLinesFromData(previewData, 40);
-    if (previewLines.isEmpty())
-    {
-        return;
-    }
-
-    const QString fileName = QFileInfo(path).fileName();
-    appendLog(QString("[INFO] 载入最近日志片段: %1").arg(path));
-    for (const QString &line : previewLines)
-    {
-        appendLog(QString("[EXTLOG][%1] %2").arg(fileName, line));
-    }
-}
-
-void trimServiceStartupLogIfNeeded(const QString &path)
-{
-    QFileInfo info(path);
-    if (info.fileName() != QStringLiteral("service_startup.log")
-            || !info.exists()
-            || info.size() <= kServiceStartupLogMaxBytes)
-    {
-        return;
-    }
-
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
-    {
-        return;
-    }
-    file.close();
-}
-
-void appendUtf8LineToFile(const QString &path, const QString &line)
-{
-    if (path.trimmed().isEmpty())
-    {
-        return;
-    }
-
-    QFile file(path);
-    QFileInfo info(file);
-    QDir dir = info.dir();
-    if (!dir.exists())
-    {
-        dir.mkpath(".");
-    }
-
-    trimServiceStartupLogIfNeeded(path);
-
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Append))
-    {
-        return;
-    }
-
-    QByteArray data = line.toUtf8();
-    data.append('\n');
-    file.write(data);
-    file.close();
-}
-}
-
+} // namespace
 ProcessService::ProcessService(QObject *parent)
-    : IProcessService(parent),
-      m_process(nullptr),
-      m_autoStartTimer(new QTimer(this)),
-      m_startRetryTimer(new QTimer(this)),
-      m_externalLogTimer(new QTimer(this)),
-      m_externalLogFiles(),
-      m_externalLogOffsets(),
-      m_startAttempt(0),
-      m_maxStartRetries(3),
-      m_startInProgress(false),
-      m_externalLogTailingStarted(false)
-{
-    m_autoStartTimer->setSingleShot(true);
-    m_autoStartTimer->setInterval(1000);
-    connect(m_autoStartTimer, &QTimer::timeout, this, &ProcessService::autoStartServices);
-
-    m_startRetryTimer->setSingleShot(true);
-    m_startRetryTimer->setInterval(2000);
-    connect(m_startRetryTimer, &QTimer::timeout, this, &ProcessService::onStartRetryTimeout);
-
-    m_externalLogTimer->setSingleShot(false);
-    m_externalLogTimer->setInterval(1000);
-    connect(m_externalLogTimer, &QTimer::timeout, this, &ProcessService::pollExternalLogFiles);
+    : IProcessService(parent), m_process(nullptr),
+      m_autoStartTimer(new QTimer(this)), m_startRetryTimer(new QTimer(this)),
+      m_readinessTimer(new QTimer(this)), m_logFileFlushTimer(new QTimer(this)),
+      m_networkManager(new QNetworkAccessManager(this)), m_startAttempt(0),
+      m_maxStartRetries(3), m_readinessAttempt(0), m_maxReadinessAttempts(120),
+      m_startInProgress(false), m_stopping(false), m_shutdownCompleted(false),
+      m_localMode(false), m_modeResolved(false), m_serviceReady(false),
+      m_probeInFlight(false), m_readinessSlowPolling(false),
+      m_readinessGeneration(0),
+      m_serviceReadyMessage(QStringLiteral("后台服务未就绪")) {
+  m_autoStartTimer->setSingleShot(true);
+  m_autoStartTimer->setInterval(300);
+  connect(m_autoStartTimer, &QTimer::timeout, this,
+          &ProcessService::autoStartServices);
+  m_startRetryTimer->setSingleShot(true);
+  m_startRetryTimer->setInterval(2000);
+  connect(m_startRetryTimer, &QTimer::timeout, this,
+          &ProcessService::onStartRetryTimeout);
+  m_readinessTimer->setSingleShot(true);
+  m_readinessTimer->setInterval(1000);
+  connect(m_readinessTimer, &QTimer::timeout, this,
+          &ProcessService::onServiceReadinessTimeout);
+  m_logFileFlushTimer->setSingleShot(true);
+  m_logFileFlushTimer->setInterval(200);
+  connect(m_logFileFlushTimer, &QTimer::timeout, this,
+          &ProcessService::flushServiceStartupLog);
 }
-
-ProcessService::~ProcessService()
-{
-    stopAll();
+ProcessService::~ProcessService() {
+  stopAll();
+  flushServiceStartupLog();
 }
-
-void ProcessService::startAuto()
-{
-    const QString startupLogPath = serviceStartupLogPath();
-    trimServiceStartupLogIfNeeded(startupLogPath);
-
-    const QString appDirStartupLogPath = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("service_startup.log"));
-    if (QDir::cleanPath(appDirStartupLogPath) != QDir::cleanPath(startupLogPath))
-    {
-        trimServiceStartupLogIfNeeded(appDirStartupLogPath);
-    }
-    appendLog("=== 服务日志 ===");
-    appendLog("等待启动服务...");
-    m_autoStartTimer->start();
+bool ProcessService::isServiceReady() const { return m_serviceReady; }
+QString ProcessService::serviceReadyMessage() const {
+  return m_serviceReadyMessage;
 }
-
-void ProcessService::stopAll()
-{
-    stopExternalLogTailing();
-
-    if (m_startRetryTimer)
-    {
-        m_startRetryTimer->stop();
-    }
-
-    if (m_autoStartTimer)
-    {
-        m_autoStartTimer->stop();
-    }
-
-    if (m_process)
-    {
-        if (m_process->state() == QProcess::Running)
-        {
-            m_process->terminate();
-            if (!m_process->waitForFinished(3000))
-            {
-                // 进程在终止超时后仍存活时强制 kill，避免 QProcess 析构警告。
-                m_process->kill();
-                m_process->waitForFinished(2000);
-            }
-        }
-        delete m_process;
-        m_process = nullptr;
-    }
-
-    m_startInProgress = false;
+bool ProcessService::usesLocalService() const {
+  bool local = false;
+  return resolveLocalMode(&local) && local;
 }
-
-void ProcessService::appendLog(const QString &text)
-{
-    emit logGenerated(text);
-}
-
-QString ProcessService::serviceStartupLogPath() const
-{
-    QString baseDir;
-    if (m_process && !m_process->workingDirectory().trimmed().isEmpty())
-    {
-        baseDir = m_process->workingDirectory().trimmed();
-    }
-
-    if (baseDir.isEmpty())
-    {
-        baseDir = resolveServiceWorkDir();
-    }
-
-    if (baseDir.isEmpty())
-    {
-        baseDir = QCoreApplication::applicationDirPath();
-    }
-
-    return QDir::toNativeSeparators(QDir(baseDir).filePath("service_startup.log"));
-}
-
-void ProcessService::appendServiceStartupLogLine(const QString &text) const
-{
-    const QString trimmed = text.trimmed();
-    if (trimmed.isEmpty())
-    {
-        return;
-    }
-
-    appendUtf8LineToFile(serviceStartupLogPath(), trimmed);
-}
-
-void ProcessService::autoStartServices()
-{
-    if (!ConfigManager::instance()->autoStart())
-    {
-        appendLog(QString("[%1] 已关闭自动启动服务（advanced/autoStart=false）")
-                      .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss")));
-        return;
-    }
-
-    const bool forceRestartScript = ConfigManager::instance()->value("service/forceRestartScript", false).toBool();
-    appendLog(QString("\n[%1] 准备自动启动服务...").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss")));
-
-#ifdef Q_OS_WIN
-    bool useLocalService = false;
-    QString targetError;
-    if (!ConfigManager::resolveServiceTarget(ConfigManager::instance()->homeUrl(),
-                                             ConfigManager::instance()->apiUrl(),
-                                             &useLocalService,
-                                             &targetError))
-    {
-        appendLog(QString("[ERROR] 服务地址配置无效：%1").arg(targetError));
-        appendLog("[INFO] 为避免连接错误或误启动，本次不会拉起本地 outage");
-        return;
-    }
-
-    appendLog(QString("[INFO] URL 自动识别结果: %1")
-                  .arg(useLocalService ? QStringLiteral("local") : QStringLiteral("remote")));
-
-    if (!useLocalService)
-    {
-        appendLog("[INFO] 远程地址模式：只连接指定服务器，不拉起本地 outage");
-        QString detail;
-        if (checkRemoteServiceReady(&detail))
-        {
-            appendLog("[SUCCESS] 远程服务可达，系统可继续运行");
-        }
-        else
-        {
-            appendLog(QString("[WARN] 远程服务暂不可达：%1").arg(detail));
-            appendLog("[INFO] 远程服务不可达时不会自动切换到本地服务");
-        }
-        return;
-    }
-
-    appendLog("[INFO] 本机地址模式：使用 EXE 目录下的 outage/start-all.bat");
-    if (!forceRestartScript)
-    {
-        QString detail;
-        if (checkRemoteServiceReady(&detail))
-        {
-            appendLog(QString("[SUCCESS] 本地服务已可用，跳过重复启动：%1").arg(detail));
-            startExternalLogTailing();
-            return;
-        }
-        appendLog(QString("[INFO] 本地服务尚未就绪，准备启动随程序打包的 outage：%1").arg(detail));
-    }
-    else
-    {
-        appendLog("[INFO] 已启用强制重启服务模式，将先清理端口再启动本地 outage");
-    }
-
-    const QString expectedScriptPath = QDir(QCoreApplication::applicationDirPath())
-                                           .filePath(QStringLiteral("outage/start-all.bat"));
-    if (resolveServiceScriptPath().isEmpty())
-    {
-        appendLog(QString("[ERROR] 未找到随程序打包的本地服务脚本：%1")
-                      .arg(QDir::toNativeSeparators(expectedScriptPath)));
-        return;
-    }
-
-    startServices(forceRestartScript);
+void ProcessService::setServiceReady(bool ready, const QString &message) {
+  QString m = message.trimmed();
+  if (m.isEmpty())
+    m = ready ? "后台服务已就绪" : "后台服务未就绪";
+  if (m_serviceReady == ready && m_serviceReadyMessage == m)
     return;
-#else
-    const QString mode = serviceStartMode();
-    appendLog(QString("[INFO] 启动模式: %1").arg(mode));
-
-    const QString resolvedScriptPath = resolveServiceScriptPath();
-    const QString resolvedWorkDir = resolveServiceWorkDir();
-    if (isOriginalOutageScript(resolvedScriptPath, resolvedWorkDir))
-    {
-        appendLog("[INFO] 已匹配原产品 AdapterService/outage 启动链，按原产品方式直接执行 start.sh");
-        startServices(true);
-        return;
-    }
-
-    if (forceRestartScript)
-    {
-        appendLog("[INFO] 已启用强制重启服务模式：本次将忽略现有服务状态，先清理端口再重新执行服务脚本");
-        startServices(true);
-        return;
-    }
-
-    if (mode == "remote")
-    {
-        appendLog("[INFO] remote 模式：不拉起本地脚本，依赖外部服务（建议 systemd）");
-        QString detail;
-        if (checkRemoteServiceReady(&detail))
-        {
-            appendLog("[SUCCESS] 外部服务可达，系统可继续运行");
-            startExternalLogTailing();
-            return;
-        }
-
-        appendLog(QString("[WARN] 外部服务暂不可达：%1").arg(detail));
-        const bool fallbackToLocal = ConfigManager::instance()->value("service/remoteFallbackLocal", false).toBool();
-        if (fallbackToLocal)
-        {
-            appendLog("[INFO] 已启用 remote 回退策略，尝试本地脚本启动服务...");
-            startServices();
-        }
-        else
-        {
-            appendLog("[INFO] 未启用回退策略，本次仅进行可达性检查");
-        }
-        return;
-    }
-
-    startServices();
-#endif
+  m_serviceReady = ready;
+  m_serviceReadyMessage = m;
+  emit serviceReadyChanged(ready, m);
 }
-
-void ProcessService::startServices(bool forceRestart)
-{
-    if (m_startInProgress)
-    {
-        appendLog("[INFO] 启动流程进行中，忽略重复启动请求");
-        return;
-    }
-
-    if (m_process && m_process->state() == QProcess::Running)
-    {
-        appendLog("[WARN] 服务进程已在运行中，跳过启动");
-        return;
-    }
-
-    if (!m_process)
-    {
-        m_process = new QProcess(this);
-        connect(m_process, &QProcess::started, this, &ProcessService::onProcessStarted);
-        connect(m_process, &QProcess::readyReadStandardOutput, this, &ProcessService::onProcessReadyReadOutput);
-        connect(m_process, &QProcess::readyReadStandardError, this, &ProcessService::onProcessReadyReadError);
-        connect(m_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-                this, [this](int exitCode, QProcess::ExitStatus exitStatus) {
-                    onProcessFinished(exitCode, static_cast<int>(exitStatus));
-                });
-        connect(m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
-            onProcessError(static_cast<int>(error));
-        });
-    }
-
-    appendLog("[INFO] 检查端口占用情况...");
-    if (!checkAndCleanPorts())
-    {
-        if (forceRestart)
-        {
-            appendLog("[ERROR] 强制重启服务模式下端口清理失败，已取消本次脚本启动");
-        }
-        else
-        {
-            QString detail;
-            if (checkRemoteServiceReady(&detail))
-            {
-                appendLog(QString("[SUCCESS] 检测到现有服务已可用，跳过本次脚本启动：%1").arg(detail));
-                startExternalLogTailing();
-            }
-            else
-            {
-                appendLog(QString("[ERROR] 端口占用且服务未就绪，已取消启动以避免冲突：%1").arg(detail));
-            }
-        }
-        return;
-    }
-
-    const QString workDir = resolveServiceWorkDir();
-    if (workDir.isEmpty())
-    {
-        appendLog("[ERROR] 服务工作目录无效，请检查配置 service/workDir");
-        return;
-    }
-
-    const QString scriptPath = resolveServiceScriptPath();
-    if (scriptPath.isEmpty())
-    {
-        const QString configuredScript = ConfigManager::instance()->value("service/scriptPath").toString();
-        appendLog(QString("[ERROR] 未找到服务启动脚本，请检查 service/scriptPath（当前=%1）").arg(configuredScript));
-        appendLog(QString("[ERROR] 当前解析到的 service/workDir=%1").arg(workDir));
-        return;
-    }
-
-    m_process->setWorkingDirectory(workDir);
-    m_process->setReadChannel(QProcess::StandardOutput);
-
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+void ProcessService::startAuto() {
+  m_stopping = false;
+  m_shutdownCompleted = false;
+  m_modeResolved = false;
+  m_localMode = false;
+  resetServiceStartupLog();
+  appendLog("=== 服务日志 ===");
+  setServiceReady(false, "正在识别服务模式");
+  m_autoStartTimer->start();
+}
+bool ProcessService::resolveLocalMode(bool *local, QString *error) const {
+  bool l = false;
+  QString e;
+  bool ok = ConfigManager::resolveServiceTarget(
+      ConfigManager::instance()->homeUrl(), ConfigManager::instance()->apiUrl(),
+      &l, &e);
+  if (local)
+    *local = ok && l;
+  if (error)
+    *error = e;
+  return ok;
+}
+void ProcessService::autoStartServices() {
+  QString e;
+  if (!resolveLocalMode(&m_localMode, &e)) {
+    m_modeResolved = false;
+    setServiceReady(false, "服务地址配置无效");
+    appendLog("[ERROR] invalid service URL: " + e);
+    return;
+  }
+  m_modeResolved = true;
+  appendLog(
+      QString("[INFO] 服务模式：%1").arg(m_localMode ? "local" : "remote"));
+  if (!m_localMode) {
+    setServiceReady(true, "指定 URL 远程服务模式");
+    appendLog("[INFO] 指定 URL 模式：不启动、不停止、不清理本地 outage");
+    return;
+  }
+  if (!ConfigManager::instance()->autoStart()) {
+    setServiceReady(false, "本地服务自动启动已关闭");
+    return;
+  }
+  startLocalServices();
+}
+void ProcessService::startLocalServices() {
+  if (m_startInProgress || m_stopping)
+    return;
+  QString wd = resolveServiceWorkDir(), script = resolveServiceScriptPath();
+  if (wd.isEmpty() || script.isEmpty()) {
+    setServiceReady(false, "未找到本地 outage 启动脚本");
+    appendLog("[ERROR] 未找到本地 outage 启动脚本");
+    return;
+  }
+  setServiceReady(false, "正在清理并启动本地 outage");
+  if (!prepareLocalRuntime()) {
+    setServiceReady(false, "本地 outage 启动前检查失败");
+    return;
+  }
+  m_startedOutageWorkDir = wd;
+  disposeScriptProcess();
+  m_process = new QProcess(this);
+  connect(m_process, &QProcess::started, this,
+          &ProcessService::onProcessStarted);
+  connect(m_process, &QProcess::readyReadStandardOutput, this,
+          &ProcessService::onProcessReadyReadOutput);
+  connect(m_process, &QProcess::readyReadStandardError, this,
+          &ProcessService::onProcessReadyReadError);
+  connect(
+      m_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+      this,
+      [this](int c, QProcess::ExitStatus s) { onProcessFinished(c, int(s)); });
+  connect(m_process, &QProcess::errorOccurred, this,
+          [this](QProcess::ProcessError e) { onProcessError(int(e)); });
+  m_process->setWorkingDirectory(wd);
+  m_process->setProcessEnvironment(QProcessEnvironment::systemEnvironment());
+  ++m_startAttempt;
+  m_startInProgress = true;
+  appendLog(QString("[INFO] 启动脚本：%1（第 %2/%3 次）")
+                .arg(script)
+                .arg(m_startAttempt)
+                .arg(m_maxStartRetries));
+  if (!startScriptProcess(script)) {
+    m_startInProgress = false;
+    appendLog("[ERROR] 启动脚本运行失败");
+    scheduleStartRetry("launch failed");
+  }
+}
+// Blocks foreign listeners before any cleanup and restarts only verified product outage roots.
+bool ProcessService::prepareLocalRuntime() {
 #ifdef Q_OS_WIN
-    env.insert("CHCP", "65001");
+  const QString workDir = resolveServiceWorkDir();
+  ServiceStartupPolicy::Observation observation;
+  QSet<int> ownedPorts;
+  QSet<int> foreignPorts;
+  for (int port : resolveServicePorts()) {
+    if (!checkPortInUse(port))
+      continue;
+    observation.occupiedPorts << port;
+    const QList<ProcessOwner> owners = queryWindowsPortOwners(port);
+    if (owners.isEmpty()) {
+      foreignPorts << port;
+      appendLog(QString("[ERROR] 端口 %1 已被占用，但无法获取占用进程信息")
+                    .arg(port));
+      continue;
+    }
+    bool allOwned = true;
+    for (const ProcessOwner &owner : owners) {
+      const QString outageRoot =
+          windowsOutageRootForProcess(owner, workDir);
+      const bool owned = !outageRoot.isEmpty();
+      QString detail = describeProcessOwner(owner);
+      if (owned)
+        detail += QString(" outageRoot=%1").arg(outageRoot);
+      appendLog(QString("[%1] port %2 %3")
+                    .arg(owned ? "INFO" : "BLOCK")
+                    .arg(port)
+                    .arg(detail));
+      if (!owned)
+        allOwned = false;
+    }
+    (allOwned ? ownedPorts : foreignPorts) << port;
+  }
+  observation.ownedOutagePorts = ownedPorts.values();
+  observation.foreignProcessPorts = foreignPorts.values();
+  if (ServiceStartupPolicy::decide(observation).action ==
+      ServiceStartupPolicy::Action::Block) {
+    appendLog("[ERROR] 必要端口被外部进程占用，未清理、未启动本地 outage");
+    return false;
+  }
+  if (!stopWindowsOutage(true)) {
+    appendLog("[ERROR] 上一套本地 outage 未能完整停止");
+    return false;
+  }
+#else
+  if (!stopLocalOutage()) {
+    appendLog("[ERROR] 上一套本地 outage 未能完整停止");
+    return false;
+  }
 #endif
-    m_process->setProcessEnvironment(env);
-
-    appendLog(QString("[INFO] 启动脚本: %1").arg(scriptPath));
-    appendLog(QString("[INFO] 工作目录: %1").arg(workDir));
-    appendLog(QString("[INFO] 执行命令: %1\n").arg(scriptPath));
-    appendServiceStartupLogLine(QString("=== start-all 日志 %1 ===")
-                                    .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss")));
-    appendServiceStartupLogLine(QString("[INFO] 启动脚本: %1").arg(scriptPath));
-    appendServiceStartupLogLine(QString("[INFO] 工作目录: %1").arg(workDir));
-
-    stopExternalLogTailing();
-    ++m_startAttempt;
-    m_startInProgress = true;
-    appendLog(QString("[INFO] 第 %1/%2 次启动尝试").arg(m_startAttempt).arg(m_maxStartRetries));
-
-    if (!startScriptProcess(scriptPath))
-    {
-        m_startInProgress = false;
-        appendLog("[ERROR] 启动脚本失败：进程无法启动");
-        scheduleStartRetry("QProcess::start 调用失败");
-        return;
-    }
-
-    appendLog("[INFO] 启动命令已提交，等待进程回调...\n");
+  const QList<int> ports = resolveServicePorts();
+  if (!waitForPortsReleased(ports, 5000)) {
+    appendLog("[ERROR] 清理后受管端口仍被占用");
+    return false;
+  }
+  appendLog("[SUCCESS] 上一套 outage 已停止，受管端口已释放");
+  return true;
 }
-
-void ProcessService::onProcessStarted()
-{
-    m_startInProgress = false;
-    m_startAttempt = 0;
-    appendLog("[SUCCESS] 服务脚本已启动，正在执行...\n");
-    appendServiceStartupLogLine("[SUCCESS] 服务脚本已启动，正在执行...");
-}
-
-void ProcessService::onStartRetryTimeout()
-{
-    appendLog("[INFO] 开始执行延迟重试...");
-    startServices();
-}
-
-void ProcessService::onProcessReadyReadOutput()
-{
-    if (!m_process)
-    {
-        return;
-    }
-
-    const QByteArray data = m_process->readAllStandardOutput();
-    QTextCodec *codec = QTextCodec::codecForName("UTF-8");
-    if (!codec)
-    {
-        codec = QTextCodec::codecForName("UTF8");
-    }
-
-    const QString output = codec ? codec->toUnicode(data) : QString::fromUtf8(data);
-    const QStringList lines = output.split("\n", QString::SkipEmptyParts);
-    for (const QString &line : lines)
-    {
-        const QString trimmed = line.trimmed();
-        if (!trimmed.isEmpty())
-        {
-            appendLog(trimmed);
-            appendServiceStartupLogLine(trimmed);
-        }
-    }
-}
-
-void ProcessService::onProcessReadyReadError()
-{
-    if (!m_process)
-    {
-        return;
-    }
-
-    const QByteArray data = m_process->readAllStandardError();
-    QTextCodec *codec = QTextCodec::codecForName("UTF-8");
-    if (!codec)
-    {
-        codec = QTextCodec::codecForName("GB18030");
-    }
-
-    const QString error = codec ? codec->toUnicode(data) : QString::fromLocal8Bit(data);
-    const QStringList lines = error.split("\n", QString::SkipEmptyParts);
-    for (const QString &line : lines)
-    {
-        const QString trimmed = line.trimmed();
-        if (!trimmed.isEmpty() && !trimmed.contains("Active code page"))
-        {
-            appendLog(QString("[STDERR] %1").arg(trimmed));
-            appendServiceStartupLogLine(QString("[STDERR] %1").arg(trimmed));
-        }
-    }
-}
-
-void ProcessService::onProcessFinished(int exitCode, int exitStatus)
-{
-    m_startInProgress = false;
-    const QProcess::ExitStatus status = static_cast<QProcess::ExitStatus>(exitStatus);
-    const QString statusText = (status == QProcess::NormalExit) ? "正常退出" : "异常终止";
-
-    appendLog(QString("\n[%1] 服务脚本执行完成").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss")));
-    appendLog(QString("[INFO] 退出状态: %1").arg(statusText));
-    appendLog(QString("[INFO] 退出代码: %1").arg(exitCode));
-    appendServiceStartupLogLine(QString("[%1] 服务脚本执行完成")
-                                    .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss")));
-    appendServiceStartupLogLine(QString("[INFO] 退出状态: %1").arg(statusText));
-    appendServiceStartupLogLine(QString("[INFO] 退出代码: %1").arg(exitCode));
-
-    if (exitCode == 0)
-    {
-        appendLog("[SUCCESS] 所有服务启动成功！");
-        appendServiceStartupLogLine("[SUCCESS] 所有服务启动成功！");
-    }
+void ProcessService::stopAll() {
+  if (m_stopping || m_shutdownCompleted)
+    return;
+  m_stopping = true;
+  m_autoStartTimer->stop();
+  m_startRetryTimer->stop();
+  m_readinessTimer->stop();
+  ++m_readinessGeneration;
+  m_probeInFlight = false;
+  for (QNetworkReply *r : m_networkManager->findChildren<QNetworkReply *>())
+    if (r->isRunning())
+      r->abort();
+  m_startInProgress = false;
+  setServiceReady(false, "后台服务已停止");
+  bool local = m_localMode;
+  if (!m_modeResolved)
+    resolveLocalMode(&local);
+  if (local) {
+    appendLog("[INFO] 正在停止整套本地 outage");
+    if (stopLocalOutage())
+      appendLog("[SUCCESS] 本地 outage 已停止");
     else
-    {
-        appendLog(QString("[WARN] 脚本返回非零退出码: %1").arg(exitCode));
-        appendServiceStartupLogLine(QString("[WARN] 脚本返回非零退出码: %1").arg(exitCode));
-    }
-
-    startExternalLogTailing();
+      appendLog("[ERROR] 本地 outage 未能完整停止");
+  } else
+    appendLog("[INFO] 指定 URL 模式：不启动、不停止、不清理本地 outage");
+  disposeScriptProcess();
+  m_startedOutageWorkDir.clear();
+  flushServiceStartupLog();
+  m_shutdownCompleted = true;
+  m_stopping = false;
 }
-
-void ProcessService::onProcessError(int error)
-{
-    m_startInProgress = false;
-
-    QString errorMsg;
-    const QProcess::ProcessError processError = static_cast<QProcess::ProcessError>(error);
-    switch (processError)
-    {
-    case QProcess::FailedToStart:
-        errorMsg = "进程启动失败（脚本文件不存在或无执行权限）";
-        break;
-    case QProcess::Crashed:
-        errorMsg = "进程崩溃";
-        break;
-    case QProcess::Timedout:
-        errorMsg = "进程超时";
-        break;
-    case QProcess::ReadError:
-        errorMsg = "读取错误";
-        break;
-    case QProcess::WriteError:
-        errorMsg = "写入错误";
-        break;
-    case QProcess::UnknownError:
-    default:
-        errorMsg = "未知错误";
-        break;
-    }
-
-    appendLog(QString("[ERROR] 进程错误: %1").arg(errorMsg));
-    appendServiceStartupLogLine(QString("[ERROR] 进程错误: %1").arg(errorMsg));
-    if (processError == QProcess::FailedToStart || processError == QProcess::Crashed)
-    {
-        scheduleStartRetry(errorMsg);
-    }
-}
-
-bool ProcessService::checkPortInUse(int port) const
-{
-    QTcpSocket socket;
-    socket.connectToHost("127.0.0.1", port);
-    const bool connected = socket.waitForConnected(100);
-    socket.disconnectFromHost();
-    return connected;
-}
-
-void ProcessService::killProcessByPort(int port)
-{
-    appendLog(QString("[INFO] 正在清理端口 %1...").arg(port));
-
+bool ProcessService::stopLocalOutage() {
 #ifdef Q_OS_WIN
-    const bool forceRestartScript = ConfigManager::instance()->value("service/forceRestartScript", false).toBool();
-    QProcess findProcess;
-    findProcess.start("cmd.exe", QStringList() << "/c" << QString("netstat -ano | findstr :%1").arg(port));
-    if (!findProcess.waitForFinished(3000))
-    {
-        findProcess.kill();
-        findProcess.waitForFinished(1000);
-    }
-
-    const QString output = QString::fromLocal8Bit(findProcess.readAllStandardOutput());
-    const QStringList lines = output.split("\n", QString::SkipEmptyParts);
-
-    QSet<QString> pidsToKill;
-    for (const QString &line : lines)
-    {
-        const QStringList parts = line.simplified().split(" ");
-        if (parts.size() >= 5)
-        {
-            const QString pid = parts.last().trimmed();
-            if (!pid.isEmpty() && pid != "0")
-            {
-                pidsToKill.insert(pid);
-            }
-        }
-    }
-
-    const QStringList whitelist = resolveKillProcessWhitelist();
-    for (const QString &pid : pidsToKill)
-    {
-        const QString processName = queryProcessNameByPid(pid);
-        if (processName.isEmpty())
-        {
-            if (!forceRestartScript)
-            {
-                appendLog(QString("[WARN] 无法识别 PID=%1 的进程名，拒绝自动终止").arg(pid));
-                continue;
-            }
-
-            appendLog(QString("[WARN] 无法识别 PID=%1 的进程名，但当前为强制重启模式，继续尝试终止该 PID").arg(pid));
-        }
-
-        if (!processName.isEmpty() && !whitelist.contains(processName.toLower()))
-        {
-            if (!forceRestartScript)
-            {
-                appendLog(QString("[WARN] PID=%1 进程 %2 不在白名单，拒绝自动终止")
-                              .arg(pid, processName));
-                continue;
-            }
-
-            appendLog(QString("[WARN] PID=%1 进程 %2 不在白名单，但当前为强制重启模式，继续尝试终止")
-                          .arg(pid, processName));
-        }
-
-        appendLog(QString("[INFO] 正在终止进程 PID=%1...").arg(pid));
-        QProcess killProcess;
-        killProcess.start("cmd.exe", QStringList() << "/c" << QString("taskkill /F /PID %1").arg(pid));
-        if (!killProcess.waitForFinished(2000))
-        {
-            killProcess.kill();
-            killProcess.waitForFinished(1000);
-        }
-
-        const QString result = QString::fromLocal8Bit(killProcess.readAllStandardOutput());
-        if (result.contains("SUCCESS") || result.contains("成功"))
-        {
-            appendLog(QString("[SUCCESS] 已终止进程 PID=%1").arg(pid));
-        }
-        else
-        {
-            const QString errorText = QString::fromLocal8Bit(killProcess.readAllStandardError()).trimmed();
-            if (!errorText.isEmpty())
-            {
-                appendLog(QString("[WARN] 终止 PID=%1 时返回：%2").arg(pid, errorText));
-            }
-        }
-    }
+  return stopWindowsOutage(false);
 #else
-    QProcess killProcess;
-    const QString cleanupCommand = QString(
-        "if command -v fuser >/dev/null 2>&1; then "
-        "  fuser -k %1/tcp; "
-        "elif command -v ss >/dev/null 2>&1; then "
-        "  pids=$(ss -ltnp '( sport = :%1 )' 2>/dev/null "
-        "    | sed -n 's/.*pid=\\([0-9][0-9]*\\).*/\\1/p' "
-        "    | sort -u | tr '\\n' ' '); "
-        "  if [ -n \"$pids\" ]; then "
-        "    kill -TERM $pids 2>/dev/null; "
-        "    sleep 1; "
-        "    kill -KILL $pids 2>/dev/null; "
-        "  else "
-        "    exit 2; "
-        "  fi; "
-        "else "
-        "  exit 127; "
-        "fi")
-        .arg(port);
-    killProcess.start("/bin/sh", QStringList() << "-c" << cleanupCommand);
-    if (!killProcess.waitForFinished(3000))
-    {
-        killProcess.kill();
-        killProcess.waitForFinished(1000);
-    }
-
-    const QString stdoutText = QString::fromLocal8Bit(killProcess.readAllStandardOutput()).trimmed();
-    const QString stderrText = QString::fromLocal8Bit(killProcess.readAllStandardError()).trimmed();
-    if (killProcess.exitStatus() == QProcess::NormalExit && killProcess.exitCode() == 0)
-    {
-        appendLog(QString("[SUCCESS] 已尝试清理端口 %1").arg(port));
-    }
-    else if (killProcess.exitCode() == 127)
-    {
-        appendLog(QString("[WARN] 端口 %1 清理失败：系统未提供 fuser/ss 工具").arg(port));
-    }
-    else if (killProcess.exitCode() == 2)
-    {
-        appendLog(QString("[WARN] 端口 %1 清理失败：未找到可终止的监听进程").arg(port));
-    }
-    else
-    {
-        const QString detail = !stderrText.isEmpty() ? stderrText : stdoutText;
-        if (!detail.isEmpty())
-        {
-            appendLog(QString("[WARN] 端口 %1 清理失败：%2").arg(port).arg(detail));
-        }
-        else
-        {
-            appendLog(QString("[WARN] 端口 %1 清理失败，保留原状态").arg(port));
-        }
-    }
+  return stopLinuxOutage();
 #endif
 }
-
-QString ProcessService::queryProcessNameByPid(const QString &pid) const
-{
+bool ProcessService::runStopScript(const QString &path) {
+  if (path.isEmpty())
+    return false;
+  QProcess p;
 #ifdef Q_OS_WIN
-    QProcess queryProcess;
-    queryProcess.start("cmd.exe", QStringList() << "/c"
-                                               << QString("tasklist /FI \"PID eq %1\" /FO CSV /NH").arg(pid));
-    if (!queryProcess.waitForFinished(2000))
-    {
-        queryProcess.kill();
-        queryProcess.waitForFinished(1000);
-    }
-    const QString output = QString::fromLocal8Bit(queryProcess.readAllStandardOutput()).trimmed();
-    if (output.isEmpty() || output.contains("INFO:", Qt::CaseInsensitive))
-    {
-        return QString();
-    }
-
-    QString firstLine = output.split("\n", QString::SkipEmptyParts).value(0).trimmed();
-    if (firstLine.isEmpty())
-    {
-        return QString();
-    }
-
-    // tasklist CSV 第一列为 Image Name，通常格式如："java.exe","1234",...
-    if (firstLine.startsWith("\""))
-    {
-        firstLine.remove(0, 1);
-    }
-    const int endQuote = firstLine.indexOf('"');
-    if (endQuote > 0)
-    {
-        return firstLine.left(endQuote).trimmed();
-    }
-
-    const QStringList parts = firstLine.split(",", QString::SkipEmptyParts);
-    if (parts.isEmpty())
-    {
-        return QString();
-    }
-    QString processName = parts.first();
-    processName.remove('"');
-    return processName.trimmed();
+  bool ok =
+      run(&p, "cmd.exe", QStringList() << "/d" << "/s" << "/c" << path, 20000);
 #else
-    Q_UNUSED(pid);
-    return QString();
+  bool ok = run(&p, "/bin/bash", QStringList() << path, 15000);
+#endif
+  for (QString s : lines(decode(p.readAllStandardOutput())))
+    appendLog("[STOP] " + s);
+  for (QString s : lines(decode(p.readAllStandardError())))
+    appendLog("[STOP][STDERR] " + s);
+  return ok && p.exitCode() == 0;
+}
+// Stops whole verified outage roots so a child listener cannot be recreated by its parent.
+bool ProcessService::stopWindowsOutage(bool includeDetectedRoots) {
+#ifdef Q_OS_WIN
+  const QString configuredRoot = m_startedOutageWorkDir.isEmpty()
+                                     ? resolveServiceWorkDir()
+                                     : m_startedOutageWorkDir;
+  QSet<QString> roots;
+  if (!configuredRoot.isEmpty())
+    roots << QDir::cleanPath(QFileInfo(configuredRoot).absoluteFilePath());
+
+  if (includeDetectedRoots) {
+    for (int port : resolveServicePorts()) {
+      for (const ProcessOwner &owner : queryWindowsPortOwners(port)) {
+        const QString outageRoot =
+            windowsOutageRootForProcess(owner, configuredRoot);
+        if (!outageRoot.isEmpty())
+          roots << outageRoot;
+      }
+    }
+  }
+
+  if (roots.isEmpty()) {
+    appendLog("[INFO] 未发现需要停止的本产品 outage 根目录");
+    return true;
+  }
+
+  QStringList orderedRoots = roots.values();
+  orderedRoots.sort(Qt::CaseInsensitive);
+  bool rootsStopped = true;
+  for (const QString &outageRoot : orderedRoots) {
+    if (!isWindowsOutageRoot(outageRoot, configuredRoot)) {
+      rootsStopped = false;
+      appendLog("[ERROR] outage 根目录校验失败，未执行停止：" + outageRoot);
+      continue;
+    }
+    appendLog("[INFO] 正在停止本产品 outage 根目录：" + outageRoot);
+    if (!terminateWindowsOutageRoot(outageRoot))
+      rootsStopped = false;
+  }
+
+  if (!includeDetectedRoots)
+    return rootsStopped;
+
+  const bool portsReleased =
+      waitForPortsReleased(resolveServicePorts(), 5000);
+  if (!portsReleased) {
+    appendLog("[ERROR] 本地 outage 停止后仍有受管端口未释放");
+    for (int port : resolveServicePorts()) {
+      if (!checkPortInUse(port))
+        continue;
+      const QList<ProcessOwner> owners = queryWindowsPortOwners(port);
+      if (owners.isEmpty()) {
+        appendLog(QString("[ERROR] 端口 %1 仍被占用，但无法获取进程信息")
+                      .arg(port));
+        continue;
+      }
+      for (const ProcessOwner &owner : owners)
+        appendLog(QString("[ERROR] 端口 %1 残留进程：%2")
+                      .arg(port)
+                      .arg(describeProcessOwner(owner)));
+    }
+  }
+  return rootsStopped && portsReleased;
+#else
+  Q_UNUSED(includeDetectedRoots);
+  return true;
 #endif
 }
-
-QStringList ProcessService::resolveKillProcessWhitelist() const
-{
-    QString raw = ConfigManager::instance()->value(
-                      "service/killProcessNameWhitelist",
-                      "java.exe,minio.exe,redis-server.exe,nginx.exe,mysqld.exe,node.exe,python.exe")
-                      .toString();
-    raw.replace(";", ",");
-    const QStringList parts = raw.split(",", QString::SkipEmptyParts);
-
-    QStringList whitelist;
-    for (const QString &part : parts)
-    {
-        const QString normalized = part.trimmed().toLower();
-        if (!normalized.isEmpty() && !whitelist.contains(normalized))
-        {
-            whitelist.append(normalized);
-        }
-    }
-    return whitelist;
-}
-
-bool ProcessService::checkAndCleanPorts()
-{
+bool ProcessService::stopLinuxOutage() {
 #ifdef Q_OS_LINUX
-    const QString scriptPath = QDir::cleanPath(resolveServiceScriptPath());
-    const QString workDir = QDir::cleanPath(resolveServiceWorkDir());
-    if (isOriginalOutageScript(scriptPath, workDir))
-    {
-        appendLog("[INFO] 已匹配原产品 outage/start.sh，跳过前置端口治理，交由脚本自行处理 8081");
+  QString stop = resolveStopScriptPath();
+  if (!stop.isEmpty())
+    return runStopScript(stop) &&
+           waitForPortsReleased(resolveServicePorts(), 5000);
+  QProcess p;
+  QString cmd =
+      "pids=$(ps -eo pid=,args=|awk '$0~/[o]utage-api\\.jar/{print $1}'); [ -z "
+      "\"$pids\" ]||{ kill -TERM $pids 2>/dev/null||true;sleep 3;for x in "
+      "$pids;do kill -0 $x 2>/dev/null&&kill -KILL $x;done;}";
+  return run(&p, "/bin/bash", QStringList() << "-c" << cmd, 10000) &&
+         waitForPortsReleased(resolveServicePorts(), 5000);
+#else
+  return true;
+#endif
+}
+bool ProcessService::waitForPortsReleased(const QList<int> &ports,
+                                          int timeout) const {
+  for (int e = 0; e <= timeout; e += 100) {
+    bool free = true;
+    for (int p : ports)
+      if (checkPortInUse(p)) {
+        free = false;
+        break;
+      }
+    if (free)
+      return true;
+    QThread::msleep(100);
+  }
+  return false;
+}
+bool ProcessService::checkPortInUse(int port) const {
+  QTcpSocket s;
+  s.connectToHost("127.0.0.1", quint16(port));
+  bool c = s.waitForConnected(120);
+  s.abort();
+  return c;
+}
+QList<ProcessService::ProcessOwner>
+ProcessService::queryWindowsPortOwners(int port) const {
+  QList<ProcessOwner> out;
+#ifdef Q_OS_WIN
+  QProcess p;
+  run(&p, "netstat.exe", QStringList() << "-ano" << "-p" << "TCP", 5000);
+  QSet<QString> ids;
+  const QString suffix = ":" + QString::number(port);
+  for (QString line : lines(QString::fromLocal8Bit(p.readAllStandardOutput()))) {
+    if (!line.contains("LISTENING", Qt::CaseInsensitive))
+      continue;
+    const QStringList fields =
+        line.simplified().split(' ', QString::SkipEmptyParts);
+    if (fields.size() >= 5 && fields.at(1).endsWith(suffix))
+      ids << fields.last();
+  }
+  for (const QString &pid : ids) {
+    const ProcessOwner owner = queryWindowsProcess(pid);
+    if (!owner.pid.isEmpty())
+      out << owner;
+  }
+#else
+  Q_UNUSED(port);
+#endif
+  return out;
+}
+// Captures parent PID so a listening worker maps to its top-level process tree.
+ProcessService::ProcessOwner
+ProcessService::queryWindowsProcess(const QString &pid) const {
+  ProcessOwner out;
+#ifdef Q_OS_WIN
+  QString script =
+      QString(
+          "$p=Get-CimInstance Win32_Process -Filter \"ProcessId=%1\" "
+          "-ErrorAction SilentlyContinue;if($p){$p|select "
+          "ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine|"
+          "ConvertTo-Json -Compress}")
+          .arg(pid);
+  QProcess p;
+  run(&p, "powershell.exe",
+      QStringList() << "-NoProfile" << "-NonInteractive" << "-Command"
+                    << script,
+      5000);
+  QJsonDocument d = QJsonDocument::fromJson(p.readAllStandardOutput());
+  if (d.isObject()) {
+    const QJsonObject o = d.object();
+    out.pid = QString::number(o.value("ProcessId").toVariant().toLongLong());
+    out.parentPid =
+        QString::number(o.value("ParentProcessId").toVariant().toLongLong());
+    out.name = o.value("Name").toString();
+    out.executablePath = o.value("ExecutablePath").toString();
+    out.commandLine = o.value("CommandLine").toString();
+  }
+#else
+  Q_UNUSED(pid);
+#endif
+  return out;
+}
+// Enumerates only executable and launcher processes under one verified outage root.
+QList<ProcessService::ProcessOwner>
+ProcessService::queryWindowsOutageProcesses(const QString &outageRoot) const {
+  QList<ProcessOwner> out;
+#ifdef Q_OS_WIN
+  if (outageRoot.isEmpty())
+    return out;
+  const QString root =
+      QDir::toNativeSeparators(QFileInfo(outageRoot).absoluteFilePath());
+  const QString script =
+      QString(
+          "$root=[IO.Path]::GetFullPath(%1).TrimEnd('\\');"
+          "$prefix=$root+'\\';"
+          "$p=Get-CimInstance Win32_Process -ErrorAction SilentlyContinue|?{"
+          "($_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath)."
+          "StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase))-or"
+          "($_.CommandLine -and $_.CommandLine.IndexOf($prefix,"
+          "[StringComparison]::OrdinalIgnoreCase)-ge 0 -and "
+          "$_.CommandLine -match 'outage-api\\.jar|start-all\\.bat')}|"
+          "select ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine|"
+          "ConvertTo-Json -Compress")
+          .arg(psQuote(root));
+  QProcess p;
+  run(&p, "powershell.exe",
+      QStringList() << "-NoProfile" << "-NonInteractive" << "-Command"
+                    << script,
+      8000);
+  const QJsonDocument d =
+      QJsonDocument::fromJson(p.readAllStandardOutput());
+  auto appendOwner = [&out](const QJsonObject &o) {
+    ProcessOwner owner;
+    owner.pid = QString::number(o.value("ProcessId").toVariant().toLongLong());
+    owner.parentPid =
+        QString::number(o.value("ParentProcessId").toVariant().toLongLong());
+    owner.name = o.value("Name").toString();
+    owner.executablePath = o.value("ExecutablePath").toString();
+    owner.commandLine = o.value("CommandLine").toString();
+    if (!owner.pid.isEmpty() && owner.pid != "0")
+      out << owner;
+  };
+  if (d.isObject())
+    appendOwner(d.object());
+  else if (d.isArray())
+    for (const QJsonValue &value : d.array())
+      if (value.isObject())
+        appendOwner(value.toObject());
+#else
+  Q_UNUSED(outageRoot);
+#endif
+  return out;
+}
+// Uses verified listener ancestry only when the full root scan cannot enumerate a live package.
+QStringList ProcessService::windowsOutageListeningRootProcessIds(
+    const QString &outageRoot) const {
+  QStringList roots;
+#ifdef Q_OS_WIN
+  const QString expectedRoot = norm(outageRoot);
+  if (expectedRoot.isEmpty())
+    return roots;
+
+  for (int port : resolveServicePorts()) {
+    for (const ProcessOwner &listener : queryWindowsPortOwners(port)) {
+      if (norm(windowsOutageRootForProcess(listener, outageRoot)) != expectedRoot)
+        continue;
+
+      ProcessOwner candidate = listener;
+      QSet<QString> visited;
+      visited << listener.pid;
+      while (!candidate.parentPid.isEmpty() &&
+             !visited.contains(candidate.parentPid)) {
+        const ProcessOwner parent = queryWindowsProcess(candidate.parentPid);
+        if (parent.pid.isEmpty() ||
+            norm(windowsOutageRootForProcess(parent, outageRoot)) != expectedRoot)
+          break;
+        candidate = parent;
+        visited << candidate.pid;
+      }
+      if (!candidate.pid.isEmpty())
+        roots << candidate.pid;
+    }
+  }
+#else
+  Q_UNUSED(outageRoot);
+#endif
+  roots.removeDuplicates();
+  roots.sort();
+  return roots;
+}
+// Older roots require the full product package signature before they are trusted.
+bool ProcessService::isWindowsOutageRoot(
+    const QString &outageRoot, const QString &configuredWorkDir) const {
+#ifdef Q_OS_WIN
+  if (outageRoot.trimmed().isEmpty())
+    return false;
+  const QString root = QDir::cleanPath(QFileInfo(outageRoot).absoluteFilePath());
+  const QString configured =
+      QDir::cleanPath(QFileInfo(configuredWorkDir).absoluteFilePath());
+  if (!configuredWorkDir.trimmed().isEmpty() &&
+      norm(root) == norm(configured)) {
+    return QFileInfo(QDir(root).filePath("start-all.bat")).isFile();
+  }
+  const QStringList required = {
+      "start-all.bat",
+      "nginx/nginx.exe",
+      "mysql/bin/mysqld.exe",
+      "redis/redis-server.exe",
+      "minio/minio.exe",
+      "jdk/bin/java.exe",
+      "outage/outage-api.jar"};
+  for (const QString &relative : required)
+    if (!QFileInfo(QDir(root).filePath(relative)).isFile())
+      return false;
+  return true;
+#else
+  Q_UNUSED(outageRoot);
+  Q_UNUSED(configuredWorkDir);
+  return false;
+#endif
+}
+// Derives a verified outage root from a configured process or packaged component path.
+QString ProcessService::windowsOutageRootForProcess(
+    const ProcessOwner &owner, const QString &configuredWorkDir) const {
+#ifdef Q_OS_WIN
+  const QString configured = configuredWorkDir.trimmed().isEmpty()
+                                 ? QString()
+                                 : QDir::cleanPath(
+                                       QFileInfo(configuredWorkDir).absoluteFilePath());
+  const QString executable = norm(owner.executablePath);
+  QString command = owner.commandLine.toLower();
+  command.replace(QChar(92), QChar('/'));
+  if (!configured.isEmpty() &&
+      ((!executable.isEmpty() &&
+        (executable == norm(configured) ||
+         executable.startsWith(norm(configured) + '/'))) ||
+       (command.contains(norm(configured)) &&
+        (command.contains("outage-api.jar") ||
+         command.contains("start-all.bat"))))) {
+    if (isWindowsOutageRoot(configured, configured))
+      return configured;
+  }
+
+  if (owner.executablePath.trimmed().isEmpty())
+    return QString();
+  const QString name = owner.name.trimmed().toLower();
+  const QString executablePath = QFileInfo(owner.executablePath).absoluteFilePath();
+  QDir componentDir(QFileInfo(executablePath).absolutePath());
+  QString candidate;
+  auto rootFromParents = [&componentDir](int levels) {
+    QDir rootDir = componentDir;
+    for (int i = 0; i < levels; ++i)
+      if (!rootDir.cdUp())
+        return QString();
+    return QDir::cleanPath(rootDir.absolutePath());
+  };
+  if (name == "nginx.exe" && executable.endsWith("/nginx/nginx.exe"))
+    candidate = rootFromParents(1);
+  else if (name == "mysqld.exe" &&
+           executable.endsWith("/mysql/bin/mysqld.exe"))
+    candidate = rootFromParents(2);
+  else if (name == "redis-server.exe" &&
+           executable.endsWith("/redis/redis-server.exe"))
+    candidate = rootFromParents(1);
+  else if (name == "minio.exe" &&
+           executable.endsWith("/minio/minio.exe"))
+    candidate = rootFromParents(1);
+  else if (name == "java.exe" &&
+           executable.endsWith("/jdk/bin/java.exe") &&
+           command.contains("outage-api.jar"))
+    candidate = rootFromParents(2);
+
+  if (!candidate.isEmpty() && isWindowsOutageRoot(candidate, configured))
+    return candidate;
+#else
+  Q_UNUSED(owner);
+  Q_UNUSED(configuredWorkDir);
+#endif
+  return QString();
+}
+// A process is a termination root only when its parent is outside the same outage group.
+QStringList ProcessService::windowsOutageRootProcessIds(
+    const QList<ProcessOwner> &owners) const {
+  QSet<QString> processIds;
+  for (const ProcessOwner &owner : owners)
+    if (!owner.pid.isEmpty())
+      processIds << owner.pid;
+
+  QStringList roots;
+  for (const ProcessOwner &owner : owners)
+    if (!owner.pid.isEmpty() && !processIds.contains(owner.parentPid))
+      roots << owner.pid;
+  if (roots.isEmpty())
+    roots = processIds.values();
+  roots.removeDuplicates();
+  roots.sort();
+  return roots;
+}
+// Repeats tree termination until no process remains under the verified outage root.
+bool ProcessService::terminateWindowsOutageRoot(const QString &outageRoot) {
+#ifdef Q_OS_WIN
+  for (int attempt = 1; attempt <= 3; ++attempt) {
+    const QList<ProcessOwner> owners =
+        queryWindowsOutageProcesses(outageRoot);
+    if (owners.isEmpty()) {
+      const QStringList listenerRootPids =
+          windowsOutageListeningRootProcessIds(outageRoot);
+      if (listenerRootPids.isEmpty())
         return true;
+      appendLog(QString("[WARN] Root process scan was empty; stopping listener trees: %1")
+                    .arg(listenerRootPids.join(",")));
+      for (const QString &pid : listenerRootPids) {
+        QProcess taskkill;
+        const bool succeeded =
+            run(&taskkill, "taskkill.exe",
+                QStringList() << "/PID" << pid << "/T" << "/F", 8000) &&
+            taskkill.exitCode() == 0;
+        if (!succeeded) {
+          appendLog(QString("[WARN] Listener process tree stop failed, PID=%1; will verify again")
+                        .arg(pid));
+          for (const QString &line : lines(decode(taskkill.readAllStandardError())))
+            appendLog("[STOP][STDERR] " + line);
+        }
+      }
+      QThread::msleep(350);
+      continue;
     }
+    const QStringList rootPids = windowsOutageRootProcessIds(owners);
+    appendLog(QString("[INFO] 停止根目录进程树（第 %1/3 轮）：%2")
+                  .arg(attempt)
+                  .arg(rootPids.join(',')));
+    for (const QString &pid : rootPids) {
+      QProcess taskkill;
+      const bool succeeded =
+          run(&taskkill, "taskkill.exe",
+              QStringList() << "/PID" << pid << "/T" << "/F", 8000) &&
+          taskkill.exitCode() == 0;
+      if (!succeeded) {
+        appendLog(QString("[WARN] 停止根进程失败，PID=%1；将再次核验")
+                      .arg(pid));
+        for (const QString &line : lines(decode(taskkill.readAllStandardError())))
+          appendLog("[STOP][STDERR] " + line);
+      }
+    }
+    QThread::msleep(350);
+  }
+
+  const QList<ProcessOwner> remaining =
+      queryWindowsOutageProcesses(outageRoot);
+  for (const ProcessOwner &owner : remaining)
+    appendLog("[ERROR] outage 根目录残留进程：" + describeProcessOwner(owner));
+  return remaining.isEmpty();
+#else
+  Q_UNUSED(outageRoot);
+  return true;
 #endif
-
-    const QList<int> ports = resolveServicePorts();
-    const bool allowAutoClean = isAutoCleanPortsEnabled();
-
-    bool anyPortInUse = false;
-    for (int port : ports)
-    {
-        if (checkPortInUse(port))
-        {
-            appendLog(QString("[WARN] 端口 %1 已被占用").arg(port));
-            anyPortInUse = true;
-        }
-    }
-
-    if (!anyPortInUse)
-    {
-        appendLog("[SUCCESS] 所有端口可用，无需清理");
-        return true;
-    }
-
-    if (!allowAutoClean)
-    {
-        appendLog("[WARN] 检测到端口占用，但未开启自动清理（service/autoCleanPorts=false）");
-        appendLog("[WARN] 为避免重复拉起导致端口冲突，已中止本次脚本启动");
-        return false;
-    }
-
-    appendLog("[WARN] 检测到部分端口被占用，正在尝试清理...");
-    for (int port : ports)
-    {
-        if (checkPortInUse(port))
-        {
-            killProcessByPort(port);
-        }
-    }
-
-    bool stillInUse = false;
-    QString occupiedAfterClean;
-    for (int port : ports)
-    {
-        if (checkPortInUse(port))
-        {
-            stillInUse = true;
-            if (!occupiedAfterClean.isEmpty())
-            {
-                occupiedAfterClean += ",";
-            }
-            occupiedAfterClean += QString::number(port);
-        }
-    }
-
-    if (stillInUse)
-    {
-        appendLog(QString("[ERROR] 端口清理后仍被占用：%1").arg(occupiedAfterClean));
-        appendLog("[ERROR] 已取消本次启动，请检查占用进程或调整配置后重试");
-        return false;
-    }
-
-    appendLog("[SUCCESS] 端口清理完成，允许继续启动");
-    return true;
 }
-
-void ProcessService::scheduleStartRetry(const QString &reason)
-{
-    if (m_startAttempt >= m_maxStartRetries)
-    {
-        appendLog(QString("[ERROR] 启动失败且已达到最大重试次数(%1)，停止重试。原因: %2")
-                      .arg(m_maxStartRetries)
-                      .arg(reason));
-        return;
-    }
-
-    if (m_startRetryTimer && m_startRetryTimer->isActive())
-    {
-        return;
-    }
-
-    appendLog(QString("[WARN] 启动失败，%1 秒后重试。原因: %2")
-                  .arg((m_startRetryTimer ? m_startRetryTimer->interval() : 0) / 1000.0, 0, 'f', 1)
-                  .arg(reason));
-
-    if (m_startRetryTimer)
-    {
-        m_startRetryTimer->start();
-    }
+QString ProcessService::describeProcessOwner(const ProcessOwner &o) const {
+  return QString("PID=%1 parentPID=%2 name=%3 path=%4 command=%5")
+      .arg(o.pid, o.parentPid.isEmpty() ? "<unknown>" : o.parentPid,
+           o.name.isEmpty() ? "<unknown>" : o.name,
+           o.executablePath.isEmpty() ? "<unknown>" : o.executablePath,
+           o.commandLine.isEmpty() ? "<unknown>" : o.commandLine);
 }
-
-QString ProcessService::resolveServiceWorkDir() const
-{
+QString ProcessService::resolveServiceWorkDir() const {
 #ifdef Q_OS_WIN
-    const QString packageWorkDir = QDir(QCoreApplication::applicationDirPath())
-                                       .filePath(QStringLiteral("outage"));
-    if (QDir(packageWorkDir).exists())
-    {
-        return QDir::cleanPath(packageWorkDir);
-    }
+  QStringList c = {
+      qEnvironmentVariable("RK3568_OUTAGE_DIR").trimmed(),
+      ConfigManager::instance()->value("service/workDir").toString().trimmed(),
+      QDir(QCoreApplication::applicationDirPath()).filePath("outage"),
+      "D:/Desktop/YunwangProject/outage/outage"};
+  QString file = "start-all.bat";
+#else
+  QStringList c = {
+      ConfigManager::instance()->value("service/workDir").toString().trimmed(),
+      "/home/linaro/outage", QCoreApplication::applicationDirPath()};
+  QString file = "start.sh";
+#endif
+  for (QString p : c)
+    if (!p.isEmpty() && QFileInfo::exists(QDir(p).filePath(file)))
+      return QFileInfo(p).absoluteFilePath();
+  return QString();
+}
+QString ProcessService::resolveServiceScriptPath() const {
+  QString wd = resolveServiceWorkDir();
+  if (wd.isEmpty())
     return QString();
+  QString set = ConfigManager::instance()
+                    ->value("service/scriptPath")
+                    .toString()
+                    .trimmed();
+  QStringList c;
+  if (!set.isEmpty())
+    c << (QFileInfo(set).isAbsolute() ? set : QDir(wd).filePath(set));
+#ifdef Q_OS_WIN
+  c << QDir(wd).filePath("start-all.bat");
 #else
-    const QString configured = ConfigManager::instance()->value("service/workDir").toString().trimmed();
-    if (!configured.isEmpty() && QDir(configured).exists())
-    {
-        const QString configuredDir = QDir::cleanPath(configured);
-        const QString configuredScript = ConfigManager::instance()->value("service/scriptPath").toString().trimmed();
-        const QFileInfo configuredScriptInfo(configuredScript);
-        const bool configuredAbsoluteScriptExists =
-            configuredScriptInfo.isAbsolute() && configuredScriptInfo.exists();
-        const bool configuredScriptUnderDir =
-            !configuredScript.isEmpty() && QFileInfo::exists(QDir(configuredDir).filePath(configuredScript));
-        const bool hasBat = QFileInfo::exists(QDir(configuredDir).filePath("start-all.bat"));
-        const bool hasSh = QFileInfo::exists(QDir(configuredDir).filePath("start-all.sh"));
-        const bool hasStartSh = QFileInfo::exists(QDir(configuredDir).filePath("start.sh"));
-        if (configuredAbsoluteScriptExists || configuredScriptUnderDir || hasBat || hasSh || hasStartSh)
-        {
-            return configuredDir;
-        }
-    }
-
-    const QString appDir = QCoreApplication::applicationDirPath();
-    const QStringList fallbackDirs = {
-        "/home/linaro/outage",
-        "D:/Desktop/YunwangProject/outage/outage",
-        QDir(appDir).filePath("../outage/outage"),
-        QDir(appDir).filePath("../../outage/outage")};
-
-    QStringList probeDirs = fallbackDirs;
-    probeDirs << collectAncestorDirs(appDir, 8);
-
-    for (const QString &dir : probeDirs)
-    {
-        const QString normalizedDir = QDir::cleanPath(dir);
-        if (dirContainsServiceArtifacts(normalizedDir))
-        {
-            return normalizedDir;
-        }
-    }
-
-    if (QDir(appDir).exists())
-    {
-        return QDir::cleanPath(appDir);
-    }
-
+  c << QDir(wd).filePath("start.sh");
+#endif
+  for (QString p : c)
+    if (QFileInfo(p).isFile())
+      return QDir::toNativeSeparators(QFileInfo(p).absoluteFilePath());
+  return QString();
+}
+QString ProcessService::resolveStopScriptPath() const {
+  QString wd = resolveServiceWorkDir();
+  if (wd.isEmpty())
     return QString();
-#endif
-}
-
-QString ProcessService::resolveServiceScriptPath() const
-{
 #ifdef Q_OS_WIN
-    const QString packageScriptPath = QDir(QCoreApplication::applicationDirPath())
-                                          .filePath(QStringLiteral("outage/start-all.bat"));
-    const QFileInfo packageScriptInfo(packageScriptPath);
-    if (packageScriptInfo.exists() && packageScriptInfo.isFile())
-    {
-        return QDir::toNativeSeparators(packageScriptInfo.absoluteFilePath());
-    }
-    return QString();
+  QString p = QDir(wd).filePath("stop-all.bat");
 #else
-    const QString configuredPath = ConfigManager::instance()->value("service/scriptPath").toString().trimmed();
-    if (!configuredPath.isEmpty())
-    {
-        QFileInfo configuredInfo(configuredPath);
-        if (configuredInfo.exists())
-        {
-            return QDir::toNativeSeparators(configuredInfo.absoluteFilePath());
-        }
-
-        const QString relativePath = QDir(resolveServiceWorkDir()).filePath(configuredPath);
-        QFileInfo relativeInfo(relativePath);
-        if (relativeInfo.exists())
-        {
-            return QDir::toNativeSeparators(relativeInfo.absoluteFilePath());
-        }
-    }
-
-    const QString workDir = resolveServiceWorkDir();
-    const QString appDir = QCoreApplication::applicationDirPath();
-    QStringList probeDirs;
-    probeDirs << workDir
-              << "/home/linaro/outage"
-              << "D:/Desktop/YunwangProject/outage/outage"
-              << QDir(appDir).filePath("../outage/outage")
-              << QDir(appDir).filePath("../../outage/outage")
-              << appDir;
-    probeDirs << collectAncestorDirs(appDir, 8);
-    if (!workDir.isEmpty())
-    {
-        probeDirs << collectAncestorDirs(workDir, 4);
-    }
-
-    QStringList normalizedProbeDirs;
-    for (const QString &dir : probeDirs)
-    {
-        const QString normalized = QDir::cleanPath(dir);
-        if (!normalized.isEmpty() && !normalizedProbeDirs.contains(normalized))
-        {
-            normalizedProbeDirs.append(normalized);
-        }
-    }
-
-    QStringList candidates;
+  QString p = QDir(wd).filePath("stop.sh");
+#endif
+  return QFileInfo::exists(p)
+             ? QDir::toNativeSeparators(QFileInfo(p).absoluteFilePath())
+             : QString();
+}
+QList<int> ProcessService::resolveServicePorts() const {
 #ifdef Q_OS_WIN
-    candidates << "start-all.bat";
+  QString def = "80,3306,6379,8081,9000,9090";
 #else
-    candidates << "start.sh" << "start-all.sh" << "start-all.bat";
+  QString def = "8081";
 #endif
-
-    for (const QString &dir : normalizedProbeDirs)
-    {
-        for (const QString &name : candidates)
-        {
-            const QString fullPath = QDir(dir).filePath(name);
-            if (QFileInfo::exists(fullPath))
-            {
-                return QDir::toNativeSeparators(QFileInfo(fullPath).absoluteFilePath());
-            }
-        }
-    }
-
-    return QString();
-#endif
+  QList<int> out;
+  for (QString x : ConfigManager::instance()
+                       ->value("service/ports", def)
+                       .toString()
+                       .split(',', QString::SkipEmptyParts)) {
+    bool ok = false;
+    int p = x.trimmed().toInt(&ok);
+    if (ok && p > 0 && p < 65536 && !out.contains(p))
+      out << p;
+  }
+  if (out.isEmpty())
+    out << 8081;
+  return out;
+}
+int ProcessService::readinessPort() const {
+  int p =
+      ConfigManager::instance()->value("service/readinessPort", 8081).toInt();
+  return p > 0 && p < 65536 ? p : 8081;
 }
 
-QList<int> ProcessService::resolveServicePorts() const
-{
-    const QString defaultPorts = "8081,9000,9001";
-    const QString raw = ConfigManager::instance()->value("service/ports", defaultPorts).toString();
-    const QStringList parts = raw.split(",", QString::SkipEmptyParts);
-
-    QList<int> ports;
-    for (const QString &part : parts)
-    {
-        bool ok = false;
-        const int port = part.trimmed().toInt(&ok);
-        if (ok && port > 0 && port <= 65535)
-        {
-            ports.append(port);
-        }
-    }
-
-    if (ports.isEmpty())
-    {
-        ports << 8081 << 9000 << 9001;
-    }
-    return ports;
+// Keeps the board cold-start allowance configurable without weakening the readiness checks.
+int ProcessService::readinessTimeoutSeconds() const {
+  return qBound(30,
+                ConfigManager::instance()
+                    ->value("service/readinessTimeoutSeconds", 120)
+                    .toInt(),
+                600);
 }
-
-QList<int> ProcessService::resolveRemoteRequiredPorts() const
-{
-    const QString defaultRequiredPorts = "8081,9000";
-    const QString raw = ConfigManager::instance()->value("service/remoteRequiredPorts", defaultRequiredPorts).toString();
-    const QStringList parts = raw.split(",", QString::SkipEmptyParts);
-
-    QList<int> ports;
-    for (const QString &part : parts)
-    {
-        bool ok = false;
-        const int port = part.trimmed().toInt(&ok);
-        if (ok && port > 0 && port <= 65535)
-        {
-            ports.append(port);
-        }
-    }
-
-    if (ports.isEmpty())
-    {
-        ports << 8081 << 9000;
-    }
-    return ports;
-}
-
-bool ProcessService::isAutoCleanPortsEnabled() const
-{
-    if (ConfigManager::instance()->value("service/forceRestartScript", false).toBool())
-    {
-        return true;
-    }
-    return ConfigManager::instance()->value("service/autoCleanPorts", false).toBool();
-}
-
-bool ProcessService::startScriptProcess(const QString &scriptPath)
-{
-    if (!m_process)
-    {
-        return false;
-    }
-
+bool ProcessService::startScriptProcess(const QString &p) {
+  if (!m_process)
+    return false;
 #ifdef Q_OS_WIN
-    m_process->start("cmd.exe", QStringList() << "/c" << scriptPath);
+  m_process->start("cmd.exe", QStringList() << "/d" << "/s" << "/c"
+                                            << QDir::toNativeSeparators(p));
 #else
-    m_process->start("/bin/sh", QStringList() << scriptPath);
+  m_process->start("/bin/bash", QStringList() << p);
 #endif
-    return true;
+  return true;
+}
+void ProcessService::onProcessStarted() {
+  m_startInProgress = false;
+  appendLog("[SUCCESS] 本地 outage 启动进程已运行");
+  setServiceReady(false, "正在等待本地 outage 就绪");
+  startReadinessCheck();
+}
+void ProcessService::startReadinessCheck() {
+  ++m_readinessGeneration;
+  m_probeInFlight = false;
+  m_readinessSlowPolling = false;
+  m_readinessAttempt = 0;
+  m_maxReadinessAttempts = readinessTimeoutSeconds();
+  m_readinessTimer->setInterval(1000);
+  m_readinessTimer->start();
 }
 
-QString ProcessService::serviceStartMode() const
-{
-#ifdef Q_OS_WIN
-    const QString defaultMode = "remote";
-#else
-    const QString defaultMode = "remote";
-#endif
-
-    QString mode = ConfigManager::instance()->value("service/startMode", defaultMode).toString().trimmed().toLower();
-    if (mode != "local" && mode != "remote")
-    {
-        mode = defaultMode;
-    }
-    return mode;
+// A timeout reports slow startup rather than terminal failure while the managed process is alive.
+void ProcessService::scheduleReadinessRetry(const QString &pendingReason) {
+  if (m_readinessAttempt >= m_maxReadinessAttempts && !m_readinessSlowPolling) {
+    m_readinessSlowPolling = true;
+    m_readinessTimer->setInterval(5000);
+    const QString message = QString("服务启动超过 %1 秒，后台进程仍在运行，%2，将继续检测")
+                                .arg(m_maxReadinessAttempts)
+                                .arg(pendingReason);
+    setServiceReady(false, message);
+    appendLog("[WARN] " + message);
+  }
+  m_readinessTimer->start();
 }
 
-bool ProcessService::checkRemoteServiceReady(QString *detail) const
-{
-#ifdef Q_OS_WIN
-    bool useLocalService = false;
-    QString targetError;
-    if (!ConfigManager::resolveServiceTarget(ConfigManager::instance()->homeUrl(),
-                                             ConfigManager::instance()->apiUrl(),
-                                             &useLocalService,
-                                             &targetError))
-    {
-        if (detail)
-        {
-            *detail = targetError;
-        }
-        return false;
+void ProcessService::onServiceReadinessTimeout() {
+  ++m_readinessAttempt;
+  if (m_stopping)
+    return;
+  if (!m_process || m_process->state() == QProcess::NotRunning) {
+    finishReadinessProbe(false, "outage 启动进程在就绪前退出");
+    return;
+  }
+  QStringList missing;
+  for (int p : resolveServicePorts())
+    if (!checkPortInUse(p))
+      missing << QString::number(p);
+  if (missing.isEmpty()) {
+    if (!m_probeInFlight) {
+      m_probeInFlight = true;
+      probeHealthEndpoint();
     }
-#endif
-
-    auto checkUrlReachable = [](const QString &urlText, QString *err) -> bool {
-        const QUrl url = QUrl::fromUserInput(urlText.trimmed());
-        if (!url.isValid() || url.host().isEmpty() || url.scheme().isEmpty())
-        {
-            if (err)
-            {
-                *err = QString("URL 无效: %1").arg(urlText);
-            }
-            return false;
-        }
-
-        const int port = url.port(url.scheme() == "https" ? 443 : 80);
-        QTcpSocket socket;
-        socket.connectToHost(url.host(), port);
-        const bool connected = socket.waitForConnected(800);
-        socket.disconnectFromHost();
-
-        if (!connected && err)
-        {
-            *err = QString("%1:%2 不可达").arg(url.host()).arg(port);
-        }
-        return connected;
-    };
-
-    QString reason;
-    const QString homeUrl = ConfigManager::instance()->homeUrl();
-    if (!checkUrlReachable(homeUrl, &reason))
-    {
-        if (detail)
-        {
-            *detail = QString("homeUrl 检查失败，%1").arg(reason);
-        }
-        return false;
-    }
-
-    const QString apiUrl = ConfigManager::instance()->apiUrl();
-    if (!checkUrlReachable(apiUrl, &reason))
-    {
-        if (detail)
-        {
-            *detail = QString("apiUrl 检查失败，%1").arg(reason);
-        }
-        return false;
-    }
-
-#ifdef Q_OS_WIN
-    // 远程地址不检查本机端口；本机模式确认 Java 与 MinIO，避免仅有 Nginx 时误判为就绪。
-    const bool requirePortsReady = useLocalService;
-#else
-    const bool requirePortsReady = ConfigManager::instance()->value("service/remoteRequirePorts", false).toBool();
-#endif
-    if (requirePortsReady)
-    {
-        const QList<int> ports = resolveRemoteRequiredPorts();
-        QString missingPorts;
-        for (int port : ports)
-        {
-            if (!checkPortInUse(port))
-            {
-                if (!missingPorts.isEmpty())
-                {
-                    missingPorts += ",";
-                }
-                missingPorts += QString::number(port);
-            }
-        }
-
-        if (!missingPorts.isEmpty())
-        {
-            if (detail)
-            {
-                *detail = QString("关键端口不可达: %1").arg(missingPorts);
-            }
-            return false;
-        }
-    }
-
-    if (detail)
-    {
-        if (requirePortsReady)
-        {
-            *detail = "homeUrl/apiUrl 可达，且关键端口均可达";
-        }
-        else
-        {
-            *detail = "homeUrl 与 apiUrl 均可达";
-        }
-    }
-    return true;
+    return;
+  }
+  if (!m_readinessSlowPolling
+      && (m_readinessAttempt == 1 || m_readinessAttempt % 5 == 0))
+    appendLog(QString("[INFO] 等待必要端口：%1（%2/%3）")
+                  .arg(missing.join(','))
+                  .arg(m_readinessAttempt)
+                  .arg(m_maxReadinessAttempts));
+  scheduleReadinessRetry("必要端口尚未监听：" + missing.join(','));
 }
-
-void ProcessService::startExternalLogTailing()
-{
-    if (m_externalLogTailingStarted)
-    {
-        return;
+void ProcessService::probeHealthEndpoint() {
+  QString u = ConfigManager::instance()
+                  ->value("service/healthUrl")
+                  .toString()
+                  .trimmed();
+  if (u.isEmpty())
+    u = ConfigManager::instance()->homeUrl();
+  int gen = m_readinessGeneration;
+  QNetworkReply *r = m_networkManager->get(QNetworkRequest(QUrl(u)));
+  configureProbeTimeout(r);
+  connect(r, &QNetworkReply::finished, this, [this, r, gen]() {
+    int status = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (m_stopping || gen != m_readinessGeneration) {
+      r->deleteLater();
+      return;
     }
-
-    const bool enabled = ConfigManager::instance()->value("service/externalLogTailEnabled", true).toBool();
-    if (!enabled)
-    {
-        return;
+    bool reached = r->error() == QNetworkReply::NoError || status > 0;
+    r->deleteLater();
+    if (!reached || status < 200 || status >= 400) {
+      m_probeInFlight = false;
+      scheduleReadinessRetry(QString("健康接口尚未就绪，HTTP 状态=%1").arg(status));
+      return;
     }
-
-    const QStringList files = resolveExternalLogFiles();
-    if (files.isEmpty())
-    {
-        appendLog("[INFO] 未配置可跟踪的外部日志文件（可配置 service/logFiles）");
-        return;
-    }
-
-    m_externalLogFiles = files;
-    m_externalLogOffsets.clear();
-
-    for (const QString &path : m_externalLogFiles)
-    {
-        QFile file(path);
-        if (file.open(QIODevice::ReadOnly))
-        {
-            m_externalLogOffsets.insert(path, file.size());
-            file.close();
-        }
-        else
-        {
-            m_externalLogOffsets.insert(path, 0);
-        }
-    }
-
-    int intervalMs = ConfigManager::instance()->value("service/externalLogTailIntervalMs", 1000).toInt();
-    if (intervalMs < 300)
-    {
-        intervalMs = 300;
-    }
-    m_externalLogTimer->setInterval(intervalMs);
-    m_externalLogTimer->start();
-    m_externalLogTailingStarted = true;
-
-    appendLog(QString("[INFO] 已启用外部日志跟踪，文件数=%1，轮询间隔=%2ms").arg(m_externalLogFiles.size()).arg(intervalMs));
-    for (const QString &path : m_externalLogFiles)
-    {
-        appendLog(QString("[INFO] 日志文件: %1").arg(path));
-        appendHistoricalLogPreview(path, [this](const QString &line) {
-            appendLog(line);
-        });
-    }
+    probeLoginEndpoint();
+  });
 }
-
-void ProcessService::stopExternalLogTailing()
-{
-    if (m_externalLogTimer)
-    {
-        m_externalLogTimer->stop();
+void ProcessService::probeLoginEndpoint() {
+  QUrl u(ConfigManager::instance()->apiUrl());
+  QString p = u.path();
+  if (!p.endsWith('/'))
+    p += '/';
+  u.setPath(p + "login-by-password");
+  u.setQuery(QString());
+  int gen = m_readinessGeneration;
+  QNetworkReply *r =
+      m_networkManager->sendCustomRequest(QNetworkRequest(u), "OPTIONS");
+  configureProbeTimeout(r);
+  connect(r, &QNetworkReply::finished, this, [this, r, gen]() {
+    int status = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (m_stopping || gen != m_readinessGeneration) {
+      r->deleteLater();
+      return;
     }
-    m_externalLogFiles.clear();
-    m_externalLogOffsets.clear();
-    m_externalLogTailingStarted = false;
+    r->deleteLater();
+    m_probeInFlight = false;
+    bool exists = status >= 200 && status < 500 && status != 404;
+    if (exists) {
+      m_startAttempt = 0;
+      m_readinessAttempt = 0;
+      setServiceReady(true, "本地 outage 已就绪");
+      appendLog("[SUCCESS] 进程、端口、健康地址和登录接口均已就绪");
+    } else {
+      scheduleReadinessRetry(QString("登录接口尚未就绪，HTTP 状态=%1").arg(status));
+    }
+  });
 }
-
-void ProcessService::pollExternalLogFiles()
-{
-    if (m_externalLogFiles.isEmpty())
-    {
-        return;
-    }
-
-    for (const QString &path : m_externalLogFiles)
-    {
-        QFile file(path);
-        if (!file.exists())
-        {
-            continue;
-        }
-        if (!file.open(QIODevice::ReadOnly))
-        {
-            continue;
-        }
-
-        qint64 offset = m_externalLogOffsets.value(path, 0);
-        if (offset < 0)
-        {
-            offset = 0;
-        }
-        if (file.size() < offset)
-        {
-            offset = 0;
-        }
-        if (!file.seek(offset))
-        {
-            file.close();
-            continue;
-        }
-
-        const QByteArray data = file.readAll();
-        offset = file.pos();
-        file.close();
-        m_externalLogOffsets.insert(path, offset);
-
-        if (data.isEmpty())
-        {
-            continue;
-        }
-
-        const QString text = decodeExternalLogData(data);
-        const QStringList lines = text.split("\n", QString::SkipEmptyParts);
-        const QString fileName = QFileInfo(path).fileName();
-        for (const QString &line : lines)
-        {
-            const QString trimmed = line.trimmed();
-            if (!trimmed.isEmpty())
-            {
-                appendLog(QString("[EXTLOG][%1] %2").arg(fileName, trimmed));
-            }
-        }
-    }
+void ProcessService::finishReadinessProbe(bool ready, const QString &m) {
+  m_probeInFlight = false;
+  setServiceReady(ready, m);
+  appendLog(QString("[%1] %2").arg(ready ? "SUCCESS" : "ERROR", m));
 }
-
-QStringList ProcessService::resolveExternalLogFiles() const
-{
-    auto collectExistingUniquePaths = [](const QStringList &paths) -> QStringList {
-        QStringList result;
-        QSet<QString> seen;
-        for (const QString &path : paths)
-        {
-            const QString normalized = QDir::cleanPath(path);
-            if (normalized.isEmpty() || seen.contains(normalized))
-            {
-                continue;
-            }
-            if (!QFileInfo::exists(normalized))
-            {
-                continue;
-            }
-            seen.insert(normalized);
-            result << normalized;
-        }
-        return result;
-    };
-
-    QString raw = ConfigManager::instance()->value("service/logFiles", "").toString();
-    raw.replace("\r", "\n");
-    raw.replace(";", "\n");
-    raw.replace(",", "\n");
-
-    QStringList configuredItems = raw.split("\n", QString::SkipEmptyParts);
-    for (QString &item : configuredItems)
-    {
-        item = item.trimmed();
-    }
-
-    QStringList candidates;
-    for (const QString &item : configuredItems)
-    {
-        if (item.isEmpty())
-        {
-            continue;
-        }
-
-        QFileInfo info(item);
-        if (info.isAbsolute())
-        {
-            candidates << QDir::toNativeSeparators(info.absoluteFilePath());
-            continue;
-        }
-
-        const QString workDir = resolveServiceWorkDir();
-        if (!workDir.isEmpty())
-        {
-            const QString fullPath = QDir(workDir).filePath(item);
-            candidates << QDir::toNativeSeparators(QFileInfo(fullPath).absoluteFilePath());
-        }
-    }
-
-    const QString resolvedWorkDir = resolveServiceWorkDir();
-    const QString resolvedScriptPath = resolveServiceScriptPath();
-    if (candidates.isEmpty() && isOriginalOutageScript(resolvedScriptPath, resolvedWorkDir))
-    {
-        const QStringList outageLogFiles = collectOriginalOutageLogFiles();
-        if (!outageLogFiles.isEmpty())
-        {
-            return collectExistingUniquePaths(outageLogFiles);
-        }
-    }
-
-    if (candidates.isEmpty())
-    {
-        const QString workDir = resolvedWorkDir;
-        const QString appDir = QCoreApplication::applicationDirPath();
-        QStringList fallbackCandidates;
-        if (!workDir.isEmpty())
-        {
-            fallbackCandidates << QDir(workDir).filePath("service_startup.log")
-                               << QDir(workDir).filePath("logs/application.log")
-                               << QDir(workDir).filePath("logs/kids-api.log")
-                               << QDir(workDir).filePath("logs/backend.log");
-        }
-        fallbackCandidates << QDir(appDir).filePath("service_startup.log")
-                           << QDir(appDir).filePath("../service_startup.log")
-                           << QDir(appDir).filePath("../../service_startup.log");
-
-        for (const QString &path : fallbackCandidates)
-        {
-            candidates << QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath());
-        }
-    }
-
-    QStringList result = collectExistingUniquePaths(candidates);
-
-    if (result.isEmpty())
-    {
-        candidates.clear();
-
-        const QString todayIso = QDate::currentDate().toString("yyyy-MM-dd");
-        const QString todayMonth = QDate::currentDate().toString("yyyyMM");
-        const QString appDir = QCoreApplication::applicationDirPath();
-
-        const QStringList todayCandidates = {
-            QDir(appDir).filePath("service_startup.log"),
-            QString("/home/linaro/outage/target/kids/log/info-%1.log").arg(todayIso),
-            QString("/home/linaro/outage/target/kids/log/error-%1.log").arg(todayIso),
-            QDir(appDir).filePath(QString("log-%1.txt").arg(todayMonth)),
-            QDir(appDir).filePath("run.log"),
-            QStringLiteral("/home/linaro/run.log")};
-
-        for (const QString &path : todayCandidates)
-        {
-            if (QFileInfo::exists(path))
-            {
-                candidates << QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath());
-            }
-        }
-
-        appendLatestMatchingFile(candidates,
-                                 QStringLiteral("/home/linaro/outage/target/kids/log"),
-                                 QStringList() << QStringLiteral("info-*.log")
-                                               << QStringLiteral("error-*.log"));
-        appendLatestMatchingFile(candidates,
-                                 appDir,
-                                 QStringList() << QStringLiteral("log-*.txt")
-                                               << QStringLiteral("run*.log"));
-        appendLatestMatchingFile(candidates,
-                                 QStringLiteral("/home/linaro"),
-                                 QStringList() << QStringLiteral("log-*.txt")
-                                               << QStringLiteral("run*.log"));
-
-#ifdef Q_OS_WIN
-        appendLatestMatchingFile(candidates,
-                                 QDir(appDir).filePath("logs"),
-                                 QStringList() << QStringLiteral("service_startup.log")
-                                               << QStringLiteral("application.log")
-                                               << QStringLiteral("kids-api.log")
-                                               << QStringLiteral("backend.log"));
-        appendLatestMatchingFile(candidates,
-                                 appDir,
-                                 QStringList() << QStringLiteral("service_startup.log")
-                                               << QStringLiteral("run*.log")
-                                               << QStringLiteral("log-*.txt"));
-#else
-        appendLatestMatchingFile(candidates,
-                                 appDir,
-                                 QStringList() << QStringLiteral("log-*.txt")
-                                               << QStringLiteral("run*.log"));
-#endif
-    }
-
-    if (result.isEmpty())
-    {
-        result = collectExistingUniquePaths(candidates);
-    }
-
-    return result;
+void ProcessService::configureProbeTimeout(QNetworkReply *r) {
+  int t = qBound(500,
+                 ConfigManager::instance()
+                     ->value("service/readinessProbeTimeoutMs", 3000)
+                     .toInt(),
+                 10000);
+  QTimer::singleShot(t, r, [r]() {
+    if (r->isRunning())
+      r->abort();
+  });
+}
+void ProcessService::onProcessReadyReadOutput() {
+  if (!m_process)
+    return;
+  for (QString s : lines(decode(m_process->readAllStandardOutput())))
+    if (!m_serviceReady || important(s))
+      appendLog("[START] " + s);
+}
+void ProcessService::onProcessReadyReadError() {
+  if (!m_process)
+    return;
+  for (QString s : lines(decode(m_process->readAllStandardError())))
+    appendLog("[START][STDERR] " + s);
+}
+void ProcessService::onProcessFinished(int code, int status) {
+  m_startInProgress = false;
+  if (m_stopping)
+    return;
+  bool ready = m_serviceReady;
+  setServiceReady(false, "本地 outage 进程已退出");
+  appendLog(QString("[ERROR] outage 异常退出：exitCode=%1 exitStatus=%2 "
+                    "previouslyReady=%3")
+                .arg(code)
+                .arg(status)
+                .arg(ready ? "true" : "false"));
+  scheduleStartRetry("outage 进程退出");
+}
+void ProcessService::onProcessError(int e) {
+  m_startInProgress = false;
+  appendLog(QString("[ERROR] 启动进程错误=%1").arg(e));
+  if (!m_stopping)
+    scheduleStartRetry("QProcess error");
+}
+void ProcessService::scheduleStartRetry(const QString &r) {
+  if (m_stopping || m_startAttempt >= m_maxStartRetries) {
+    appendLog("[ERROR] 已停止启动重试：" + r);
+    return;
+  }
+  if (!m_startRetryTimer->isActive()) {
+    appendLog("[WARN] 2 秒后重试本地 outage：" + r);
+    m_startRetryTimer->start();
+  }
+}
+void ProcessService::onStartRetryTimeout() { startLocalServices(); }
+QString ProcessService::serviceStartupLogPath() const {
+  return QDir::toNativeSeparators(QDir(QCoreApplication::applicationDirPath())
+                                      .filePath("service_startup.log"));
+}
+void ProcessService::resetServiceStartupLog() {
+  m_logFileFlushTimer->stop();
+  m_pendingFileLogs.clear();
+  QFile f(serviceStartupLogPath());
+  if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+    f.close();
+}
+void ProcessService::appendServiceStartupLogLine(const QString &t) {
+  QString s = t.trimmed();
+  if (s.isEmpty())
+    return;
+  m_pendingFileLogs << s;
+  if (!m_logFileFlushTimer->isActive())
+    m_logFileFlushTimer->start();
+}
+void ProcessService::flushServiceStartupLog() {
+  if (m_pendingFileLogs.isEmpty())
+    return;
+  QStringList b = m_pendingFileLogs;
+  m_pendingFileLogs.clear();
+  QFile f(serviceStartupLogPath());
+  if (!f.open(QIODevice::WriteOnly | QIODevice::Append))
+    return;
+  f.write(b.join('\n').toUtf8());
+  f.write("\n");
+}
+void ProcessService::appendLog(const QString &t) {
+  if (t.contains("[ERROR]", Qt::CaseInsensitive)) {
+    LOG_ERROR("SERVICE", t);
+    LOG_INCIDENT("SERVICE", t);
+  } else if (t.contains("[SUCCESS]", Qt::CaseInsensitive) ||
+             t.contains("[STOP]", Qt::CaseInsensitive))
+    LOG_INFO("SERVICE", t);
+  emit logGenerated(t);
+  appendServiceStartupLogLine(t);
+}
+void ProcessService::disposeScriptProcess() {
+  if (!m_process)
+    return;
+  if (m_process->state() != QProcess::NotRunning) {
+    m_process->kill();
+    m_process->waitForFinished(2000);
+  }
+  m_process->deleteLater();
+  m_process = nullptr;
 }

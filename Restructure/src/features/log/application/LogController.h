@@ -13,7 +13,7 @@ class LogController : public QObject
 {
     Q_OBJECT
 public:
-    explicit LogController(IProcessService *processService = nullptr, QObject *parent = nullptr);
+    explicit LogController(IProcessService *processService, QObject *parent = nullptr);
     ~LogController() override = default;
 
     void start();

@@ -111,6 +111,13 @@ void CardSerialSource::openTransport()
         return;
     }
 
+    const QString configuredValue = ConfigManager::instance()->cardSerialPort().trimmed();
+    if (ConfigManager::isSerialPortDisabled(configuredValue))
+    {
+        reportStatus(Unconfigured, QStringLiteral("读卡串口已停用"));
+        return;
+    }
+
     const QString portName = configuredPortName();
     if (portName.isEmpty())
     {
@@ -237,6 +244,10 @@ void CardSerialSource::reportStatus(ReaderStatus status, const QString &message)
 QString CardSerialSource::configuredPortName() const
 {
     QString portName = ConfigManager::instance()->cardSerialPort().trimmed();
+    if (ConfigManager::isSerialPortDisabled(portName))
+    {
+        return QString();
+    }
 #ifdef Q_OS_LINUX
     if (portName.isEmpty())
     {

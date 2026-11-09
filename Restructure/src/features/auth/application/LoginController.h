@@ -10,12 +10,13 @@
 #include <QStringList>
 
 class AuthFlowCoordinator;
+class IAuthService;
 
 class LoginController : public QObject
 {
     Q_OBJECT
 public:
-    explicit LoginController(AuthFlowCoordinator *flow = nullptr, QObject *parent = nullptr);
+    explicit LoginController(AuthFlowCoordinator *flow, IAuthService *authService, QObject *parent = nullptr);
     ~LoginController() override = default;
 
     void login(const QString &username, const QString &password);
@@ -33,6 +34,7 @@ signals:
 
 private:
     AuthFlowCoordinator *m_flow;
+    IAuthService *m_authService;
 };
 
 #endif // LOGINCONTROLLER_H

@@ -6,6 +6,7 @@
 #include "workbenchpage.h"
 #include "ui_workbenchpage.h"
 #include "features/keyboard/ui/KeyboardContainer.h"
+#include "platform/logging/LogService.h"
 #include <QWebEnginePage>
 #include <QVBoxLayout>
 #include <QDebug>
@@ -78,22 +79,33 @@ QString maskedUrl(const QUrl &url)
     safeUrl.setQuery(query);
     return safeUrl.toString();
 }
+
+QString webEngineRuntimeSummary()
+{
+    return QStringLiteral("qt=%1 openGl=%2 xcbGl=%3 xcbNoXi2=%4 chromiumFlags=\"%5\"")
+            .arg(QString::fromLatin1(qVersion()))
+            .arg(qEnvironmentVariable("QT_OPENGL", QStringLiteral("<unset>")))
+            .arg(qEnvironmentVariable("QT_XCB_GL_INTEGRATION", QStringLiteral("<unset>")))
+            .arg(qEnvironmentVariable("QT_XCB_NO_XI2", QStringLiteral("<unset>")))
+            .arg(qEnvironmentVariable("QTWEBENGINE_CHROMIUM_FLAGS", QStringLiteral("<unset>")));
+}
 }
 
 /**
  * @brief 构造函数
  * @param parent 父窗口指针
  */
-WorkbenchPage::WorkbenchPage(QWidget *parent)
+WorkbenchPage::WorkbenchPage(IAuthService *auth, QWidget *parent)
     : QWidget(parent),
       ui(new Ui::WorkbenchPage),
       m_webView(nullptr),
-      m_controller(new WorkbenchController(nullptr, this)),
+      m_controller(new WorkbenchController(auth, this)),
       m_webViewInitialized(false),
       m_renderProcessTerminated(false),
       m_reloadScheduled(false)
       , m_recreatePageOnReload(false)
       , m_pendingBusinessReload(false)
+      , m_stabilityGeneration(0)
       , m_reloadAttemptCount(0)
 {
     ui->setupUi(this);
@@ -214,7 +226,21 @@ void WorkbenchPage::initWebView()
         if (ok) {
             m_renderProcessTerminated = false;
             m_reloadScheduled = false;
-            m_reloadAttemptCount = 0;
+            const int stabilityGeneration = ++m_stabilityGeneration;
+            // A brief successful load must not defeat the renderer crash fuse.
+            QTimer::singleShot(10000, this, [this, stabilityGeneration]() {
+                if (stabilityGeneration == m_stabilityGeneration && !m_renderProcessTerminated) {
+                    m_reloadAttemptCount = 0;
+                    LOG_INFO(QStringLiteral("WEBENGINE"), QStringLiteral("workbench renderer stable for 10 seconds"));
+                }
+            });
+            schedulePageHealthDiagnostic(QStringLiteral("load-finished"));
+        } else {
+            LOG_WARNING(QStringLiteral("WEBENGINE"),
+                        QStringLiteral("workbench load failed url=%1 visible=%2 recoveryAttempt=%3")
+                        .arg(maskedUrl(m_webView ? m_webView->url() : QUrl()))
+                        .arg(isVisible() ? QStringLiteral("true") : QStringLiteral("false"))
+                        .arg(m_reloadAttemptCount));
         }
         if (workbenchWebDebugEnabled()) {
             if (ok) {
@@ -224,6 +250,7 @@ void WorkbenchPage::initWebView()
             }
         }
 
+#ifdef Q_OS_LINUX
         // 触摸拖拽滚动 shim：补全 Qt 触摸合成器在 QT_XCB_NO_XI2=1 下丢失的滚动能力
         // 根因：XI2 关闭后拖拽只发 buttons=1 的 pointermove，不发 pointerdown，
         //       uni-app scroll-view 等不到 pointerdown 无法识别滚动手势。
@@ -314,6 +341,8 @@ void WorkbenchPage::initWebView()
                 qDebug() << "[WorkbenchPage] 触摸滚动shim注入结果:" << r.toString();
             });
         }
+
+#endif
 
         // API 操作反馈 shim：H5 某些 POST 接口返回 {success:true} 但无 msg，导致页面无任何提示。
         // 拦截 fetch，检测到 success=true 且无 msg 时主动弹 toast。
@@ -485,7 +514,17 @@ void WorkbenchPage::attachDebugPage(bool recreate)
             [this](QWebEnginePage::RenderProcessTerminationStatus terminationStatus, int exitCode)
             {
         m_renderProcessTerminated = true;
+        ++m_stabilityGeneration;
         m_recreatePageOnReload = true;
+        LOG_INCIDENT(QStringLiteral("WEBENGINE"),
+                     QStringLiteral("renderer terminated status=%1 exitCode=%2 recoveryAttempt=%3 "
+                                    "visible=%4 url=%5 %6")
+                     .arg(static_cast<int>(terminationStatus))
+                     .arg(exitCode)
+                     .arg(m_reloadAttemptCount)
+                     .arg(isVisible() ? QStringLiteral("true") : QStringLiteral("false"))
+                     .arg(maskedUrl(m_webView ? m_webView->url() : QUrl()))
+                     .arg(webEngineRuntimeSummary()));
         qWarning() << "[WorkbenchPage] 工作台渲染进程终止:"
                    << "status=" << terminationStatus
                    << "exitCode=" << exitCode
@@ -532,6 +571,14 @@ void WorkbenchPage::loadWorkbench()
 /**
  * @brief 页面显示事件 - 首次显示或 token 变化时才重新加载
  */
+void WorkbenchPage::applyLayoutProfile(const UiLayoutProfile &profile)
+{
+    Q_UNUSED(profile);
+    ui->mainLayout->setContentsMargins(0, 0, 0, 0);
+    if (m_webView && ui->webViewContainer)
+        m_webView->resize(ui->webViewContainer->size());
+}
+
 void WorkbenchPage::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
@@ -561,6 +608,7 @@ void WorkbenchPage::showEvent(QShowEvent *event)
     if (m_webView) {
         m_webView->show();
         m_webView->update();
+        schedulePageHealthDiagnostic(QStringLiteral("page-shown"));
     }
 }
 
@@ -593,17 +641,32 @@ void WorkbenchPage::scheduleWorkbenchReload()
 
     constexpr int kMaxReloadAttempts = 5;
     if (m_reloadAttemptCount >= kMaxReloadAttempts) {
+        LOG_INCIDENT(QStringLiteral("WEBENGINE"),
+                     QStringLiteral("automatic renderer recovery stopped after %1 attempts url=%2 %3")
+                     .arg(kMaxReloadAttempts)
+                     .arg(maskedUrl(m_webView ? m_webView->url() : QUrl()))
+                     .arg(webEngineRuntimeSummary()));
         qWarning() << "[WorkbenchPage] 工作台渲染恢复已达最大重试次数"
                    << kMaxReloadAttempts << "次，停止自动恢复，需人工重启设备";
         return;
     }
 
     if (m_reloadCooldownTimer.isValid() && m_reloadCooldownTimer.elapsed() < 1200) {
-        qWarning() << "[WorkbenchPage] 工作台恢复重载已在冷却中，跳过本次重复触发";
+        const int remainingMs = 1200 - static_cast<int>(m_reloadCooldownTimer.elapsed());
+        if (!m_reloadScheduled) {
+            m_reloadScheduled = true;
+            // A second crash during cooldown is retried after the remaining delay.
+            QTimer::singleShot(remainingMs, this, [this]() {
+                m_reloadScheduled = false;
+                scheduleWorkbenchReload();
+            });
+        }
         return;
     }
 
     m_reloadAttemptCount++;
+    LOG_WARNING(QStringLiteral("WEBENGINE"),
+                QStringLiteral("scheduling renderer recovery attempt=%1").arg(m_reloadAttemptCount));
 
     m_reloadScheduled = true;
     QTimer::singleShot(300, this, [this]() {
@@ -625,6 +688,103 @@ void WorkbenchPage::scheduleWorkbenchReload()
         qWarning() << "[WorkbenchPage] 尝试重新加载工作台，以恢复白屏/渲染异常"
                    << "attempt=" << m_reloadAttemptCount;
         loadWorkbench();
+    });
+}
+
+void WorkbenchPage::schedulePageHealthDiagnostic(const QString &trigger)
+{
+    if (!m_webView || !m_webView->page()) {
+        return;
+    }
+
+    const int generation = m_stabilityGeneration;
+    QTimer::singleShot(3000, this, [this, generation, trigger]() {
+        if (!m_webView || !m_webView->page() || !isVisible()
+                || m_renderProcessTerminated || generation != m_stabilityGeneration) {
+            return;
+        }
+
+        static const QString script = QStringLiteral(R"JS(
+(function() {
+    const body = document.body;
+    const root = document.documentElement;
+    if (!body || !root) {
+        return JSON.stringify({ readyState: document.readyState, body: false });
+    }
+
+    const width = Math.max(root.clientWidth || 0, window.innerWidth || 0);
+    const height = Math.max(root.clientHeight || 0, window.innerHeight || 0);
+    let visibleElements = 0;
+    const nodes = body.querySelectorAll('*');
+    // Bound the one-shot check so diagnostics cannot become a workbench hot path.
+    const limit = Math.min(nodes.length, 500);
+    for (let i = 0; i < limit; ++i) {
+        const element = nodes[i];
+        const style = window.getComputedStyle(element);
+        if (style.display === 'none' || style.visibility === 'hidden'
+                || Number(style.opacity || '1') <= 0.01) {
+            continue;
+        }
+        const rect = element.getBoundingClientRect();
+        if (rect.width >= 8 && rect.height >= 8 && rect.right > 0 && rect.bottom > 0
+                && rect.left < width && rect.top < height) {
+            ++visibleElements;
+            if (visibleElements >= 3) break;
+        }
+    }
+
+    return JSON.stringify({
+        readyState: document.readyState,
+        body: true,
+        width: width,
+        height: height,
+        visibleElements: visibleElements,
+        textLength: (body.innerText || '').trim().length
+    });
+})()
+)JS");
+
+        m_webView->page()->runJavaScript(script, [this, generation, trigger](const QVariant &result) {
+            if (!m_webView || !isVisible() || m_renderProcessTerminated
+                    || generation != m_stabilityGeneration) {
+                return;
+            }
+
+            const QJsonDocument document = QJsonDocument::fromJson(result.toString().toUtf8());
+            if (!document.isObject()) {
+                LOG_WARNING(QStringLiteral("WEBENGINE"),
+                            QStringLiteral("page health diagnostic returned invalid data trigger=%1")
+                            .arg(trigger));
+                return;
+            }
+
+            const QJsonObject health = document.object();
+            const bool hasBody = health.value(QStringLiteral("body")).toBool(false);
+            const QString readyState = health.value(QStringLiteral("readyState")).toString();
+            const int width = health.value(QStringLiteral("width")).toInt();
+            const int height = health.value(QStringLiteral("height")).toInt();
+            const int visibleElements = health.value(QStringLiteral("visibleElements")).toInt();
+            const int textLength = health.value(QStringLiteral("textLength")).toInt();
+            const bool suspicious = !hasBody || width <= 0 || height <= 0
+                    || (readyState == QLatin1String("complete")
+                        && visibleElements <= 1 && textLength == 0);
+            if (!suspicious) {
+                return;
+            }
+
+            LOG_INCIDENT(QStringLiteral("WEBENGINE"),
+                         QStringLiteral("page health suspicious trigger=%1 readyState=%2 body=%3 "
+                                        "viewport=%4x%5 visibleElements=%6 textLength=%7 url=%8 %9")
+                         .arg(trigger)
+                         .arg(readyState)
+                         .arg(hasBody ? QStringLiteral("true") : QStringLiteral("false"))
+                         .arg(width)
+                         .arg(height)
+                         .arg(visibleElements)
+                         .arg(textLength)
+                         .arg(maskedUrl(m_webView->url()))
+                         .arg(webEngineRuntimeSummary()));
+        });
     });
 }
 

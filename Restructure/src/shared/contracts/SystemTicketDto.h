@@ -28,6 +28,7 @@ struct SystemTicketDto
     QString transferState;
     QString lastError;
     QString returnState;
+    QString returnOutcome;
     QString returnError;
     QString cancelState;    // none | cancel-accepted | cancel-pending | cancel-executing | cancel-done | cancel-failed
     QString residentSlotId;
@@ -36,7 +37,6 @@ struct SystemTicketDto
     QString cancelSource;
     bool wasInKey = false;
     QString stateDetail;
-    QString jsonPath;
     QDateTime receivedAt;
     bool valid = false;
     AdminDeleteStage adminDeleteStage = AdminDeleteStage::None;

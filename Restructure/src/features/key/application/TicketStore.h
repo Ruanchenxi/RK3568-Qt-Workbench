@@ -1,6 +1,6 @@
 /**
  * @file TicketStore.h
- * @brief 系统票池（内存 + 磁盘持久化 + 原始 JSON 索引）
+ * @brief 当前进程内的票据模型与原始 JSON 索引
  */
 #ifndef TICKETSTORE_H
 #define TICKETSTORE_H
@@ -11,6 +11,9 @@
 #include <QHash>
 
 #include "shared/contracts/SystemTicketDto.h"
+#include "features/key/domain/TicketReturnState.h"
+#include "features/key/domain/TicketTransferState.h"
+#include "features/key/domain/TicketCancelState.h"
 
 class TicketStore : public QObject
 {
@@ -18,27 +21,24 @@ class TicketStore : public QObject
 public:
     explicit TicketStore(QObject *parent = nullptr);
 
-    // 持久化
-    void loadFromDisk();
-
     bool ingestJson(const QByteArray &jsonBytes,
-                    const QString &jsonPath,
                     QString *errorMsg = nullptr);
-    bool ingestOrphanTicket(const QString &taskId,
-                            const QString &residentSlotId = QStringLiteral("slot-1"));
     bool updateTransferState(const QString &taskId,
-                             const QString &state,
+                             TicketTransferState state,
                              const QString &lastError = QString());
     bool updateTransferTriggerSource(const QString &taskId,
                                      const QString &source);
     bool markKeyTaskDeleted(const QString &taskId);
+    // Stores only named return workflow meanings; raw labels are confined to
+    // the domain codec for temporary DTO compatibility.
     bool updateReturnState(const QString &taskId,
-                           const QString &state,
-                           const QString &returnError = QString());
+                           TicketReturnState state,
+                           const QString &returnError = QString(),
+                           TicketReturnOutcome outcome = TicketReturnOutcome::None);
     bool updateCancelState(const QString &taskId,
-                           const QString &state);
+                           TicketCancelState state);
     bool updateCancelTracking(const QString &taskId,
-                              const QString &state,
+                              TicketCancelState state,
                               const QString &cancelSource = QString(),
                               const QString &residentSlotId = QString(),
                               const QString &residentKeyId = QString(),
@@ -60,11 +60,8 @@ signals:
 
 private:
     static bool buildDto(const QByteArray &jsonBytes,
-                         const QString &jsonPath,
                          SystemTicketDto &dto,
                          QString *errorMsg);
-    void saveToDisk() const;
-    static QString storePath();
 
     QList<SystemTicketDto> m_tickets;
     QHash<QString, QByteArray> m_rawJsonByTaskId;

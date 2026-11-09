@@ -44,7 +44,8 @@ QString TicketReturnHttpClient::configuredUrl() const
     return apiBase + QStringLiteral("/finish-step-batch");
 }
 
-void TicketReturnHttpClient::uploadReturnPayload(const QJsonObject &payload)
+void TicketReturnHttpClient::uploadReturnPayload(const QJsonObject &payload,
+                                                       int keySessionId)
 {
     const QString taskId = payload.value("taskId").toString();
     const int stationNo = payload.value("stationNo").toInt();
@@ -58,7 +59,7 @@ void TicketReturnHttpClient::uploadReturnPayload(const QJsonObject &payload)
     if (!isConfigured()) {
         const QString reason = QStringLiteral("回传接口未配置或地址无效");
         emit logAppended(QStringLiteral("[%1] 收到响应数据：\n%2").arg(nowText(), reason));
-        emit uploadFailed(taskId, reason);
+        emit uploadFailed(taskId, keySessionId, reason);
         return;
     }
 
@@ -82,7 +83,7 @@ void TicketReturnHttpClient::uploadReturnPayload(const QJsonObject &payload)
     });
     timeoutTimer->start();
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, timeoutTimer, taskId]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, timeoutTimer, taskId, keySessionId]() {
         timeoutTimer->stop();
         const QByteArray responseBody = reply->readAll();
         const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -108,14 +109,14 @@ void TicketReturnHttpClient::uploadReturnPayload(const QJsonObject &payload)
 
         reply->deleteLater();
         if (success) {
-            emit uploadSucceeded(taskId);
+            emit uploadSucceeded(taskId, keySessionId);
             return;
         }
 
         if (reason.trimmed().isEmpty()) {
             reason = QStringLiteral("回传接口返回失败");
         }
-        emit uploadFailed(taskId, reason);
+        emit uploadFailed(taskId, keySessionId, reason);
     });
 }
 

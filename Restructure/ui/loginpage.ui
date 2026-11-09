@@ -124,6 +124,10 @@
     border-color: #2E7D32;
 }
 
+#usernameEdit[linkedFocus=&quot;true&quot;] {
+    border-color: #2E7D32;
+}
+
 #selectAccountBtn {
     background-color: #F4F7F1;
     color: #2E7D32;

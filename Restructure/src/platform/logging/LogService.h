@@ -14,6 +14,7 @@
 #include <QTextStream>
 #include <QDateTime>
 #include <QMutex>
+#include <QStringList>
 
 /**
  * @brief 日志级别枚举
@@ -71,6 +72,7 @@ public:
     void warning(const QString &module, const QString &message);
     void error(const QString &module, const QString &message);
     void fatal(const QString &module, const QString &message);
+    void incident(const QString &module, const QString &message);
 
     /**
      * @brief 记录操作审计日志（用于安全审计）
@@ -104,6 +106,12 @@ public:
      */
     void setFileOutput(bool enabled);
 
+    // Returns only entries written through LogService during this process run.
+    // The bounded snapshot is intended for one-click diagnostic export.
+    QString currentRunLogText() const;
+    // Copies the bounded current-run buffer without formatting it on the caller thread.
+    QStringList currentRunLogLines() const;
+
 signals:
     /**
      * @brief 新日志记录信号（用于界面实时显示）
@@ -124,8 +132,10 @@ private:
     QString m_logFilePath;
     QFile *m_logFile;
     QTextStream *m_logStream;
-    QMutex m_mutex;
-    qint64 m_maxFileSize; // 最大文件大小（字节）
+    mutable QMutex m_mutex;
+    qint64 m_maxFileSize;
+    QDate m_logDate; // 最大文件大小（字节）
+    QStringList m_currentRunLines;
 };
 
 // ========== 便捷宏定义 ==========
@@ -134,6 +144,7 @@ private:
 #define LOG_WARNING(module, msg) LogService::instance()->warning(module, msg)
 #define LOG_ERROR(module, msg) LogService::instance()->error(module, msg)
 #define LOG_FATAL(module, msg) LogService::instance()->fatal(module, msg)
+#define LOG_INCIDENT(module, msg) LogService::instance()->incident(module, msg)
 #define LOG_AUDIT(op, target, result, details) LogService::instance()->audit(op, target, result, details)
 
 #endif // LOGSERVICE_H

@@ -392,7 +392,7 @@ QFrame#logShellDetailCard {
     <item>
      <widget class="QStackedWidget" name="contentStackedWidget">
       <property name="currentIndex">
-       <number>1</number>
+       <number>0</number>
       </property>
       <widget class="QWidget" name="loginPage">
        <layout class="QVBoxLayout" name="loginPageLayout">
@@ -1361,7 +1361,7 @@ QFrame#logShellDetailCard {
        <item>
         <widget class="QLabel" name="companyLabel">
          <property name="text">
-          <string>珠海市云望科技有限公司</string>
+          <string/>
          </property>
         </widget>
        </item>

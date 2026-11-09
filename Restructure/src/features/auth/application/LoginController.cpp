@@ -6,15 +6,16 @@
 
 #include "core/ConfigManager.h"
 #include "features/auth/application/AuthFlowCoordinator.h"
-#include "features/auth/infra/password/authservice.h"
+#include "shared/contracts/IAuthService.h"
 
-LoginController::LoginController(AuthFlowCoordinator *flow, QObject *parent)
+#include <QtGlobal>
+LoginController::LoginController(AuthFlowCoordinator *flow, IAuthService *authService, QObject *parent)
     : QObject(parent)
     , m_flow(flow)
+    , m_authService(authService)
 {
-    if (!m_flow) {
-        m_flow = new AuthFlowCoordinator(nullptr, this);
-    }
+    Q_ASSERT(m_flow);
+    Q_ASSERT(m_authService);
 
     connect(m_flow, &AuthFlowCoordinator::loginSucceeded,
             this, &LoginController::loginSucceeded);
@@ -22,11 +23,11 @@ LoginController::LoginController(AuthFlowCoordinator *flow, QObject *parent)
             this, &LoginController::loginFailed);
     connect(m_flow, &AuthFlowCoordinator::loginStateChanged,
             this, &LoginController::loginStateChanged);
-    connect(AuthService::instance(), &AuthService::accountListReady,
+    connect(m_authService, &IAuthService::accountListReady,
             this, &LoginController::accountListReady);
-    connect(AuthService::instance(), &AuthService::accountListFailed,
+    connect(m_authService, &IAuthService::accountListFailed,
             this, &LoginController::accountListFailed);
-    connect(AuthService::instance(), &AuthService::accountListStateChanged,
+    connect(m_authService, &IAuthService::accountListStateChanged,
             this, &LoginController::accountListStateChanged);
 }
 
@@ -71,5 +72,5 @@ void LoginController::requestAccountList()
     if (tenantId.isEmpty()) {
         tenantId = QStringLiteral("000000");
     }
-    AuthService::instance()->fetchAccountList(tenantId);
+    m_authService->fetchAccountList(tenantId);
 }

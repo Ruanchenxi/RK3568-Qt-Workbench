@@ -13,6 +13,7 @@
 #include <QPlainTextEdit>
 #include <QTextCursor>
 #include <QTextOption>
+#include <QTimer>
 
 namespace
 {
@@ -31,11 +32,19 @@ void scrollToEnd(QPlainTextEdit *logDisplay)
 LogPage::LogPage(IProcessService *processService, QWidget *parent)
     : QWidget(parent),
       ui(new Ui::LogPage),
-      m_controller(new LogController(processService, this))
+      m_controller(new LogController(processService, this)),
+      m_flushTimer(new QTimer(this))
 {
     ui->setupUi(this);
     ui->logDisplay->setLineWrapMode(QPlainTextEdit::WidgetWidth);
     ui->logDisplay->setWordWrapMode(QTextOption::WrapAnywhere);
+    ui->logDisplay->setUndoRedoEnabled(false);
+    ui->logDisplay->setMaximumBlockCount(1500);
+
+    m_flushTimer->setInterval(150);
+    m_flushTimer->setSingleShot(true);
+    connect(m_flushTimer, &QTimer::timeout,
+            this, &LogPage::flushBufferedLogs);
 
     connect(m_controller, &LogController::logGenerated,
             this, &LogPage::onServiceLogGenerated);
@@ -46,6 +55,14 @@ LogPage::~LogPage()
     delete ui;
 }
 
+void LogPage::applyLayoutProfile(const UiLayoutProfile &profile)
+{
+    const int margin = profile.mode == UiLayoutMode::Compact
+            ? 8 : profile.contentHorizontalMargin;
+    ui->contentLayout->setContentsMargins(margin, margin, margin, margin);
+    ui->contentLayout->setSpacing(profile.mode == UiLayoutMode::Compact ? 6 : 10);
+}
+
 void LogPage::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
@@ -54,18 +71,22 @@ void LogPage::showEvent(QShowEvent *event)
 
 void LogPage::flushBufferedLogs()
 {
-    if (!ui || !ui->logDisplay || !isVisible() || m_pendingLogs.isEmpty()) {
+    if (!ui || !ui->logDisplay || !isVisible())
+    {
+        m_flushTimer->stop();
+        return;
+    }
+    if (m_pendingLogs.isEmpty())
+    {
         return;
     }
 
-    // 合并为一次 appendPlainText，避免逐行追加在 ARM 上卡顿
-    const QString batch = m_pendingLogs.join('\n');
+    // One document update per interval keeps log traffic off the hot UI path.
+    const QString batch = m_pendingLogs.join(QLatin1Char('\n'));
     m_pendingLogs.clear();
-
     ui->logDisplay->appendPlainText(batch);
     scrollToEnd(ui->logDisplay);
 }
-
 void LogPage::onServiceLogGenerated(const QString &text)
 {
     appendOrBufferLog(text);
@@ -78,16 +99,15 @@ void LogPage::appendOrBufferLog(const QString &text)
         return;
     }
 
-    if (!isVisible()) {
-        m_pendingLogs.append(text);
-        // 限制缓冲区，只保留最近 300 条，防止长时间隐藏后 flush 卡顿
-        constexpr int kMaxPending = 300;
-        if (m_pendingLogs.size() > kMaxPending) {
-            m_pendingLogs.removeFirst();
-        }
-        return;
+    m_pendingLogs.append(text);
+    constexpr int kMaxPending = 300;
+    while (m_pendingLogs.size() > kMaxPending)
+    {
+        m_pendingLogs.removeFirst();
     }
 
-    ui->logDisplay->appendPlainText(text);
-    scrollToEnd(ui->logDisplay);
+    if (isVisible() && !m_flushTimer->isActive())
+    {
+        m_flushTimer->start();
+    }
 }

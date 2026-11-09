@@ -17,7 +17,7 @@ class KeyProvisioningService : public QObject
 {
     Q_OBJECT
 public:
-    explicit KeyProvisioningService(IAuthService *auth = nullptr, QObject *parent = nullptr);
+    explicit KeyProvisioningService(IAuthService *auth, QObject *parent = nullptr);
     ~KeyProvisioningService() override = default;
 
     bool isBusy() const { return m_requestInFlight; }

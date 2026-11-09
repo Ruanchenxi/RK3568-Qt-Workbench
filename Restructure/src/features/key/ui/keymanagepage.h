@@ -22,13 +22,14 @@
 class QHideEvent;
 class QShowEvent;
 class QTimer;
+class KeyManageController;
 
 #include "shared/contracts/KeyTaskDto.h"
 #include "shared/contracts/SystemTicketDto.h"
 #include "shared/contracts/IKeySessionService.h"
-#include "features/key/application/KeyManageController.h"
-#include "features/key/protocol/LogItem.h"
-#include "features/key/protocol/KeyProtocolDefs.h"
+#include "shared/contracts/LogItem.h"
+#include "shared/ui/UiLayoutProfile.h"
+
 
 namespace Ui {
 class KeyManagePage;
@@ -39,8 +40,11 @@ class KeyManagePage : public QWidget
     Q_OBJECT
 
 public:
-    explicit KeyManagePage(QWidget *parent = nullptr);
+    explicit KeyManagePage(KeyManageController *controller,
+                           QWidget *parent = nullptr);
     ~KeyManagePage();
+    // Applies page geometry only; ticket and protocol state remain controller-owned.
+    void applyLayoutProfile(const UiLayoutProfile &profile);
 
 protected:
     void showEvent(QShowEvent *event) override;
@@ -63,10 +67,8 @@ private slots:
     void onReturnTicket();
 
     // ---- 钥匙 Tab: 获取票列表按钮 ----
-    void onGetSystemTicketList();
     void onReadKeyTicketList();
-    void onClearOrphanKeyTask();
-    void onForceCleanFailedTicket();
+    void onClearUnregisteredKeyTask();
 
     // ---- 串口报文 Tab ----
     void onExpertModeToggled(bool checked);
@@ -81,10 +83,12 @@ private slots:
     void onAckReceived(quint8 ackedCmd);
     void onNakReceived(quint8 origCmd, quint8 errCode);
     void onControllerTimeout(const QString &what);
+    void onTaskQueryTimedOut();
     void onControllerStatusMessage(const QString &what);
     void onLogRowAppended(const LogItem &item);
     void onLogTableRefreshRequested();
     void onLogsCleared();
+    void onLogExportFinished(bool success, const QString &result);
     void onSystemTicketsUpdated(const QList<SystemTicketDto> &tickets);
     void onSelectedSystemTicketChanged(const SystemTicketDto &ticket);
     void onHttpServerLogAppended(const QString &text);
@@ -117,9 +121,6 @@ private:
     void refreshCommSeatLabel();
     static bool shouldSuppressStatusBarMessage(const QString &message);
     static QString ticketTypeText(int taskType);
-    static QString keyTaskStatusText(quint8 status);
-    static QString ticketStateText(const QString &state);
-    static QString ticketStateDescription(const SystemTicketDto &ticket);
     static QString ticketPositionText(const QString &ticketNo, const QString &taskName);
 
     // 串口日志辅助
@@ -127,12 +128,13 @@ private:
     void refreshSerialLogTable();
     QColor dirColor(LogDir dir) const;
     QString dirText(LogDir dir) const;
-    QString cmdText(quint8 cmd) const;
+
     void populateSystemTicketTable(const QList<SystemTicketDto> &tickets);
     void updateSelectedSystemTicketCard(const SystemTicketDto &ticket);
+    void refreshTicketReturnStatusHeight();
     void populateKeyTicketTable(const QList<KeyTaskDto> &tasks);
     void updateAdminButtons();
-    void updateClearOrphanButton();
+    void updateClearUnregisteredButton();
     void updateForceCleanButton();
 
     void updateStatusBar(const QString &message);

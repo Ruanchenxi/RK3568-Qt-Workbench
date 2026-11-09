@@ -20,8 +20,10 @@
 #include <QDateTime>
 #include "app/MainWindowController.h"
 #include "shared/contracts/IKeySessionService.h"
+#include "shared/ui/UiLayoutProfile.h"
 
 // 前向声明
+class AppComposition;
 class LoginPage;
 class WorkbenchPage;
 class KeyManagePage;
@@ -29,11 +31,14 @@ class SystemPage;
 class LogPage;
 class KeyboardContainer;
 class KeyboardController;
-class ProcessService;
+class IProcessService;
 class QPushButton;
 class QWidget;
 class QShowEvent;
 class QCloseEvent;
+class QMoveEvent;
+class QResizeEvent;
+class QScreen;
 
 namespace Ui
 {
@@ -51,7 +56,7 @@ class MainWindow : public QMainWindow
 {
 Q_OBJECT // 让你的类能使用 Qt 的信号槽机制。
 
-    public : explicit MainWindow(QWidget *parent = nullptr);
+    public : explicit MainWindow(AppComposition &composition, QWidget *parent = nullptr);
     ~MainWindow();
 
     /**
@@ -96,6 +101,7 @@ private slots:
 
 private:
     Ui::MainWindow *ui; ///< UI指针
+    AppComposition &m_composition;
 
     // ========== 页面指针 ==========
     LoginPage *m_loginPage;         ///< 登录页面
@@ -105,7 +111,7 @@ private:
     LogPage *m_logPage;             ///< 服务日志页面
     KeyboardContainer *m_keyboardContainer; ///< 自定义 QWidget 键盘
     KeyboardController *m_keyboardController; ///< 键盘控制器
-    ProcessService *m_processService; ///< 共享服务治理器，应用启动阶段即触发后台治理
+    IProcessService *m_processService; ///< 共享服务治理器，应用启动阶段即触发后台治理
     MainWindowController *m_mainController; ///< 主窗口登录态控制器
 
     // ========== 状态变量 ==========
@@ -113,6 +119,9 @@ private:
     QTimer *m_timeTimer;         ///< 时间更新定时器
     QTimer *m_inactivityTimer;   ///< 无操作自动注销定时器
     static constexpr int INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; ///< 5分钟无操作注销
+    UiLayoutProfile m_layoutProfile;
+    bool m_layoutProfileApplied = false;
+    bool m_layoutProfileUpdatePending = false;
 
     // ========== 私有方法 ==========
     void setupPages();                       ///< 设置页面
@@ -121,6 +130,12 @@ private:
     void setupCustomKeyboard();              ///< 设置自定义 QWidget 键盘
     void applyInitialWindowGeometry();       ///< 按页面 sizeHint 和可用屏幕修正启动尺寸
     void fitWindowToAvailableGeometry();     ///< 根据窗口装饰尺寸二次修正可见区，避免板端底部状态栏被挤出
+    void restoreWindowsWindowState();        ///< 恢复仍位于有效显示器内的桌面窗口状态
+    void saveWindowsWindowState() const;     ///< 保存纯展示层窗口状态，不持久化业务数据
+    QScreen *currentScreen() const;
+    void scheduleLayoutProfileUpdate();
+    void applyLayoutProfile();
+    void onWindowScreenChanged(QScreen *screen);
     QWidget *currentPageWidget() const;      ///< 返回当前页面控件
     void resetKeyboardContext();             ///< 跨页时收起键盘并清空页面上下文
     void switchToPage(PageIndex page);       ///< 切换页面
@@ -134,7 +149,9 @@ private:
     void applyFingerprintStatusDisconnected(); ///< 指纹仪断开（保留信号入口，不再写 label）
     void onKeySessionSnapshotChanged(const KeySessionSnapshot &snapshot); ///< A/B 座状态 label 更新
     void updateKeySlotStatusLabels(const KeySessionSnapshot &snapshot);   ///< 写 card/finger status label
-    bool pageRequiresLogin(PageIndex page) const; ///< 判断页面是否需要登录
+    bool pageRequiresLogin(PageIndex page) const;
+    bool isPageEnabled(PageIndex page) const;
+    PageIndex landingPageAfterLogin() const; ///< 判断页面是否需要登录
 
     KeySessionSnapshot m_lastKeySnapshot;
     bool checkLoginRequired(PageIndex page); ///< 检查是否需要登录
@@ -142,6 +159,8 @@ private:
 protected:
     void showEvent(QShowEvent *event) override; ///< 显示后按真实窗口装饰再次修正可见区
     void closeEvent(QCloseEvent *event) override; ///< 记录主窗口关闭链路，辅助板端排查异常退出
+    void resizeEvent(QResizeEvent *event) override;
+    void moveEvent(QMoveEvent *event) override;
     bool event(QEvent *event) override; ///< 触摸事件诊断日志，仅观察不拦截，用于偶发触摸失效问题复现取证
     bool eventFilter(QObject *obj, QEvent *event) override; ///< 全局输入事件拦截，用于重置无操作计时器
 };

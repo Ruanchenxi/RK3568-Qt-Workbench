@@ -7,7 +7,7 @@
 #include <QUrlQuery>
 
 #include "core/ConfigManager.h"
-#include "features/auth/infra/password/AuthServiceAdapter.h"
+#include <QtGlobal>
 
 WorkbenchController::WorkbenchController(IAuthService *auth, QObject *parent)
     : QObject(parent)
@@ -15,9 +15,7 @@ WorkbenchController::WorkbenchController(IAuthService *auth, QObject *parent)
     , m_hasLoaded(false)
     , m_lastSignature()
 {
-    if (!m_auth) {
-        m_auth = new AuthServiceAdapter(this);
-    }
+    Q_ASSERT(m_auth);
 }
 
 bool WorkbenchController::shouldLoadNow()

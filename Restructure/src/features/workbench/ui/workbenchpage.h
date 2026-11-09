@@ -20,8 +20,10 @@
 #include <QShowEvent>
 #include <QResizeEvent>
 #include "features/workbench/application/WorkbenchController.h"
+#include "shared/ui/UiLayoutProfile.h"
 
 class KeyboardContainer;
+class IAuthService;
 
 namespace Ui
 {
@@ -37,8 +39,10 @@ class WorkbenchPage : public QWidget
     Q_OBJECT
 
 public:
-    explicit WorkbenchPage(QWidget *parent = nullptr);
+    explicit WorkbenchPage(IAuthService *auth, QWidget *parent = nullptr);
     ~WorkbenchPage();
+    // Keeps the embedded Chromium viewport aligned with the presentation profile.
+    void applyLayoutProfile(const UiLayoutProfile &profile);
     void requestKeyboardActivation(KeyboardContainer *container, std::function<void(bool)> callback);
 
 public slots:
@@ -58,6 +62,7 @@ private:
     bool m_recreatePageOnReload;
     bool m_pendingBusinessReload;
     QElapsedTimer m_reloadCooldownTimer;
+    int m_stabilityGeneration; // Invalidates stale stability timers after a new renderer failure.
     int m_reloadAttemptCount; // 渲染恢复重试计数，超过上限后停止自动恢复
 
     void ensureWebViewInitialized();
@@ -65,6 +70,7 @@ private:
     void attachDebugPage(bool recreate); // 安装/重建 WebEngine Page
     void loadWorkbench(); // 加载工作台网页（带 token，通过中转页面）
     void scheduleWorkbenchReload(); // 渲染进程异常后的延迟恢复
+    void schedulePageHealthDiagnostic(const QString &trigger); // 低频记录未触发进程终止信号的疑似空白页
     void insertTextFromKeyboard(const QString &text);
     void backspaceFromKeyboard();
     void commitFromKeyboard();

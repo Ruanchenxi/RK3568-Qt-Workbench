@@ -5,8 +5,9 @@
 #include "features/auth/application/AuthFlowCoordinator.h"
 
 #include "features/auth/domain/ports/IAuthGateway.h"
-#include "features/auth/infra/http/AuthGatewayAdapter.h"
+#include "platform/logging/LogService.h"
 #include <QMetaType>
+#include <QtGlobal>
 
 AuthFlowCoordinator::AuthFlowCoordinator(IAuthGateway *gateway, QObject *parent)
     : QObject(parent)
@@ -14,14 +15,14 @@ AuthFlowCoordinator::AuthFlowCoordinator(IAuthGateway *gateway, QObject *parent)
 {
     qRegisterMetaType<AuthResult>("AuthResult");
 
-    if (!m_gateway) {
-        m_gateway = new AuthGatewayAdapter(nullptr, this);
-    }
+    Q_ASSERT(m_gateway);
 
     connect(m_gateway, &IAuthGateway::loginSucceeded,
             this, &AuthFlowCoordinator::onGatewayLoginSucceeded);
-    connect(m_gateway, &IAuthGateway::loginFailed,
-            this, &AuthFlowCoordinator::loginFailed);
+    connect(m_gateway, &IAuthGateway::loginFailed, this, [this](const QString &message) {
+        LOG_WARNING(QStringLiteral("AUTH"), QStringLiteral("login failed"));
+        emit loginFailed(message);
+    });
     connect(m_gateway, &IAuthGateway::loginStateChanged,
             this, &AuthFlowCoordinator::loginStateChanged);
 }
@@ -51,5 +52,6 @@ void AuthFlowCoordinator::onGatewayLoginSucceeded(const AuthResult &result)
         emit loginFailed(result.errorMessage.isEmpty() ? QStringLiteral("登录失败") : result.errorMessage);
         return;
     }
+    LOG_INFO(QStringLiteral("AUTH"), QStringLiteral("login succeeded"));
     emit loginSucceeded(result.userName, result.roleName);
 }

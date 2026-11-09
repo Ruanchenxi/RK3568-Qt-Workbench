@@ -27,9 +27,7 @@ public:
         QString taskId;
     };
 
-    using PersistBodyFn = std::function<QString()>;
-    using IngressHandler = std::function<IngressResult(const QByteArray &jsonBytes,
-                                                       const PersistBodyFn &persistBody)>;
+    using IngressHandler = std::function<IngressResult(const QByteArray &jsonBytes)>;
     using CancelHandler = std::function<IngressResult(const QString &taskId)>;
 
     explicit TicketIngressService(QObject *parent = nullptr);
@@ -47,7 +45,6 @@ public:
 
 signals:
     void httpServerLogAppended(const QString &text);
-    void jsonReceived(const QByteArray &jsonBytes, const QString &savedPath);
     void cancelDeferredRequestExpired(const QString &taskId);
 
 private slots:
@@ -70,7 +67,6 @@ private:
                                      const QString &message,
                                      const QString &taskId = QString(),
                                      int statusCode = 200) const;
-    QString saveBodyToFile(const QByteArray &body) const;
     // 超时触发，向工作台返回传票确认超时
     void expireDeferredRequest(const QString &taskId);
     void expireDeferredCancelRequest(const QString &taskId);

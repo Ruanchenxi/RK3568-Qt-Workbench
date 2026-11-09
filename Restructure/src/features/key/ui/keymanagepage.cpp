@@ -15,10 +15,15 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDateTime>
+#include <QDialog>
 #include <QDir>
 #include <QFileDialog>
+#include <QGridLayout>
 #include <QHideEvent>
 #include <QHeaderView>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPalette>
 #include <QSignalBlocker>
@@ -26,12 +31,111 @@
 #include <QStringList>
 #include <QTableWidgetItem>
 #include <QTimer>
+#include <QVBoxLayout>
 
 #include "core/AppContext.h"
 #include "core/ConfigManager.h"
+#include "features/key/application/KeyManageController.h"
+#include "features/key/ui/TicketStatusPresenter.h"
 #include "platform/logging/LogService.h"
+#include "shared/ui/DesktopUiMetrics.h"
 
 namespace {
+// Uses an on-screen numeric keypad so the board can select a station without
+// depending on a desktop keyboard or Qt's platform input dialog.
+int requestCaptureStationNo(QWidget *parent, int defaultStationNo)
+{
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QStringLiteral("采码票"));
+    dialog.setModal(true);
+    dialog.setMinimumSize(460, 520);
+
+    auto *layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(24, 20, 24, 20);
+    layout->setSpacing(14);
+
+    auto *label = new QLabel(QStringLiteral("请选择业务站号（1-255）"), &dialog);
+    label->setAlignment(Qt::AlignCenter);
+    label->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600;"));
+    layout->addWidget(label);
+
+    auto *display = new QLineEdit(QString::number(defaultStationNo), &dialog);
+    display->setReadOnly(true);
+    display->setAlignment(Qt::AlignCenter);
+    display->setMaxLength(3);
+    display->setMinimumHeight(58);
+    display->setStyleSheet(QStringLiteral("font-size: 26px; padding: 8px;"));
+    layout->addWidget(display);
+
+    auto *keypad = new QGridLayout;
+    keypad->setHorizontalSpacing(10);
+    keypad->setVerticalSpacing(10);
+    layout->addLayout(keypad, 1);
+
+    QPushButton *confirmButton = nullptr;
+    const auto updateConfirmState = [display, &confirmButton]() {
+        bool ok = false;
+        const int value = display->text().toInt(&ok);
+        if (confirmButton) confirmButton->setEnabled(ok && value >= 1 && value <= 255);
+    };
+    const auto addDigit = [display, updateConfirmState](int digit) {
+        QString value = display->text();
+        if (value.size() >= 3) return;
+        value.append(QChar::fromLatin1(static_cast<char>('0' + digit)));
+        display->setText(value);
+        updateConfirmState();
+    };
+    for (int digit = 1; digit <= 9; ++digit) {
+        auto *button = new QPushButton(QString::number(digit), &dialog);
+        button->setMinimumSize(92, 64);
+        button->setStyleSheet(QStringLiteral("font-size: 22px;"));
+        keypad->addWidget(button, (digit - 1) / 3, (digit - 1) % 3);
+        QObject::connect(button, &QPushButton::clicked, &dialog,
+                         [addDigit, digit]() { addDigit(digit); });
+    }
+
+    auto *clearButton = new QPushButton(QStringLiteral("清除"), &dialog);
+    auto *zeroButton = new QPushButton(QStringLiteral("0"), &dialog);
+    auto *backspaceButton = new QPushButton(QStringLiteral("退格"), &dialog);
+    for (QPushButton *button : {clearButton, zeroButton, backspaceButton}) {
+        button->setMinimumSize(92, 64);
+        button->setStyleSheet(QStringLiteral("font-size: 18px;"));
+    }
+    keypad->addWidget(clearButton, 3, 0);
+    keypad->addWidget(zeroButton, 3, 1);
+    keypad->addWidget(backspaceButton, 3, 2);
+    QObject::connect(zeroButton, &QPushButton::clicked, &dialog,
+                     [addDigit]() { addDigit(0); });
+    QObject::connect(clearButton, &QPushButton::clicked, &dialog,
+                     [display, updateConfirmState]() {
+        display->clear();
+        updateConfirmState();
+    });
+    QObject::connect(backspaceButton, &QPushButton::clicked, &dialog,
+                     [display, updateConfirmState]() {
+        display->backspace();
+        updateConfirmState();
+    });
+
+    auto *actions = new QHBoxLayout;
+    actions->setSpacing(12);
+    auto *cancelButton = new QPushButton(QStringLiteral("取消"), &dialog);
+    confirmButton = new QPushButton(QStringLiteral("确定"), &dialog);
+    cancelButton->setMinimumHeight(58);
+    confirmButton->setMinimumHeight(58);
+    actions->addWidget(cancelButton);
+    actions->addWidget(confirmButton);
+    layout->addLayout(actions);
+    QObject::connect(cancelButton, &QPushButton::clicked, &dialog, &QDialog::reject);
+    QObject::connect(confirmButton, &QPushButton::clicked, &dialog, &QDialog::accept);
+    updateConfirmState();
+
+    if (dialog.exec() != QDialog::Accepted) return -1;
+    bool ok = false;
+    const int stationNo = display->text().toInt(&ok);
+    return ok && stationNo >= 1 && stationNo <= 255 ? stationNo : -1;
+}
+
 QString formatHexMultiline(const QByteArray &bytes, int bytesPerLine = 16)
 {
     if (bytes.isEmpty()) {
@@ -66,33 +170,16 @@ QString rawTaskIdToDecimalString(const QByteArray &taskIdRaw)
     return QString::number(value);
 }
 
-bool isReturnInFlightState(const QString &state)
-{
-    return state == QLatin1String("return-requesting-log")
-            || state == QLatin1String("return-handshake")
-            || state == QLatin1String("return-log-requesting")
-            || state == QLatin1String("return-log-receiving")
-            || state == QLatin1String("return-uploading");
-}
-
-bool isReturnCleanupState(const QString &state)
-{
-    return state == QLatin1String("return-upload-success")
-            || state == QLatin1String("return-delete-pending")
-            || state == QLatin1String("return-delete-verifying")
-            || state == QLatin1String("return-delete-success");
-}
-
 }
 
 // ====================================================================
 // 构造 / 析构
 // ====================================================================
 
-KeyManagePage::KeyManagePage(QWidget *parent)
+KeyManagePage::KeyManagePage(KeyManageController *controller, QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::KeyManagePage)
-    , m_controller(new KeyManageController(nullptr, nullptr, this))
+    , m_controller(controller)
     , m_expertMode(false)
     , m_showHex(true)
     , m_uiFlushTimer(new QTimer(this))
@@ -102,6 +189,7 @@ KeyManagePage::KeyManagePage(QWidget *parent)
     , m_pendingHttpServerRefresh(false)
     , m_pageVisible(false)
 {
+    Q_ASSERT(m_controller);
     ui->setupUi(this);
     m_uiFlushTimer->setSingleShot(true);
     m_uiFlushTimer->setInterval(120);
@@ -116,6 +204,71 @@ KeyManagePage::KeyManagePage(QWidget *parent)
 KeyManagePage::~KeyManagePage()
 {
     delete ui;
+}
+
+void KeyManagePage::applyLayoutProfile(const UiLayoutProfile &profile)
+{
+    const bool narrow = profile.isNarrowWidth;
+    const bool shortHeight = profile.isShortHeight;
+    QHeaderView *serialHeader = ui->serialLogTable->horizontalHeader();
+    for (int column = 0; column < 5; ++column)
+        serialHeader->setSectionResizeMode(column, QHeaderView::Fixed);
+
+    if (narrow) {
+        serialHeader->setSectionResizeMode(5, QHeaderView::Fixed);
+        serialHeader->setSectionResizeMode(6, QHeaderView::Fixed);
+        ui->serialLogTable->setColumnWidth(5, 280);
+        ui->serialLogTable->setColumnWidth(6, 560);
+    } else {
+        serialHeader->setSectionResizeMode(5, QHeaderView::Stretch);
+        serialHeader->setSectionResizeMode(
+                    6, profile.mode == UiLayoutMode::Wide
+                       ? QHeaderView::Stretch : QHeaderView::Interactive);
+        if (profile.mode != UiLayoutMode::Wide)
+            ui->serialLogTable->setColumnWidth(6, 480);
+    }
+    ui->serialLogTable->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+
+#ifdef Q_OS_WIN
+    ui->leftSidebarLayout->setContentsMargins(
+                narrow ? 10 : 12, 12, narrow ? 10 : 12, 12);
+    ui->leftSidebarLayout->setSpacing(shortHeight ? 6 : 8);
+    ui->ticketInfoCardLayout->setContentsMargins(
+                narrow ? 8 : 10, 10, narrow ? 8 : 10, 10);
+    ui->ticketInfoCardLayout->setSpacing(narrow ? 5 : 6);
+
+    const QList<QPushButton *> buttons = findChildren<QPushButton *>();
+    for (QPushButton *button : buttons)
+        DesktopUiMetrics::applyButton(button, profile.buttonFontPointSize,
+                                      profile.buttonMinimumHeight);
+    const QList<QPushButton *> tabs = {
+        ui->tabKey, ui->tabSerial, ui->tabHttpClient, ui->tabHttpServer
+    };
+    for (QPushButton *tab : tabs)
+        DesktopUiMetrics::applyButton(tab, profile.navigationFontPointSize,
+                                      profile.navigationButtonMinimumHeight);
+
+    ui->tabKey->setMinimumWidth(narrow ? 100 : 120);
+    ui->tabSerial->setMinimumWidth(narrow ? 110 : 132);
+    ui->tabHttpClient->setMinimumWidth(narrow ? 140 : 164);
+    ui->tabHttpServer->setMinimumWidth(narrow ? 140 : 164);
+    ui->tabBar->setFixedHeight(profile.navigationButtonMinimumHeight);
+    ui->serialToolbar->setFixedHeight(profile.buttonMinimumHeight + 8);
+
+    const int ticketHeaderHeight = profile.buttonMinimumHeight + 8;
+    ui->systemTicketHeader->setFixedHeight(ticketHeaderHeight);
+    ui->keyTicketHeader->setFixedHeight(ticketHeaderHeight);
+    ui->systemTicketSectionLayout->setSpacing(6);
+    ui->keyTicketSectionLayout->setSpacing(6);
+    ui->verticalSpacer->changeSize(0, shortHeight ? 12 : 16,
+                                   QSizePolicy::Minimum, QSizePolicy::Fixed);
+
+    const int tableRowHeight = qMax(34, profile.buttonMinimumHeight - 4);
+    ui->systemTicketTable->verticalHeader()->setDefaultSectionSize(tableRowHeight);
+    ui->keyTicketTable->verticalHeader()->setDefaultSectionSize(tableRowHeight);
+    ui->serialLogTable->verticalHeader()->setDefaultSectionSize(tableRowHeight);
+#endif
+    refreshTicketReturnStatusHeight();
 }
 
 void KeyManagePage::showEvent(QShowEvent *event)
@@ -151,13 +304,11 @@ void KeyManagePage::initUi()
     ui->lblTicketOpTitle->setText(QStringLiteral("票据操作"));
     ui->btnTransferTicket->setText(QStringLiteral("传票到钥匙"));
     ui->btnDeleteTicket->setText(QStringLiteral("删除钥匙票"));
-    ui->btnQueryTaskCount->setText(QStringLiteral("Q_TASK诊断"));
-    ui->btnGetSystemTicketList->setText(QStringLiteral("刷新本地系统票列表"));
+    ui->btnQueryTaskCount->setText(QStringLiteral("采码票"));
     ui->lblCommSeatNo->setText(QStringLiteral("当前配置座号: --"));
-    ui->btnQueryTaskCount->setToolTip(QStringLiteral("发送一次 Q_TASK 诊断查询；与“读取钥匙票列表”使用同一协议命令"));
+    ui->btnQueryTaskCount->setToolTip(QStringLiteral("选择业务站号，领取并下发采码票"));
     ui->btnDeleteTicket->setToolTip(QStringLiteral("删除钥匙中已存在的票，请先读取钥匙票列表并选中。"));
-    ui->btnClearOrphanKeyTask->setToolTip(QStringLiteral("清除钥匙中的未登记任务；需先读取钥匙票列表，选中孤儿任务后方可操作"));
-    ui->btnForceCleanFailedTicket->setToolTip(QStringLiteral("强制删除本地失败系统票记录；仅限 TerminationFailed / return-delete-failed / manual-required 状态；不会操作钥匙或通知工作台"));
+    ui->btnClearUnregisteredKeyTask->setToolTip(QStringLiteral("清除钥匙中的未登记任务；钥匙确认删除后将同时通知后台终止任务"));
     ui->lblReturnHint->setText(QStringLiteral("回传按任务独立触发；当前任务完成后可自动或手动回传；接口未配置时不会上传"));
 
     ui->serialLogTable->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -259,6 +410,10 @@ void KeyManagePage::initUi()
 
     ui->lblTicketPosition->setWordWrap(true);
     ui->lblTicketReturnStatus->setWordWrap(true);
+    ui->lblTicketReturnStatus->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    ui->lblTicketReturnStatus->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
+    ui->ticketInfoCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
+    refreshTicketReturnStatusHeight();
 
     ui->lblBatteryInfo->setText(QStringLiteral("电量: --"));
     ui->lblTaskInfo->setText(QStringLiteral("任务数: --"));
@@ -286,11 +441,8 @@ void KeyManagePage::initConnections()
     connect(ui->btnTransferTicket,  &QPushButton::clicked, this, &KeyManagePage::onTransferTicket);
     connect(ui->btnDeleteTicket,    &QPushButton::clicked, this, &KeyManagePage::onDeleteTicket);
     connect(ui->btnReturnTicket,    &QPushButton::clicked, this, &KeyManagePage::onReturnTicket);
-
-    connect(ui->btnGetSystemTicketList, &QPushButton::clicked, this, &KeyManagePage::onGetSystemTicketList);
     connect(ui->btnReadKeyTicketList,   &QPushButton::clicked, this, &KeyManagePage::onReadKeyTicketList);
-    connect(ui->btnClearOrphanKeyTask,    &QPushButton::clicked, this, &KeyManagePage::onClearOrphanKeyTask);
-    connect(ui->btnForceCleanFailedTicket, &QPushButton::clicked, this, &KeyManagePage::onForceCleanFailedTicket);
+    connect(ui->btnClearUnregisteredKeyTask,    &QPushButton::clicked, this, &KeyManagePage::onClearUnregisteredKeyTask);
     connect(ui->systemTicketTable, &QTableWidget::itemSelectionChanged,
             this, &KeyManagePage::onSystemTicketSelectionChanged);
     connect(ui->keyTicketTable, &QTableWidget::itemSelectionChanged,
@@ -318,8 +470,10 @@ void KeyManagePage::initConnections()
     // 初始化：页面构造时若已登录则读取当前角色
     m_isAdmin = AppContext::instance()->currentUser().role.contains(
             QStringLiteral("admin"), Qt::CaseInsensitive);
+    updateAdminButtons();
 }
 
+// Connects the injected application controller without owning or starting it.
 void KeyManagePage::initController()
 {
     connect(m_controller, &KeyManageController::sessionSnapshotChanged,
@@ -332,6 +486,8 @@ void KeyManagePage::initController()
             this, &KeyManagePage::onNakReceived);
     connect(m_controller, &KeyManageController::timeoutOccurred,
             this, &KeyManagePage::onControllerTimeout);
+    connect(m_controller, &KeyManageController::taskQueryTimedOut,
+            this, &KeyManagePage::onTaskQueryTimedOut);
     connect(m_controller, &KeyManageController::statusMessage,
             this, &KeyManagePage::onControllerStatusMessage);
     connect(m_controller, &KeyManageController::logRowAppended,
@@ -340,6 +496,8 @@ void KeyManagePage::initController()
             this, &KeyManagePage::onLogTableRefreshRequested);
     connect(m_controller, &KeyManageController::logsCleared,
             this, &KeyManagePage::onLogsCleared);
+    connect(m_controller, &KeyManageController::logExportFinished,
+            this, &KeyManagePage::onLogExportFinished);
     connect(m_controller, &KeyManageController::systemTicketsUpdated,
             this, &KeyManagePage::onSystemTicketsUpdated);
     connect(m_controller, &KeyManageController::selectedSystemTicketChanged,
@@ -358,7 +516,6 @@ void KeyManagePage::initController()
     connect(m_controller, &KeyManageController::workbenchRefreshRequested,
             this, &KeyManagePage::workbenchRefreshNeeded);
 
-    m_controller->start();
 }
 
 // ====================================================================
@@ -398,8 +555,14 @@ void KeyManagePage::onQueryBattery()
 
 void KeyManagePage::onQueryTaskCount()
 {
-    m_controller->onQueryTasksClicked();
-    updateStatusBar(QStringLiteral("执行 Q_TASK 诊断查询"));
+    // Capture-ticket claiming is an administrator-only maintenance entry.
+    if (!m_isAdmin) return;
+
+    bool stationOk = false;
+    int stationNo = ConfigManager::instance()->stationId().trimmed().toInt(&stationOk);
+    if (!stationOk || stationNo < 1 || stationNo > 255) stationNo = 1;
+    stationNo = requestCaptureStationNo(this, stationNo);
+    if (stationNo > 0) m_controller->onCaptureTicketClicked(stationNo);
 }
 
 void KeyManagePage::onSyncDeviceTime()
@@ -418,6 +581,16 @@ void KeyManagePage::onTransferTicket()
 
 void KeyManagePage::onDeleteTicket()
 {
+    if (m_controller->isSelectedKeyTaskCapture()) {
+        const QMessageBox::StandardButton answer = QMessageBox::warning(
+                this,
+                QStringLiteral("删除采码票"),
+                QStringLiteral("确定删除选中的采码票吗？\n\n"
+                               "该操作会删除钥匙任务，且不会回传当前采码结果。"),
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No);
+        if (answer != QMessageBox::Yes) return;
+    }
     m_controller->onDeleteClicked();
 }
 
@@ -426,11 +599,6 @@ void KeyManagePage::onReturnTicket()
     m_controller->onReturnSelectedTicket();
 }
 
-void KeyManagePage::onGetSystemTicketList()
-{
-    m_controller->onGetSystemTicketListClicked();
-    updateStatusBar(QStringLiteral("刷新本地主程序系统票列表"));
-}
 
 void KeyManagePage::onReadKeyTicketList()
 {
@@ -438,53 +606,19 @@ void KeyManagePage::onReadKeyTicketList()
     updateStatusBar(QStringLiteral("读取钥匙票列表 (Q_TASK)"));
 }
 
-void KeyManagePage::onForceCleanFailedTicket()
-{
-    // 根据当前票的失败状态给出针对性的风险提示
-    QString extraWarning;
-    const SystemTicketDto &t = m_selectedSystemTicket;
-    if (t.valid) {
-        const bool keyTaskMayStillExist =
-                (t.returnState == QLatin1String("return-delete-failed"))
-                || (t.returnState == QLatin1String("manual-required"));
-        if (keyTaskMayStillExist) {
-            extraWarning = QStringLiteral(
-                "· 对应钥匙任务可能仍存在于钥匙中；\n"
-                "  下次读取钥匙后会重新出现为未登记任务，届时可使用\"清除未登记任务\"处理\n");
-        } else {
-            // transferState == "failed" 或 TerminationFailed：钥匙侧已无此任务
-            extraWarning = QStringLiteral(
-                "· 对应钥匙任务已不存在，不会重新出现为未登记任务\n");
-        }
-    }
 
-    const QMessageBox::StandardButton reply = QMessageBox::warning(
-        this,
-        QStringLiteral("强制清理失败系统票"),
-        QStringLiteral("确认要强制删除这条失败的系统票记录吗？\n\n注意：\n")
-            + QStringLiteral("· 此操作仅删除本地记录，不会通知工作台\n")
-            + extraWarning
-            + QStringLiteral("· 请确认已了解当前状态后再操作"),
-        QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::No);
-    if (reply != QMessageBox::Yes) {
-        return;
-    }
-    m_controller->onForceCleanFailedTicketClicked();
-}
-
-void KeyManagePage::onClearOrphanKeyTask()
+void KeyManagePage::onClearUnregisteredKeyTask()
 {
     const QMessageBox::StandardButton reply = QMessageBox::warning(
         this,
         QStringLiteral("清除未登记任务"),
-        QStringLiteral("确认从钥匙中清除该未登记任务？\n\n此操作将直接发送 DEL 命令删除钥匙中的任务，无法撤销。"),
+        QStringLiteral("确认清除该未登记任务？\n\n程序将先删除钥匙任务，确认删除后通知后台终止对应任务，无法撤销。"),
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No);
     if (reply != QMessageBox::Yes) {
         return;
     }
-    m_controller->onClearOrphanKeyTaskClicked();
+    m_controller->onClearUnregisteredKeyTaskClicked();
 }
 
 // ====================================================================
@@ -528,30 +662,34 @@ void KeyManagePage::onShowHexToggled(bool checked)
 
 void KeyManagePage::onExportSerialLog()
 {
-    const QString defaultName = QStringLiteral("serial_log_%1.txt")
-                                    .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"));
 #ifdef Q_OS_LINUX
-    const QString exportDir = QCoreApplication::applicationDirPath() + QStringLiteral("/logs/serial");
-    QDir().mkpath(exportDir);
-    const QString defaultPath = exportDir + QChar('/') + defaultName;
+    const QString defaultPath = QCoreApplication::applicationDirPath()
+            + QStringLiteral("/logs/export");
+    QDir().mkpath(defaultPath);
 #else
-    const QString defaultPath = defaultName;
+    const QString defaultPath = QDir::homePath();
 #endif
-    const QString path = QFileDialog::getSaveFileName(this,
-                                                      QStringLiteral("导出串口日志"),
-                                                      defaultPath,
-                                                      QStringLiteral("Text Files (*.txt)"));
+    const QString path = QFileDialog::getExistingDirectory(
+                this, QStringLiteral("选择日志导出目录"), defaultPath);
     if (path.isEmpty()) {
         return;
     }
 
-    QString error;
-    if (!m_controller->exportLogs(path, &error)) {
-        updateStatusBar(QStringLiteral("导出失败：%1").arg(error));
+    if (!m_controller->exportLogsAsync(path)) {
+        updateStatusBar(QStringLiteral("日志正在导出，请稍候"));
         return;
     }
 
-    updateStatusBar(QStringLiteral("日志已导出: %1").arg(path));
+    ui->btnExportLog->setEnabled(false);
+    updateStatusBar(QStringLiteral("正在后台导出串口、HTTP和本次运行日志..."));
+}
+
+void KeyManagePage::onLogExportFinished(bool success, const QString &result)
+{
+    ui->btnExportLog->setEnabled(true);
+    updateStatusBar(success
+            ? QStringLiteral("串口、HTTP和本次运行日志已导出到：%1").arg(result)
+            : QStringLiteral("导出失败：%1").arg(result));
 }
 
 void KeyManagePage::onClearSerialLog()
@@ -597,27 +735,30 @@ void KeyManagePage::onTasksUpdated(const QList<KeyTaskDto> &tasks)
     m_latestKeyTasks = tasks;
     m_pendingKeyTaskRefresh = true;
     scheduleUiFlush();
-    updateClearOrphanButton();
+    updateClearUnregisteredButton();
 }
 
 void KeyManagePage::onAckReceived(quint8 ackedCmd)
 {
-    updateStatusBar(QStringLiteral("收到 ACK: %1").arg(cmdText(ackedCmd)));
+    updateStatusBar(QStringLiteral("收到 ACK: %1")
+                        .arg(m_controller->serialCommandText(ackedCmd)));
 }
 
 void KeyManagePage::onNakReceived(quint8 origCmd, quint8 errCode)
 {
     updateStatusBar(QStringLiteral("收到 NAK: %1 err=0x%2")
-                        .arg(cmdText(origCmd))
+                        .arg(m_controller->serialCommandText(origCmd))
                         .arg(errCode, 2, 16, QLatin1Char('0')));
 }
 
 void KeyManagePage::onControllerTimeout(const QString &what)
 {
-    if (what.contains("Q_TASK", Qt::CaseInsensitive)) {
-        ui->lblTaskInfo->setText(QStringLiteral("任务数: 查询超时"));
-    }
     updateStatusBar(what);
+}
+
+void KeyManagePage::onTaskQueryTimedOut()
+{
+    ui->lblTaskInfo->setText(QStringLiteral("浠诲姟鏁? 鏌ヨ瓒呮椂"));
 }
 
 void KeyManagePage::onControllerStatusMessage(const QString &what)
@@ -653,7 +794,7 @@ void KeyManagePage::onSystemTicketsUpdated(const QList<SystemTicketDto> &tickets
     Q_UNUSED(tickets);
     m_pendingSystemTicketRefresh = true;
     scheduleUiFlush();
-    updateClearOrphanButton();
+    updateClearUnregisteredButton();
     updateForceCleanButton();
 }
 
@@ -707,7 +848,7 @@ void KeyManagePage::onKeyTicketSelectionChanged()
 {
     const int row = ui->keyTicketTable->currentRow();
     m_controller->onKeyTaskSelected(row);
-    updateClearOrphanButton();
+    updateClearUnregisteredButton();
 
     if (row < 0 || row >= m_latestKeyTasks.size()) {
         return;
@@ -731,8 +872,8 @@ void KeyManagePage::onKeyTicketSelectionChanged()
     }
 
     if (matchedSystemRow < 0) {
-        // 选中的是未登记孤儿任务，系统票侧无对应行，主动清空系统票选区避免左侧显示残留
-        if (m_controller->isSelectedKeyTaskOrphan()) {
+        // 选中的是未登记任务，系统票侧无对应行，主动清空系统票选区避免左侧显示残留
+        if (m_controller->isSelectedKeyTaskUnregistered()) {
             const QSignalBlocker blocker(ui->systemTicketTable);
             ui->systemTicketTable->clearSelection();
             m_controller->onSystemTicketSelected(-1);
@@ -774,7 +915,8 @@ void KeyManagePage::appendSerialLogRow(const LogItem &item)
     opItem->setTextAlignment(Qt::AlignCenter);
     t->setItem(row, 2, opItem);
 
-    QTableWidgetItem *cmdItem = new QTableWidgetItem(cmdText(item.cmd));
+    QTableWidgetItem *cmdItem = new QTableWidgetItem(
+                m_controller->serialCommandText(item.cmd));
     cmdItem->setTextAlignment(Qt::AlignCenter);
     t->setItem(row, 3, cmdItem);
 
@@ -846,31 +988,6 @@ QString KeyManagePage::dirText(LogDir dir) const
     }
 }
 
-QString KeyManagePage::cmdText(quint8 cmd) const
-{
-    switch (cmd) {
-    case LogCmdNone:                return QStringLiteral("--");
-    case KeyProtocol::CmdInit:     return QStringLiteral("INIT");
-    case static_cast<quint8>(KeyProtocol::CmdInit | 0x80): return QStringLiteral("INIT_MORE");
-    case KeyProtocol::CmdSetCom:   return QStringLiteral("SET_COM");
-    case KeyProtocol::CmdSetTime:  return QStringLiteral("SET_TIME");
-    case KeyProtocol::CmdQTask:    return QStringLiteral("Q_TASK");
-    case KeyProtocol::CmdQKeyEq:   return QStringLiteral("Q_KEYEQ");
-    case KeyProtocol::CmdITaskLog: return QStringLiteral("I_TASK_LOG");
-    case KeyProtocol::CmdDel:      return QStringLiteral("DEL");
-    case KeyProtocol::CmdDownloadRfid:return QStringLiteral("DN_RFID");
-    case static_cast<quint8>(KeyProtocol::CmdDownloadRfid | 0x80): return QStringLiteral("DN_RFID_MORE");
-    case KeyProtocol::CmdTicket:   return QStringLiteral("TICKET");
-    case KeyProtocol::CmdTicketMore:return QStringLiteral("TICKET_MORE");
-    case KeyProtocol::CmdUpTaskLog:return QStringLiteral("UP_TASK_LOG");
-    case KeyProtocol::CmdAck:      return QStringLiteral("ACK");
-    case KeyProtocol::CmdNak:      return QStringLiteral("NAK");
-    case KeyProtocol::CmdKeyEvent: return QStringLiteral("KEY_EVT");
-    default:
-        return QStringLiteral("0x%1").arg(cmd, 2, 16, QLatin1Char('0')).toUpper();
-    }
-}
-
 void KeyManagePage::populateSystemTicketTable(const QList<SystemTicketDto> &tickets)
 {
     const QString prevSelectedTaskId = ui->systemTicketTable->currentRow() >= 0
@@ -879,10 +996,6 @@ void KeyManagePage::populateSystemTicketTable(const QList<SystemTicketDto> &tick
     ui->systemTicketTable->setRowCount(0);
     for (int i = 0; i < tickets.size(); ++i) {
         const SystemTicketDto &ticket = tickets.at(i);
-        // 孤儿占位票不在系统票表中显示，仅在钥匙票表中标注
-        if (ticket.transferState == QLatin1String("orphan-recovered")) {
-            continue;
-        }
         const int row = ui->systemTicketTable->rowCount();
         ui->systemTicketTable->insertRow(row);
         QTableWidgetItem *noItem = new QTableWidgetItem(QString::number(row + 1));
@@ -895,17 +1008,8 @@ void KeyManagePage::populateSystemTicketTable(const QList<SystemTicketDto> &tick
         QTableWidgetItem *sourceItem = new QTableWidgetItem(QStringLiteral("工作台"));
         sourceItem->setTextAlignment(Qt::AlignCenter);
         ui->systemTicketTable->setItem(row, 3, sourceItem);
-        QString displayState;
-        if (ticket.adminDeleteStage == SystemTicketDto::AdminDeleteStage::TerminationFailed) {
-            displayState = QStringLiteral("admin-delete-failed");
-        } else if (ticket.adminDeleteStage == SystemTicketDto::AdminDeleteStage::KeyClearedAwaitingTermination) {
-            displayState = QStringLiteral("admin-delete-pending");
-        } else {
-            displayState = (ticket.returnState.isEmpty() || ticket.returnState == QLatin1String("idle"))
-                    ? ticket.transferState
-                    : ticket.returnState;
-        }
-        QTableWidgetItem *stateItem = new QTableWidgetItem(ticketStateText(displayState));
+        QTableWidgetItem *stateItem =
+                new QTableWidgetItem(TicketStatusPresenter::tableText(ticket));
         stateItem->setTextAlignment(Qt::AlignCenter);
         ui->systemTicketTable->setItem(row, 4, stateItem);
         ui->systemTicketTable->item(row, 0)->setData(Qt::UserRole, ticket.taskId);
@@ -920,6 +1024,17 @@ void KeyManagePage::populateSystemTicketTable(const QList<SystemTicketDto> &tick
     }
 }
 
+void KeyManagePage::refreshTicketReturnStatusHeight()
+{
+    QTimer::singleShot(0, this, [this]() {
+        const int availableWidth = qMax(80, ui->lblTicketReturnStatus->contentsRect().width());
+        const int contentHeight = ui->lblTicketReturnStatus->heightForWidth(availableWidth);
+        const int twoLines = ui->lblTicketReturnStatus->fontMetrics().lineSpacing() * 2 + 8;
+        ui->lblTicketReturnStatus->setMinimumHeight(qMax(twoLines, contentHeight + 4));
+        ui->lblTicketReturnStatus->updateGeometry();
+        ui->ticketInfoCard->updateGeometry();
+    });
+}
 void KeyManagePage::updateSelectedSystemTicketCard(const SystemTicketDto &ticket)
 {
     if (!ticket.valid) {
@@ -927,41 +1042,14 @@ void KeyManagePage::updateSelectedSystemTicketCard(const SystemTicketDto &ticket
         ui->lblTicketType->setText(QStringLiteral("类型: --"));
         ui->lblTicketPosition->setText(QStringLiteral("位置: --"));
         ui->lblTicketReturnStatus->setText(QStringLiteral("传票状态: <font color='#C62828'>未选择系统票</font>"));
+        refreshTicketReturnStatusHeight();
         ui->lblTicketPosition->setToolTip(QString());
         ui->btnReturnTicket->setEnabled(false);
         ui->lblReturnHint->setText(QStringLiteral("回传按任务独立触发；当前任务完成后可自动或手动回传；接口未配置时不会上传"));
         return;
     }
 
-    QString stateColor = "#C62828";
-    if (isReturnInFlightState(ticket.returnState)) {
-        stateColor = "#1565C0";
-    } else if (isReturnCleanupState(ticket.returnState)) {
-        stateColor = "#EF6C00";
-    } else if (ticket.returnState == QLatin1String("return-delete-success")) {
-        stateColor = "#2E7D32";
-    } else if (ticket.returnState == QLatin1String("return-success")) {
-        stateColor = "#2E7D32";
-    } else if (ticket.returnState == QLatin1String("return-interrupted-retryable")) {
-        stateColor = "#EF6C00";
-    } else if (ticket.returnState == QLatin1String("manual-required")
-               || ticket.returnState == QLatin1String("upload_uncertain")) {
-        stateColor = "#C62828";
-    } else if (ticket.returnState == QLatin1String("return-failed")) {
-        stateColor = "#C62828";
-    } else if (ticket.transferState == QLatin1String("received")) {
-        stateColor = "#C62828";
-    } else if (ticket.transferState == QLatin1String("auto-pending")) {
-        stateColor = "#1565C0";
-    } else if (ticket.transferState == QLatin1String("sending")) {
-        stateColor = "#EF6C00";
-    } else if (ticket.transferState == QLatin1String("success")) {
-        stateColor = "#2E7D32";
-    } else if (ticket.transferState == QLatin1String("key-cleared")) {
-        stateColor = "#1565C0";
-    } else if (ticket.transferState == QLatin1String("failed")) {
-        stateColor = "#C62828";
-    }
+    const QString stateColor = TicketStatusPresenter::statusColor(ticket);
 
     ui->lblTicketNo->setText(QStringLiteral("票号: <font color='#2E7D32'>%1</font>").arg(ticket.ticketNo));
     ui->lblTicketType->setText(QStringLiteral("类型: %1  |  步骤: %2")
@@ -969,87 +1057,60 @@ void KeyManagePage::updateSelectedSystemTicketCard(const SystemTicketDto &ticket
                                .arg(ticket.stepNum));
     const QString positionText = ticketPositionText(ticket.ticketNo, ticket.taskName);
     ui->lblTicketPosition->setText(QStringLiteral("位置: %1").arg(positionText));
-    const QString statusText = ticketStateDescription(ticket);
+    const QString statusText = TicketStatusPresenter::detailText(ticket);
     ui->lblTicketReturnStatus->setText(
         QStringLiteral("传票状态: <font color='%1'>%2</font>").arg(stateColor, statusText));
+    refreshTicketReturnStatusHeight();
 
     quint8 keyTaskStatus = 0xFF;
-    const bool hasSelectedKeyTask = findKeyTaskStatusForTicket(ticket.taskId, &keyTaskStatus);
+    findKeyTaskStatusForTicket(ticket.taskId, &keyTaskStatus);
     QString manualReturnBlockedReason;
-    const bool canManualReturn = m_controller->canStartManualReturn(ticket.taskId, &manualReturnBlockedReason);
+    const bool canManualReturn =
+            m_controller->canStartManualReturn(ticket.taskId, &manualReturnBlockedReason);
     ui->btnReturnTicket->setEnabled(canManualReturn && m_isAdmin);
-
-    if (ticket.returnState == QLatin1String("return-delete-failed")) {
-        if (!ticket.returnError.trimmed().isEmpty()) {
-            ui->lblReturnHint->setText(QStringLiteral("钥匙删除验证失败：%1").arg(ticket.returnError));
-        } else {
-            ui->lblReturnHint->setText(QStringLiteral("钥匙删除验证失败，请先确认钥匙状态后再决定是否手动重试"));
-        }
-        return;
-    }
-    if (ticket.transferState == QLatin1String("success") && keyTaskStatus != 0x02) {
-        ui->lblReturnHint->setText(QStringLiteral("当前选中任务在钥匙中尚未完成，完成后才允许回传"));
-        return;
-    }
-    if (canManualReturn) {
-        ui->lblReturnHint->setText(QStringLiteral("当前选中任务已完成，可执行手动回传；其他未完成任务不影响本任务回传"));
-        return;
-    }
-    if (ticket.transferState == QLatin1String("success") && !manualReturnBlockedReason.trimmed().isEmpty()) {
-        ui->lblReturnHint->setText(manualReturnBlockedReason);
-        return;
-    }
-
-    ui->lblReturnHint->setText(QStringLiteral("手动回传仅要求当前选中任务完成；接口未配置时不会上传"));
+    ui->lblReturnHint->setText(TicketStatusPresenter::returnHint(
+                                   ticket,
+                                   keyTaskStatus,
+                                   canManualReturn,
+                                   manualReturnBlockedReason));
 }
 
 void KeyManagePage::populateKeyTicketTable(const QList<KeyTaskDto> &tasks)
 {
-    const QList<SystemTicketDto> sysTickets = m_controller->systemTickets();
+    const QList<KeyTaskDisplayDto> rows = m_controller->keyTaskDisplayRows(tasks);
     ui->keyTicketTable->setRowCount(0);
-    for (int i = 0; i < tasks.size(); ++i) {
-        const KeyTaskDto &task = tasks.at(i);
+    for (int i = 0; i < rows.size(); ++i) {
+        const KeyTaskDisplayDto &display = rows.at(i);
         const int row = ui->keyTicketTable->rowCount();
         ui->keyTicketTable->insertRow(row);
 
-        const QString taskDecimalId = rawTaskIdToDecimalString(task.taskId);
-        bool isOrphan = false;
-        QString ticketNo;
-        for (const SystemTicketDto &st : sysTickets) {
-            if (st.taskId == taskDecimalId) {
-                if (st.transferState == QLatin1String("orphan-recovered"))
-                    isOrphan = true;
-                ticketNo = st.ticketNo;
-                break;
-            }
-        }
-
-        const QString taskIdHex = QString(task.taskId.toHex().toUpper());
         QTableWidgetItem *noItem = new QTableWidgetItem(QString::number(i + 1));
         noItem->setTextAlignment(Qt::AlignCenter);
         ui->keyTicketTable->setItem(row, 0, noItem);
-        // 优先显示系统票号，未关联时回退到任务ID hex；未登记任务追加标注
-        const QString baseDisplay = ticketNo.isEmpty() ? taskIdHex.left(16) : ticketNo;
-        const QString taskIdDisplay = isOrphan
-                ? baseDisplay + QStringLiteral(" [未登记]")
-                : baseDisplay;
-        ui->keyTicketTable->setItem(row, 1, new QTableWidgetItem(taskIdDisplay));
-        QTableWidgetItem *typeItem = new QTableWidgetItem(QStringLiteral("类型%1").arg(task.type));
+
+        QTableWidgetItem *taskItem = new QTableWidgetItem(display.taskIdText);
+        ui->keyTicketTable->setItem(row, 1, taskItem);
+        QTableWidgetItem *typeItem = new QTableWidgetItem(display.typeText);
         typeItem->setTextAlignment(Qt::AlignCenter);
         ui->keyTicketTable->setItem(row, 2, typeItem);
-        QTableWidgetItem *sourceItem = new QTableWidgetItem(QStringLiteral("来源%1").arg(task.source));
+        QTableWidgetItem *sourceItem = new QTableWidgetItem(display.sourceText);
         sourceItem->setTextAlignment(Qt::AlignCenter);
         ui->keyTicketTable->setItem(row, 3, sourceItem);
-        QTableWidgetItem *stateItem = new QTableWidgetItem(keyTaskStatusText(task.status));
+        QTableWidgetItem *stateItem = new QTableWidgetItem(display.statusText);
         stateItem->setTextAlignment(Qt::AlignCenter);
         ui->keyTicketTable->setItem(row, 4, stateItem);
 
-        // 未登记任务行用淡橙色背景与正常任务区分
-        if (isOrphan) {
-            const QColor orphanBg(0xFF, 0xF0, 0xE0);
+        for (int col = 1; col < ui->keyTicketTable->columnCount(); ++col) {
+            QTableWidgetItem *item = ui->keyTicketTable->item(row, col);
+            if (item) item->setToolTip(display.diagnosticText);
+        }
+
+        // Only truly unknown key tasks receive the orphan-task warning color.
+        if (display.unregistered) {
+            const QColor unregisteredBg(0xFF, 0xF0, 0xE0);
             for (int col = 0; col < ui->keyTicketTable->columnCount(); ++col) {
                 QTableWidgetItem *it = ui->keyTicketTable->item(row, col);
-                if (it) it->setBackground(orphanBg);
+                if (it) it->setBackground(unregisteredBg);
             }
         }
     }
@@ -1280,168 +1341,6 @@ QString KeyManagePage::ticketTypeText(int taskType)
     }
 }
 
-QString KeyManagePage::keyTaskStatusText(quint8 status)
-{
-    switch (status) {
-    case 0x00: return QStringLiteral("未操作");
-    case 0x01: return QStringLiteral("操作中");
-    case 0x02: return QStringLiteral("操作完成");
-    case 0x04: return QStringLiteral("已删除(钥匙)");
-    case 0x05: return QStringLiteral("已删除(图形)");
-    default:
-        return QStringLiteral("状态0x%1").arg(status, 2, 16, QLatin1Char('0')).toUpper();
-    }
-}
-
-QString KeyManagePage::ticketStateText(const QString &state)
-{
-    if (state == QLatin1String("return-requesting-log"))
-        return QStringLiteral("钥匙已完成，正在读取回传日志");
-    if (state == QLatin1String("return-handshake"))
-        return QStringLiteral("回传前握手中");
-    if (state == QLatin1String("return-log-requesting"))
-        return QStringLiteral("正在向钥匙请求回传日志");
-    if (state == QLatin1String("return-log-receiving"))
-        return QStringLiteral("正在接收钥匙回传日志");
-    if (state == QLatin1String("return-uploading"))
-        return QStringLiteral("日志已读取，正在回传到服务端");
-    if (state == QLatin1String("return-upload-success"))
-        return QStringLiteral("已上传回服务端");
-    if (state == QLatin1String("return-delete-pending"))
-        return QStringLiteral("服务端已收，正在清理钥匙任务");
-    if (state == QLatin1String("return-delete-verifying"))
-        return QStringLiteral("正在对账确认钥匙任务是否已删除");
-    if (state == QLatin1String("return-delete-success"))
-        return QStringLiteral("已完成回传并清理钥匙任务");
-    if (state == QLatin1String("return-delete-failed"))
-        return QStringLiteral("钥匙删除验证失败，需人工处理");
-    if (state == QLatin1String("return-success"))
-        return QStringLiteral("已回传到系统，并准备清理钥匙任务");
-    if (state == QLatin1String("return-interrupted-retryable"))
-        return QStringLiteral("回传中断，可在钥匙重新就绪后自动恢复");
-    if (state == QLatin1String("manual-required"))
-        return QStringLiteral("回传需人工确认，请查看 HTTP 客户端报文");
-    if (state == QLatin1String("upload_uncertain"))
-        return QStringLiteral("回传结果不确定，请人工确认是否已上传");
-    if (state == QLatin1String("return-failed"))
-        return QStringLiteral("回传失败，请查看HTTP客户端报文");
-    if (state == QLatin1String("received"))
-        return QStringLiteral("主程序已接收，尚未开始传票");
-    if (state == QLatin1String("auto-pending"))
-        return QStringLiteral("等待自动传票（钥匙/握手未就绪）");
-    if (state == QLatin1String("orphan-recovered"))
-        return QStringLiteral("发现钥匙中的未知任务，待人工确认");
-    if (state == QLatin1String("sending"))
-        return QStringLiteral("正在传票到钥匙");
-    if (state == QLatin1String("success"))
-        return QStringLiteral("已传票到钥匙，等待设备后续执行");
-    if (state == QLatin1String("key-cleared"))
-        return QStringLiteral("钥匙任务已删除，可再次传票");
-    if (state == QLatin1String("admin-delete-pending"))
-        return QStringLiteral("钥匙已清理，正在通知工作台终止");
-    if (state == QLatin1String("admin-delete-failed"))
-        return QStringLiteral("工作台通知失败，需手动处理");
-    if (state == QLatin1String("failed"))
-        return QStringLiteral("传票失败，请查看串口报文");
-    return state;
-}
-
-QString KeyManagePage::ticketStateDescription(const SystemTicketDto &ticket)
-{
-    /* ── 管理员删除流程 ── */
-    if (ticket.adminDeleteStage == SystemTicketDto::AdminDeleteStage::TerminationFailed) {
-        const QString err = ticket.adminDeleteError.trimmed();
-        return err.isEmpty()
-                ? QStringLiteral("工作台终止失败，请手动关闭该任务")
-                : QStringLiteral("工作台终止失败：%1").arg(err);
-    }
-    if (ticket.adminDeleteStage == SystemTicketDto::AdminDeleteStage::KeyClearedAwaitingTermination) {
-        return QStringLiteral("钥匙已清理，正在通知工作台终止");
-    }
-
-    /* ── 回传链路各阶段 ── */
-    if (ticket.returnState == QLatin1String("return-requesting-log")) {
-        return QStringLiteral("任务已完成，正在读取钥匙日志");
-    }
-    if (ticket.returnState == QLatin1String("return-handshake")) {
-        return QStringLiteral("正在与钥匙建立回传握手");
-    }
-    if (ticket.returnState == QLatin1String("return-log-requesting")) {
-        return QStringLiteral("握手完成，正在请求钥匙日志");
-    }
-    if (ticket.returnState == QLatin1String("return-log-receiving")) {
-        return QStringLiteral("正在接收钥匙日志，请稍候");
-    }
-    if (ticket.returnState == QLatin1String("return-uploading")) {
-        return QStringLiteral("日志已读取，正在上传服务端");
-    }
-    if (ticket.returnState == QLatin1String("return-upload-success")) {
-        return QStringLiteral("上传成功，准备清理钥匙任务");
-    }
-    if (ticket.returnState == QLatin1String("return-delete-pending")) {
-        return QStringLiteral("服务端已确认，正在清理钥匙任务");
-    }
-    if (ticket.returnState == QLatin1String("return-delete-verifying")) {
-        return QStringLiteral("正在验证钥匙任务是否已清理");
-    }
-    if (ticket.returnState == QLatin1String("return-delete-success")) {
-        return QStringLiteral("回传完成，钥匙任务已清理");
-    }
-    if (ticket.returnState == QLatin1String("return-delete-failed")) {
-        if (!ticket.returnError.trimmed().isEmpty()) {
-            return QStringLiteral("钥匙清理失败：%1").arg(ticket.returnError);
-        }
-        return QStringLiteral("钥匙清理失败，请确认后重试");
-    }
-    if (ticket.returnState == QLatin1String("return-success")) {
-        return QStringLiteral("回传完成，即将清理钥匙任务");
-    }
-    if (ticket.returnState == QLatin1String("return-interrupted-retryable")) {
-        return QStringLiteral("回传被中断，钥匙就绪后将自动恢复");
-    }
-    if (ticket.returnState == QLatin1String("manual-required")) {
-        if (!ticket.returnError.trimmed().isEmpty()) {
-            return QStringLiteral("需人工确认：%1").arg(ticket.returnError);
-        }
-        return QStringLiteral("需人工确认，请查看日志详情");
-    }
-    if (ticket.returnState == QLatin1String("upload_uncertain")) {
-        return QStringLiteral("服务端是否收到不确定，请人工核实");
-    }
-    if (ticket.returnState == QLatin1String("return-failed")) {
-        if (!ticket.returnError.trimmed().isEmpty()) {
-            return QStringLiteral("回传失败：%1").arg(ticket.returnError);
-        }
-        return QStringLiteral("回传失败，请查看日志");
-    }
-
-    /* ── 传票阶段 ── */
-    if (ticket.transferState == QLatin1String("received")) {
-        return QStringLiteral("已接收工作台指令，等待传票");
-    }
-    if (ticket.transferState == QLatin1String("auto-pending")) {
-        return QStringLiteral("等待钥匙就绪后自动传票");
-    }
-    if (ticket.transferState == QLatin1String("orphan-recovered")) {
-        return QStringLiteral("孤儿任务恢复，请确认来源后操作");
-    }
-    if (ticket.transferState == QLatin1String("sending")) {
-        return QStringLiteral("正在向钥匙传票，请稍候");
-    }
-    if (ticket.transferState == QLatin1String("success")) {
-        return QStringLiteral("传票完成，等待任务执行");
-    }
-    if (ticket.transferState == QLatin1String("key-cleared")) {
-        return QStringLiteral("钥匙任务已删除，可重新传票");
-    }
-    if (ticket.transferState == QLatin1String("failed")) {
-        if (!ticket.lastError.trimmed().isEmpty()) {
-            return QStringLiteral("传票失败：%1").arg(ticket.lastError);
-        }
-        return QStringLiteral("传票失败，请查看日志");
-    }
-    return ticket.transferState;
-}
 QString KeyManagePage::ticketPositionText(const QString &ticketNo, const QString &taskName)
 {
     return extractPositionFromTaskName(ticketNo, taskName);
@@ -1451,25 +1350,27 @@ void KeyManagePage::updateAdminButtons()
 {
     ui->btnTransferTicket->setEnabled(m_isAdmin);
     ui->btnDeleteTicket->setEnabled(m_isAdmin);
+    // The capture entry replaces the former Q_TASK diagnostic button and is
+    // not part of the normal operator surface.
+    ui->btnQueryTaskCount->setVisible(m_isAdmin);
+    ui->btnQueryTaskCount->setEnabled(m_isAdmin);
     // btnReturnTicket 的可用性由 updateSelectedSystemTicketCard 综合判断（需同时满足 canManualReturn && m_isAdmin）
     // 这里只处理非管理员时强制置灰；管理员时交给票据选中逻辑决定
     if (!m_isAdmin) {
         ui->btnReturnTicket->setEnabled(false);
     }
-    updateClearOrphanButton();
+    updateClearUnregisteredButton();
     updateForceCleanButton();
 }
 
-void KeyManagePage::updateClearOrphanButton()
+void KeyManagePage::updateClearUnregisteredButton()
 {
-    const bool canClear = m_isAdmin && m_controller->isSelectedKeyTaskOrphan();
-    ui->btnClearOrphanKeyTask->setEnabled(canClear);
+    const bool canClear = m_isAdmin && m_controller->isSelectedKeyTaskUnregistered();
+    ui->btnClearUnregisteredKeyTask->setEnabled(canClear);
 }
 
 void KeyManagePage::updateForceCleanButton()
 {
-    const bool canForce = m_isAdmin && m_controller->isSelectedSystemTicketForceClearable();
-    ui->btnForceCleanFailedTicket->setEnabled(canForce);
 }
 
 void KeyManagePage::updateStatusBar(const QString &message)

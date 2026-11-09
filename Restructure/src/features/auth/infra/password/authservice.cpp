@@ -91,6 +91,14 @@ QString serviceUnavailableMessage(bool cardLogin)
         : QStringLiteral("登录服务不可用，请稍后重试");
 }
 
+int authRequestTimeoutSeconds()
+{
+    const int configured = ConfigManager::instance()
+            ->value(QStringLiteral("auth/requestTimeoutSeconds"), 5)
+            .toInt();
+    return qBound(3, configured, 10);
+}
+
 QString requestTimeoutMessage(bool cardLogin, int timeoutSeconds)
 {
     return cardLogin
@@ -368,7 +376,7 @@ void AuthService::sendLoginRequest(const QString &userName, const QString &encry
     emit loginStateChanged(true);
 
     // 登录请求超时保护，避免网络异常时 UI 长时间无反馈。
-    int timeoutMs = ConfigManager::instance()->connectionTimeout() * 1000;
+    int timeoutMs = authRequestTimeoutSeconds() * 1000;
     if (timeoutMs < 3000)
     {
         timeoutMs = 3000;
@@ -399,7 +407,7 @@ void AuthService::sendLoginRequest(const QString &userName, const QString &encry
             QString errorMsg;
 
             if (timeoutAbort) {
-                errorMsg = requestTimeoutMessage(false, ConfigManager::instance()->connectionTimeout());
+                errorMsg = requestTimeoutMessage(false, authRequestTimeoutSeconds());
             } else if (httpStatus == 400 || httpStatus == 401 || httpStatus == 403) {
                 errorMsg = normalizePasswordLoginMessage(extractResponseMessage(responseData));
             } else if (httpStatus >= 500) {
@@ -519,7 +527,7 @@ void AuthService::sendCardLoginRequest(const QString &cardNo, const QString &ten
     m_loginInProgress = true;
     emit loginStateChanged(true);
 
-    int timeoutMs = ConfigManager::instance()->connectionTimeout() * 1000;
+    int timeoutMs = authRequestTimeoutSeconds() * 1000;
     if (timeoutMs < 3000)
     {
         timeoutMs = 3000;
@@ -547,7 +555,7 @@ void AuthService::sendCardLoginRequest(const QString &cardNo, const QString &ten
             QString errorMsg;
 
             if (timeoutAbort) {
-                errorMsg = requestTimeoutMessage(true, ConfigManager::instance()->connectionTimeout());
+                errorMsg = requestTimeoutMessage(true, authRequestTimeoutSeconds());
             } else if (httpStatus == 400 || httpStatus == 401 || httpStatus == 403) {
                 errorMsg = normalizeCardLoginMessage(extractResponseMessage(responseData));
             } else if (httpStatus >= 500) {
@@ -649,7 +657,7 @@ void AuthService::sendFingerprintLoginRequest(const QByteArray &templateData, co
     m_loginInProgress = true;
     emit loginStateChanged(true);
 
-    int timeoutMs = ConfigManager::instance()->connectionTimeout() * 1000;
+    int timeoutMs = authRequestTimeoutSeconds() * 1000;
     if (timeoutMs < 3000)
     {
         timeoutMs = 3000;
@@ -747,6 +755,17 @@ void AuthService::sendFingerprintLoginRequest(const QByteArray &templateData, co
 
 void AuthService::sendAccountListRequest(const QString &tenantId)
 {
+    bool localService = false;
+    QString targetError;
+    if (!ConfigManager::resolveServiceTarget(ConfigManager::instance()->homeUrl(),
+                                             ConfigManager::instance()->apiUrl(),
+                                             &localService,
+                                             &targetError)
+        || !localService)
+    {
+        emit accountListFailed(QStringLiteral("远程模式不提供账号选择"));
+        return;
+    }
     QString accountListUrl = ConfigManager::instance()
             ->value("auth/accountListUrl", "")
             .toString()
@@ -785,7 +804,7 @@ void AuthService::sendAccountListRequest(const QString &tenantId)
     m_accountListInProgress = true;
     emit accountListStateChanged(true);
 
-    int timeoutMs = ConfigManager::instance()->connectionTimeout() * 1000;
+    int timeoutMs = authRequestTimeoutSeconds() * 1000;
     if (timeoutMs < 3000)
     {
         timeoutMs = 3000;
@@ -809,7 +828,7 @@ void AuthService::sendAccountListRequest(const QString &tenantId)
         if (reply->error() != QNetworkReply::NoError) {
             const bool timeoutAbort = reply->property("timeoutAbort").toBool();
             const QString errorMsg = timeoutAbort
-                    ? QString("账号列表请求超时(%1秒)").arg(ConfigManager::instance()->connectionTimeout())
+                    ? QString("账号列表请求超时(%1秒)").arg(authRequestTimeoutSeconds())
                     : QString("网络错误: %1").arg(reply->errorString());
             finishAccountListRequest(reply);
             emit accountListFailed(errorMsg);

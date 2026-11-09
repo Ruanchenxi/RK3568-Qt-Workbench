@@ -17,6 +17,9 @@ QT += network
 # WebEngine 模块支持（用于内嵌网页）
 QT += webenginewidgets
 
+# 日志快照在后台线程写盘，避免阻塞 GUI 和串口事件循环。
+QT += concurrent
+
 TARGET = RK3568       # 生成的可执行文件名
 TEMPLATE = app             # 项目类型：应用程序
 
@@ -68,3 +71,6 @@ RESOURCES += \
 
 linux: LIBS += -ldl
 
+
+# Deployment overlays for the bundled outage runtime.
+OTHER_FILES +=     deploy/outage/start-all.bat     deploy/outage/stop-all.bat     deploy/outage/outage-process.ps1     deploy/outage/start.sh     deploy/outage/stop.sh

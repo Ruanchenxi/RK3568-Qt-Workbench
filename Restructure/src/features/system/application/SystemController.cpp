@@ -15,7 +15,7 @@
 #include <QDebug>
 
 #include "core/ConfigManager.h"
-#include "features/auth/infra/password/authservice.h"
+#include "shared/contracts/IAuthService.h"
 
 namespace
 {
@@ -81,9 +81,10 @@ SystemIdentityUserDto parseUserItem(const QJsonValue &value)
 }
 }
 
-SystemController::SystemController(QObject *parent)
+SystemController::SystemController(IAuthService *authService, QObject *parent)
     : QObject(parent)
-    , m_networkManager(AuthService::instance()->networkAccessManager())
+    , m_authService(authService)
+    , m_networkManager(authService ? authService->networkAccessManager() : nullptr)
     , m_pendingUserListReply(nullptr)
     , m_pendingUpdateCardReply(nullptr)
     , m_pendingUpdateFingerprintReply(nullptr)
@@ -91,6 +92,8 @@ SystemController::SystemController(QObject *parent)
     , m_cardUpdateInProgress(false)
     , m_fingerprintUpdateInProgress(false)
 {
+    Q_ASSERT(m_authService);
+    Q_ASSERT(m_networkManager);
 }
 
 SystemSettingsDto SystemController::loadSettings() const
@@ -172,7 +175,7 @@ void SystemController::requestUserList()
     QNetworkRequest request{QUrl(requestUrl)};
     applyCommonHeaders(&request);
     qDebug() << "[SystemController] 用户列表请求 URL:" << requestUrl
-             << "hasToken:" << !AuthService::instance()->getAccessToken().trimmed().isEmpty();
+             << "hasToken:" << !m_authService->accessToken().trimmed().isEmpty();
 
     QNetworkReply *reply = m_networkManager->post(request, QByteArray());
     m_pendingUserListReply = reply;
@@ -353,7 +356,7 @@ void SystemController::applyCommonHeaders(QNetworkRequest *request) const
     request->setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     request->setRawHeader("kids-requested-with", "KidsHttpRequest");
 
-    const QString accessToken = AuthService::instance()->getAccessToken().trimmed();
+    const QString accessToken = m_authService->accessToken().trimmed();
     if (!accessToken.isEmpty())
     {
         // 第三方业务接口当前按后端文档使用 kids-auth。
@@ -535,7 +538,7 @@ void SystemController::submitUserCardNo(const QString &userId, const QString &ca
     qDebug() << "[SystemController] 保存卡号请求 URL:" << requestUrl
              << "userId:" << normalizedUserId
              << "cardNo:" << normalizedCardNo
-             << "hasToken:" << !AuthService::instance()->getAccessToken().trimmed().isEmpty();
+             << "hasToken:" << !m_authService->accessToken().trimmed().isEmpty();
 
     QNetworkReply *reply = m_networkManager->post(
         request, QJsonDocument(requestBody).toJson(QJsonDocument::Compact));

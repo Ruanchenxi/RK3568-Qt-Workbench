@@ -66,6 +66,13 @@ QList<LogItem> SerialLogManager::filteredItems() const
 
 bool SerialLogManager::exportText(const QString &path, QString *error) const
 {
+    return exportItemsText(m_items, path, error);
+}
+
+bool SerialLogManager::exportItemsText(const QList<LogItem> &items,
+                                       const QString &path,
+                                       QString *error)
+{
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         if (error) {
@@ -81,7 +88,7 @@ bool SerialLogManager::exportText(const QString &path, QString *error) const
     out.setCodec("UTF-8");
     out << QStringLiteral("时间\t方向\tOpId\t命令\t长度\t摘要\tHex\n");
 
-    for (const LogItem &item : m_items) {
+    for (const LogItem &item : items) {
         QString summaryText = item.summary;
         summaryText.replace('\n', ' ');
         summaryText.replace('\r', ' ');
@@ -93,7 +100,7 @@ bool SerialLogManager::exportText(const QString &path, QString *error) const
         out << item.timestamp.toString("yyyy-MM-dd hh:mm:ss.zzz") << "\t"
             << dirText(item.dir) << "\t"
             << item.opId << "\t"
-            << cmdText(item.cmd) << "\t"
+            << commandText(item.cmd) << "\t"
             << item.length << "\t"
             << summaryText << "\t"
             << hexText << "\n";
@@ -118,14 +125,16 @@ QString SerialLogManager::dirText(LogDir dir)
     }
 }
 
-QString SerialLogManager::cmdText(quint8 cmd)
+QString SerialLogManager::commandText(quint8 cmd)
 {
     switch (cmd) {
     case LogCmdNone:                return QStringLiteral("--");
     case KeyProtocol::CmdInit:     return QStringLiteral("INIT");
     case static_cast<quint8>(KeyProtocol::CmdInit | 0x80): return QStringLiteral("INIT_MORE");
     case KeyProtocol::CmdSetCom:   return QStringLiteral("SET_COM");
+    case KeyProtocol::CmdSetTime:  return QStringLiteral("SET_TIME");
     case KeyProtocol::CmdQTask:    return QStringLiteral("Q_TASK");
+    case KeyProtocol::CmdQKeyEq:   return QStringLiteral("Q_KEYEQ");
     case KeyProtocol::CmdITaskLog: return QStringLiteral("I_TASK_LOG");
     case KeyProtocol::CmdDel:      return QStringLiteral("DEL");
     case KeyProtocol::CmdDownloadRfid:return QStringLiteral("DN_RFID");

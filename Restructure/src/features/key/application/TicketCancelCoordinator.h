@@ -11,6 +11,7 @@
 #include <QStringList>
 
 #include "shared/contracts/SystemTicketDto.h"
+#include "features/key/domain/TicketCancelState.h"
 
 class TicketCancelCoordinator : public QObject
 {
@@ -19,7 +20,7 @@ public:
     struct CancelRecord
     {
         QString taskId;
-        QString cancelState;
+        TicketCancelState cancelState = TicketCancelState::None;
         QString residentSlotId;
         QString residentKeyId;
         QDateTime cancelRequestedAt;
@@ -42,7 +43,7 @@ public:
 
     void recordAccepted(const QString &taskId,
                         const SystemTicketDto &ticket,
-                        const QString &state,
+                        TicketCancelState state,
                         const QString &message);
     void recordExecuting(const QString &taskId,
                          const SystemTicketDto &ticket,
@@ -58,14 +59,10 @@ public:
                       const QString &message);
 
 private:
-    static bool isActiveState(const QString &state);
-    QString journalPath() const;
-    void loadRecords();
-    void saveRecords() const;
     void upsertRecord(const CancelRecord &record);
     CancelRecord buildRecord(const QString &taskId,
                              const SystemTicketDto &ticket,
-                             const QString &state,
+                             TicketCancelState state,
                              const QString &message) const;
 
     bool m_started = false;

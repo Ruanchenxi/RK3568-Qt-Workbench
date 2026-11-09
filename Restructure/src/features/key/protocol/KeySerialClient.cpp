@@ -31,6 +31,11 @@
 #include "KeySerialClient.h"
 #include "KeyCrc16.h"
 #include "features/key/protocol/KeyDataFrameBuilder.h"
+#include "features/key/protocol/KeyRequestPolicy.h"
+#include "features/key/protocol/KeyFrameStreamParser.h"
+#include "features/key/protocol/KeyTaskLogPayloadParser.h"
+#include "features/key/protocol/KeyTaskListParser.h"
+#include "features/key/protocol/CaptureRfidPayloadParser.h"
 #include <QDateTime>
 #include <QSerialPort>
 
@@ -50,61 +55,6 @@ quint16 readLe16(const QByteArray &bytes, int offset)
             | (static_cast<quint16>(b1) << 8);
 }
 
-quint32 readLe32(const QByteArray &bytes, int offset)
-{
-    const quint8 b0 = (offset >= 0 && offset < bytes.size())
-            ? static_cast<quint8>(bytes.at(offset))
-            : 0;
-    const quint8 b1 = (offset + 1 >= 0 && offset + 1 < bytes.size())
-            ? static_cast<quint8>(bytes.at(offset + 1))
-            : 0;
-    const quint8 b2 = (offset + 2 >= 0 && offset + 2 < bytes.size())
-            ? static_cast<quint8>(bytes.at(offset + 2))
-            : 0;
-    const quint8 b3 = (offset + 3 >= 0 && offset + 3 < bytes.size())
-            ? static_cast<quint8>(bytes.at(offset + 3))
-            : 0;
-    return static_cast<quint32>(b0)
-            | (static_cast<quint32>(b1) << 8)
-            | (static_cast<quint32>(b2) << 16)
-            | (static_cast<quint32>(b3) << 24);
-}
-
-QString rawTaskIdToDecimalString(const QByteArray &taskId16)
-{
-    if (taskId16.size() < 8) {
-        return QString();
-    }
-
-    qulonglong value = 0;
-    for (int i = 0; i < 8; ++i) {
-        value |= (static_cast<qulonglong>(static_cast<quint8>(taskId16[i])) << (i * 8));
-    }
-    return QString::number(value);
-}
-
-QString compactHex(const QByteArray &bytes)
-{
-    return QString(bytes.toHex().toUpper());
-}
-
-QString bcd6ToDateTimeString(const QByteArray &bytes)
-{
-    if (bytes.size() < 6) {
-        return QString();
-    }
-
-    auto part = [&bytes](int index) -> QString {
-        const quint8 value = static_cast<quint8>(bytes[index]);
-        return QStringLiteral("%1%2")
-                .arg((value >> 4) & 0x0F)
-                .arg(value & 0x0F);
-    };
-
-    return QStringLiteral("20%1-%2-%3 %4:%5:%6")
-            .arg(part(0), part(1), part(2), part(3), part(4), part(5));
-}
-
 quint8 toBcdByte(int value)
 {
     const int tens = qBound(0, value / 10, 9);
@@ -113,6 +63,8 @@ quint8 toBcdByte(int value)
 }
 
 } // namespace
+
+static QString captureTaskIdText(const QByteArray &raw);
 
 /**
  * @brief CRC16 计算委托（静态方法）
@@ -146,19 +98,17 @@ uint16_t KeySerialClient::calcCrc(const QByteArray &cmdPlusData)
 
 KeySerialClient::KeySerialClient(ISerialTransport *transport, QObject *parent)
     : QObject(parent)
-    , m_serial(transport)
+    , m_serial(transport) // [LEARNING] 保存传入的接口指针；KeySessionService 此处传来的是 QtSerialTransport 对象的地址。
     , m_frameNo(0)
     , m_retryTimer(new QTimer(this))
     , m_keyStableTimer(new QTimer(this))
     , m_qtaskRecoveryTimer(new QTimer(this))
     , m_taskLogWaitTimer(new QTimer(this))
-    , m_expectedAckCmd(0)
-    , m_retryCount(0)
-    , m_inFlightGeneration(0)
-    , m_retryTimerGeneration(0)
+    , m_captureRfidWaitTimer(new QTimer(this))
+
     , m_taskLogWaitGeneration(0)
-    , m_inFlight(false)
-    , m_inFlightType(INFLIGHT_NONE)
+    , m_captureRfidWaitGeneration(0)
+
     , m_pendingAfterDelQuery(false)
     , m_keyPlaced(false)
     , m_keyStable(false)
@@ -176,7 +126,6 @@ KeySerialClient::KeySerialClient(ISerialTransport *transport, QObject *parent)
     , m_pendingAuxCommand(AuxNone)
     , m_auxSequenceMode(AuxSequenceNone)
     , m_auxSequenceOrigin(AuxOriginNone)
-    , m_qtaskSawFrameHeader(false)
     , m_qtaskProbeInFlight(false)
     , m_resyncDropBytes(0)
     , m_noHeaderDropBytes(0)
@@ -200,6 +149,8 @@ KeySerialClient::KeySerialClient(ISerialTransport *transport, QObject *parent)
     , m_taskLogExpectedSeq(0)
     , m_taskLogPayloadBuffer()
     , m_expectedTaskIdForResponse()
+    , m_pendingCaptureRfidFrames(0)
+    , m_captureRfidExpectedSeq(0)
 {
     Q_ASSERT(m_serial != nullptr);
     connect(m_serial, &ISerialTransport::readyRead, this, &KeySerialClient::onReadyRead);
@@ -208,7 +159,7 @@ KeySerialClient::KeySerialClient(ISerialTransport *transport, QObject *parent)
     connect(m_keyStableTimer, &QTimer::timeout, this, &KeySerialClient::onKeyStableTimerTimeout);
     connect(m_qtaskRecoveryTimer, &QTimer::timeout, this, &KeySerialClient::onQTaskRecoveryTimeout);
     connect(m_taskLogWaitTimer, &QTimer::timeout, this, [this]() {
-        if (m_taskLogWaitGeneration != m_inFlightGeneration && m_pendingTaskLogFrames == 0) {
+        if (m_taskLogWaitGeneration != m_request.generation() && m_pendingTaskLogFrames == 0) {
             emitLog(LogDir::EVENT, CMD_UP_TASK_LOG, 0,
                     "Ignore stale UP_TASK_LOG wait timeout",
                     {}, true, true);
@@ -222,12 +173,33 @@ KeySerialClient::KeySerialClient(ISerialTransport *transport, QObject *parent)
         noteProtocolFailure(QStringLiteral("UP_TASK_LOG wait timeout"));
         setProtocolHealthy(false, QStringLiteral("UP_TASK_LOG wait timeout"));
         clearTaskLogState();
-        emit timeoutOccurred(QStringLiteral("UP_TASK_LOG 超时，连接保持，请重新放稳钥匙"));
+        emit timeoutOccurred(CMD_UP_TASK_LOG, QStringLiteral("UP_TASK_LOG 超时，连接保持，请重新放稳钥匙"));
+    });
+    connect(m_captureRfidWaitTimer, &QTimer::timeout, this, [this]() {
+        if (m_pendingCaptureRfidFrames == 0) return;
+        emitLog(LogDir::ERROR, CMD_UP_RFID, 0,
+                "UP_RFID timeout after I_RFID response");
+        const QByteArray rawTaskId = m_pendingCaptureRfidTaskId;
+        clearCaptureRfidState();
+        emit captureRfidFailed(captureTaskIdText(rawTaskId),
+                               QStringLiteral("UP_RFID \u8d85\u65f6\uff0c\u94a5\u5319\u4efb\u52a1\u5df2\u4fdd\u7559"));
     });
     m_retryTimer->setSingleShot(true);
     m_keyStableTimer->setSingleShot(true);
     m_qtaskRecoveryTimer->setSingleShot(true);
     m_taskLogWaitTimer->setSingleShot(true);
+    m_captureRfidWaitTimer->setSingleShot(true);
+}
+
+static QString captureTaskIdText(const QByteArray &raw)
+{
+    if (raw.size() != 16) return QString();
+    quint64 value = 0;
+    for (int i = 0; i < 8; ++i) {
+        value |= static_cast<quint64>(
+                    static_cast<quint8>(raw.at(i))) << (8 * i);
+    }
+    return QString::number(value);
 }
 
 KeySerialClient::~KeySerialClient()
@@ -297,10 +269,10 @@ bool KeySerialClient::connectPort(const QString &portName, int baud)
     clearTicketTransferState();
     clearDataTransferState();
     clearTaskLogState();
+    clearCaptureRfidState();
     m_qtaskRecoveryRound = 0;
     m_keyPlacedElapsed.invalidate();
     m_lastNoiseElapsed.invalidate();
-    m_qtaskSawFrameHeader = false;
     m_qtaskProbeInFlight = false;
     m_resyncDropBytes = 0;
     m_noHeaderDropBytes = 0;
@@ -361,10 +333,10 @@ void KeySerialClient::disconnectPort()
     clearTicketTransferState();
     clearDataTransferState();
     clearTaskLogState();
+    clearCaptureRfidState();
     m_qtaskRecoveryRound = 0;
     m_keyPlacedElapsed.invalidate();
     m_lastNoiseElapsed.invalidate();
-    m_qtaskSawFrameHeader = false;
     m_qtaskProbeInFlight = false;
     m_resyncDropBytes = 0;
     m_noHeaderDropBytes = 0;
@@ -384,31 +356,7 @@ bool KeySerialClient::isConnected() const
 
 bool KeySerialClient::hasInFlightCommand() const
 {
-    return m_inFlight;
-}
-
-void KeySerialClient::setPortSwitchInProgress(bool inProgress)
-{
-    setProperty("portSwitchInProgress", inProgress);
-    if (inProgress) {
-        emitLog(LogDir::EVENT, 0, 0,
-                QStringLiteral("受控串口切换开始，已抑制 verified port 自动重连"));
-    } else {
-        emitLog(LogDir::EVENT, 0, 0,
-                QStringLiteral("受控串口切换结束，恢复普通串口恢复策略"));
-    }
-}
-
-void KeySerialClient::clearVerifiedPort()
-{
-    const bool hadVerifiedPort = m_hasVerifiedPort || !m_verifiedPortName.isEmpty();
-    m_verifiedPortName.clear();
-    m_hasVerifiedPort = false;
-    m_reopenRetryCount = 0;
-    if (hadVerifiedPort) {
-        emitLog(LogDir::EVENT, 0, 0,
-                QStringLiteral("已清空 verified port，后续不会再优先回到旧串口"));
-    }
+    return m_request.active();
 }
 
 // ============================================================
@@ -449,7 +397,7 @@ void KeySerialClient::refreshHandshake()
         emitNotice("SET_COM 失败：串口未连接");
         return;
     }
-    if (m_inFlight) {
+    if (m_request.active()) {
         emitNotice("SET_COM 失败：当前有命令在途");
         return;
     }
@@ -493,7 +441,7 @@ void KeySerialClient::startAuxSequence(quint8 seat,
         emitNotice(QStringLiteral("辅助命令失败：串口未连接"));
         return;
     }
-    if (m_inFlight) {
+    if (m_request.active()) {
         emitNotice(QStringLiteral("辅助命令跳过：当前有命令在途 (%1)").arg(reason));
         return;
     }
@@ -548,7 +496,7 @@ void KeySerialClient::requestTaskLog(const QByteArray &taskId16)
         emitNotice("I_TASK_LOG 失败：串口未连接");
         return;
     }
-    if (m_inFlight) {
+    if (m_request.active()) {
         emitNotice("I_TASK_LOG 失败：当前有命令在途");
         return;
     }
@@ -596,7 +544,7 @@ void KeySerialClient::queryTasksAllInternal(bool fromRecovery, bool allowWhenUnk
         log("[ERROR] 串口未打开");
         return;
     }
-    if (m_inFlight) {
+    if (m_request.active()) {
         log("[BUSY] 上一个请求尚未完成，请等待响应或超时");
         return;
     }
@@ -618,7 +566,6 @@ void KeySerialClient::queryTasksAllInternal(bool fromRecovery, bool allowWhenUnk
                 "Startup probe Q_TASK send (skip keyPresent gate)",
                 {}, true, true);
     }
-    m_qtaskSawFrameHeader = false;
     m_qtaskProbeInFlight = allowWhenUnknownKey;
     QByteArray data(16, static_cast<char>(0xFF));
     QByteArray addr2;
@@ -659,7 +606,7 @@ void KeySerialClient::deleteTask(const QByteArray &taskId16)
         log("[ERROR] 串口未打开");
         return;
     }
-    if (m_inFlight) {
+    if (m_request.active()) {
         log("[BUSY] 上一个请求尚未完成，请等待响应或超时");
         return;
     }
@@ -727,7 +674,7 @@ void KeySerialClient::sendInitPayload(const QByteArray &payload)
         emitNotice("INIT 失败：串口未连接");
         return;
     }
-    if (m_inFlight) {
+    if (m_request.active()) {
         emitNotice("INIT 失败：当前有命令在途");
         return;
     }
@@ -746,7 +693,7 @@ void KeySerialClient::sendRfidPayload(const QByteArray &payload)
         emitNotice("下载 RFID 失败：串口未连接");
         return;
     }
-    if (m_inFlight) {
+    if (m_request.active()) {
         emitNotice("下载 RFID 失败：当前有命令在途");
         return;
     }
@@ -784,12 +731,14 @@ void KeySerialClient::clearTaskLogState()
     m_taskLogWaitTimer->stop();
 }
 
-void KeySerialClient::beginInFlightContext(quint8 inFlightType, quint8 expectedAckCmd)
+void KeySerialClient::beginInFlightContext(
+        quint8 inFlightType,
+        quint8 expectedAckCmd,
+        const QByteArray &frame)
 {
-    m_inFlight = true;
-    m_inFlightType = inFlightType;
-    m_expectedAckCmd = expectedAckCmd;
-    ++m_inFlightGeneration;
+    m_request.begin(static_cast<KeyRequestType>(inFlightType),
+                    expectedAckCmd,
+                    frame);
 }
 
 void KeySerialClient::setProtocolHealthy(bool healthy, const QString &reason)
@@ -934,89 +883,85 @@ bool KeySerialClient::parseAndEmitTaskLogPayload(const QByteArray &payload,
                                                  quint16 lenField,
                                                  const QByteArray &rawFrame)
 {
-    if (payload.size() < 28) {
-        emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
-                "UP_TASK_LOG file payload too short", rawFrame);
-        return false;
-    }
-
-    const quint32 fileSize = readLe32(payload, 0);
-    if (fileSize < 28 || static_cast<int>(fileSize) > payload.size()) {
-        emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
-                QString("UP_TASK_LOG invalid fileSize=%1 payload=%2")
-                    .arg(fileSize).arg(payload.size()),
-                rawFrame);
-        return false;
-    }
-
-    int offset = 4;
-    const QByteArray versionBytes = payload.mid(offset, 2);
-    offset += 2;
-    offset += 2; // reserved
-    const QByteArray taskIdRaw = payload.mid(offset, TASK_ID_LEN);
-    offset += TASK_ID_LEN;
-    if (!m_pendingTaskLogTaskId.isEmpty() && taskIdRaw != m_pendingTaskLogTaskId) {
-        emitLog(LogDir::WARN, CMD_UP_TASK_LOG, lenField,
-                "UP_TASK_LOG taskId mismatch with pending request",
-                {}, true, true);
-        return false;
-    }
-    const int stationNo = static_cast<int>(static_cast<quint8>(payload[offset++]));
-    const int taskAttr = static_cast<int>(static_cast<quint8>(payload[offset++]));
-    const int steps = static_cast<int>(readLe16(payload, offset));
-    offset += 2;
-
-    const int itemsBytes = static_cast<int>(fileSize) - offset;
-    if (itemsBytes < 0 || (itemsBytes % 16) != 0) {
-        emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
-                QString("UP_TASK_LOG invalid item bytes=%1").arg(itemsBytes),
-                rawFrame);
+    const KeyTaskLogPayloadParser::ParseResult parsed =
+            KeyTaskLogPayloadParser::parse(payload, m_pendingTaskLogTaskId);
+    if (!parsed.isValid()) {
+        switch (parsed.error) {
+        case KeyTaskLogPayloadParser::ParseError::PayloadTooShort:
+            emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
+                    "UP_TASK_LOG file payload too short", rawFrame);
+            break;
+        case KeyTaskLogPayloadParser::ParseError::InvalidFileSize:
+            emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
+                    QString("UP_TASK_LOG invalid fileSize=%1 payload=%2")
+                        .arg(parsed.fileSize).arg(payload.size()),
+                    rawFrame);
+            break;
+        case KeyTaskLogPayloadParser::ParseError::TaskIdMismatch:
+            emitLog(LogDir::WARN, CMD_UP_TASK_LOG, lenField,
+                    "UP_TASK_LOG taskId mismatch with pending request",
+                    {}, true, true);
+            break;
+        case KeyTaskLogPayloadParser::ParseError::InvalidItemBytes:
+            emitLog(LogDir::ERROR, CMD_UP_TASK_LOG, lenField,
+                    QString("UP_TASK_LOG invalid item bytes=%1")
+                        .arg(parsed.itemBytes),
+                    rawFrame);
+            break;
+        case KeyTaskLogPayloadParser::ParseError::None:
+            break;
+        }
         return false;
     }
 
     QVariantList items;
-    for (int itemOffset = offset; itemOffset < static_cast<int>(fileSize); itemOffset += 16) {
+    for (const KeyTaskLogPayloadParser::TaskLogItem &parsedItem
+         : parsed.payload.items) {
         QVariantMap item;
-        item.insert("serialNumber", static_cast<int>(readLe16(payload, itemOffset)));
-        item.insert("opStatus", static_cast<int>(static_cast<quint8>(payload[itemOffset + 2])));
-        item.insert("rfid", compactHex(payload.mid(itemOffset + 3, 5)));
-        item.insert("opTime", bcd6ToDateTimeString(payload.mid(itemOffset + 8, 6)));
-        item.insert("opType", static_cast<int>(static_cast<quint8>(payload[itemOffset + 14])));
+        item.insert("serialNumber", parsedItem.serialNumber);
+        item.insert("opStatus", parsedItem.opStatus);
+        item.insert("rfid", parsedItem.rfid);
+        item.insert("opTime", parsedItem.opTime);
+        item.insert("opType", parsedItem.opType);
         items.append(item);
     }
 
     QVariantMap eventPayload;
-    eventPayload.insert("taskId", rawTaskIdToDecimalString(taskIdRaw));
-    eventPayload.insert("taskIdRaw", taskIdRaw);
-    eventPayload.insert("stationNo", stationNo);
-    eventPayload.insert("taskAttr", taskAttr);
-    eventPayload.insert("steps", steps);
+    eventPayload.insert("taskId", parsed.payload.taskId);
+    eventPayload.insert("taskIdRaw", parsed.payload.taskIdRaw);
+    eventPayload.insert("stationNo", parsed.payload.stationNo);
+    eventPayload.insert("taskAttr", parsed.payload.taskAttr);
+    eventPayload.insert("steps", parsed.payload.steps);
     eventPayload.insert("frameSeq", static_cast<int>(lastFrameSeq));
     eventPayload.insert("totalFrames", static_cast<int>(totalFrames));
-    eventPayload.insert("version", QString(versionBytes.toHex().toUpper()));
+    eventPayload.insert("version", parsed.payload.version);
     eventPayload.insert("items", items);
 
     emitLog(LogDir::EVENT, CMD_UP_TASK_LOG, lenField,
             QString("UP_TASK_LOG parsed: taskId=%1 items=%2 frames=%3")
-                .arg(eventPayload.value("taskId").toString())
+                .arg(parsed.payload.taskId)
                 .arg(items.size())
                 .arg(totalFrames),
             {}, true, true);
     emit taskLogReady(eventPayload);
     return true;
 }
-
 bool KeySerialClient::sendNextTicketFrame()
 {
     const int nextIndex = m_ticketFrameIndex + 1;
+    // 算出下一帧的位置；初次发送时当前下标为 -1，因此从第 0 帧开始。
     if (nextIndex < 0 || nextIndex >= m_ticketFrames.size()) {
+        // 列表中没有这个位置，返回 false，让调用者处理无法继续发送。
         return false;
     }
 
     m_ticketFrameIndex = nextIndex;
-    // 不在跨信号发射期间持有 QList 元素引用，避免同步槽导致容器重分配/清空后引用悬空。
+    // 记住本次准备发哪一帧；这里只更新位置，不表示设备已经收到。
     const QByteArray frame = m_ticketFrames.at(m_ticketFrameIndex);
+    // 保存这一帧的独立字节数组值；后面的信号接收者即使修改列表，也不使它成为悬空引用。
     const quint8 cmd = (frame.size() > OFF_CMD) ? static_cast<quint8>(frame[OFF_CMD]) : CMD_TICKET;
+    // 读出本帧命令，作为期待确认的命令；正常票据帧为 0x83 或 0x03，短帧在这里取默认值。
+    // 下方长度计算、日志和进度信号用于报告正在发送第几帧，不表示已收到 ACK。
     const quint16 lenField = (frame.size() > OFF_LEN + 1)
             ? static_cast<quint16>(static_cast<quint8>(frame[OFF_LEN]))
               | (static_cast<quint16>(static_cast<quint8>(frame[OFF_LEN + 1])) << 8)
@@ -1035,7 +980,9 @@ bool KeySerialClient::sendNextTicketFrame()
                 .arg(m_ticketFrames.size()),
             frame, true, true);
     sendFrame(frame, cmd, INFLIGHT_TICKET);
+    // 交给发送入口：要发的帧、期待确认的命令、传票请求类型；内部检查通过后才登记等待并写串口。
     return true;
+    // sendFrame 没有返回发送结果；true 只表示已调用它，不保证实际写出或设备确认。
 }
 
 void KeySerialClient::transferTicketJson(const QByteArray &jsonBytes,
@@ -1047,7 +994,7 @@ void KeySerialClient::transferTicketJson(const QByteArray &jsonBytes,
         emit ticketTransferFailed("串口未连接");
         return;
     }
-    if (m_inFlight) {
+    if (m_request.active()) {
         emitNotice("传票发送失败：当前有命令在途");
         emit ticketTransferFailed("当前有命令在途");
         return;
@@ -1212,125 +1159,113 @@ QByteArray KeySerialClient::buildFrame(quint8 cmd, const QByteArray &data,
 
 int KeySerialClient::tryExtractOneFrame(QByteArray &buf, QByteArray &outFrame)
 {
+    // 入口：onReadyRead() 已把新字节追加到 m_recvBuffer，此处 buf 引用同一份累计数据。
+    // 一帧布局：[7E 6C][KeyId 1B][FrameNo 1B][Addr2 2B][Len 2B][Cmd 1B][Data NB][CRC 2B]。
+    // Len = 1 + N（只计 Cmd + Data），总帧长 = 10 + Len；CRC 也只校验 Cmd + Data。
+    // 实际检查委托给 KeyFrameStreamParser::inspect()；本函数据结果等待、丢弃或提取字节。
     while (true) {
         const int recvBufBefore = buf.size();
-        // 1. 找帧头 7E 6C
-        int headerPos = -1;
-        for (int i = 0; i <= buf.size() - 2; ++i) {
-            if (static_cast<quint8>(buf[i]) == HEADER_0 &&
-                static_cast<quint8>(buf[i + 1]) == HEADER_1) {
-                headerPos = i;
-                break;
-            }
-        }
+        // 只读检查帧头、长度及 CRC；返回等待、重同步或完整帧结论，由本函数修改缓冲区。
+        const KeyFrameStreamParser::InspectResult inspected =
+                KeyFrameStreamParser::inspect(buf, MAX_DATA_LEN);
 
-        if (headerPos < 0) {
-            if (buf.size() > 1) {
-                const int dropped = buf.size() - 1;
-                markNoiseDuringStabilizing(buf.left(dropped), "no header");
-                m_noHeaderDropBytes += static_cast<quint32>(dropped);
-                // 简洁摘要（非专家模式可见）
-                emitLog(LogDir::WARN, 0, 0,
-                        QString("RESYNC no header, drop %1 bytes").arg(dropped),
-                        buf.left(dropped), true, false);
-                // 详细诊断（仅专家模式）
-                emitLog(LogDir::WARN, 0, 0,
-                        QString("  detail: recvBufBefore=%1 recvBufAfter=1").arg(recvBufBefore),
-                        {}, true, true);
-                buf = buf.right(1); // 仅保留最后一个字节，兼容 0x7E 跨 chunk
-            }
+        // 按检查结果决定保留等待、丢弃无效前缀或交付完整帧。
+        switch (inspected.kind) {
+        case KeyFrameStreamParser::ResultKind::NeedMoreData:
+            return 0; // 本次取不到整帧，结束函数；已有字节保留，等后续 readyRead。
+
+        case KeyFrameStreamParser::ResultKind::DropNoHeader: {
+            const int dropped = inspected.dropBytes;
+            markNoiseDuringStabilizing(buf.left(dropped), "no header");
+            m_noHeaderDropBytes += static_cast<quint32>(dropped);
+            emitLog(LogDir::WARN, 0, 0,
+                    QString("RESYNC no header, drop %1 bytes").arg(dropped),
+                    buf.left(dropped), true, false);
+            emitLog(LogDir::WARN, 0, 0,
+                    QString("  detail: recvBufBefore=%1 recvBufAfter=1")
+                        .arg(recvBufBefore),
+                    {}, true, true);
+            buf = buf.right(1); // 无完整帧头，保留末尾 1 字节；它可能是下次帧头的 7E。
             return 0;
         }
 
-        // 丢弃帧头前的脏数据
-        if (headerPos > 0) {
-            markNoiseDuringStabilizing(buf.left(headerPos), "resync drop");
-            m_resyncDropBytes += static_cast<quint32>(headerPos);
-            log(QString("  [RESYNC] 丢弃 %1 字节脏数据").arg(headerPos));
-            // 简洁摘要（非专家模式可见）
+        case KeyFrameStreamParser::ResultKind::DropPrefix: {
+            const int dropped = inspected.dropBytes;
+            markNoiseDuringStabilizing(buf.left(dropped), "resync drop");
+            m_resyncDropBytes += static_cast<quint32>(dropped);
+            log(QString("  [RESYNC] drop %1 noise bytes").arg(dropped));
             emitLog(LogDir::WARN, 0, 0,
-                    QString("RESYNC drop %1 bytes").arg(headerPos),
-                    buf.left(headerPos), true, false);
-            // 详细诊断（仅专家模式）
+                    QString("RESYNC drop %1 bytes").arg(dropped),
+                    buf.left(dropped), true, false);
             emitLog(LogDir::WARN, 0, 0,
-                    QString("  detail: headerShift recvBufBefore=%1").arg(recvBufBefore),
+                    QString("  detail: headerShift recvBufBefore=%1")
+                        .arg(recvBufBefore),
                     {}, true, true);
-            buf.remove(0, headerPos);
+            buf.remove(0, dropped); // 删除已找到帧头之前的杂字节，保留帧头及后续数据。
+            continue; // 立即回到本函数 while 顶部，用修改后的 buf 再调用 inspect()。
         }
 
-        // 2. 检查是否够读 Len 字段
-        if (buf.size() < OFF_LEN + 2) return 0;
-
-        // 3. 读 Len（小端）
-        quint16 lenField = static_cast<quint8>(buf[OFF_LEN])
-                         | (static_cast<quint8>(buf[OFF_LEN + 1]) << 8);
-        int dataLen = lenField - 1;
-        int expectedTotal = FRAME_OVERHEAD + dataLen;
-
-        // Len 合法性检查
-        if (lenField < 1 || lenField > (1 + MAX_DATA_LEN)) {
-            m_lenInvalidCount++;
+        case KeyFrameStreamParser::ResultKind::InvalidLength: {
+            // 长度不可信：放弃当前起点，先丢 1 字节，再搜索新的帧头。
+            ++m_lenInvalidCount;
             markNoiseDuringStabilizing(buf.left(1), "len invalid");
-            buf.remove(0, 1); // 滑窗重同步，避免错过后续真实帧头
-            const int nextHeaderIndex = buf.indexOf(QByteArray::fromHex("7E6C"));
-            log(QString("  [ERROR] Len=%1 异常，滑窗丢弃1字节重同步").arg(lenField));
-            // 简洁摘要
-            emitLog(LogDir::ERROR, 0, lenField,
-                    QString("RESYNC Len invalid (%1), drop 1 byte").arg(lenField),
+            buf.remove(0, inspected.dropBytes);
+            const int nextHeaderIndex =
+                    buf.indexOf(QByteArray::fromHex("7E6C"));
+            log(QString("  [ERROR] Len=%1 invalid, slide one byte")
+                    .arg(inspected.lengthField));
+            emitLog(LogDir::ERROR, 0, inspected.lengthField,
+                    QString("RESYNC Len invalid (%1), drop 1 byte")
+                        .arg(inspected.lengthField),
                     {}, false, false);
-            // 详细诊断（仅专家模式）
-            emitLog(LogDir::ERROR, 0, lenField,
+            emitLog(LogDir::ERROR, 0, inspected.lengthField,
                     QString("  detail: LEN_INVALID nextHdr=%1 total=%2 count=%3 bufNow=%4")
-                        .arg(nextHeaderIndex).arg(expectedTotal)
-                        .arg(m_lenInvalidCount).arg(buf.size()),
+                        .arg(nextHeaderIndex)
+                        .arg(inspected.frameLength)
+                        .arg(m_lenInvalidCount)
+                        .arg(buf.size()),
                     {}, false, true);
             continue;
         }
 
-        // 4. 数据不足，等下次
-        if (buf.size() < expectedTotal) return 0;
-
-        // 5. CRC 校验
-        QByteArray cmdPlusData = buf.mid(OFF_CMD, lenField);
-        uint16_t calcedCrc = calcCrc(cmdPlusData);
-        int crcOffset = OFF_DATA + dataLen;
-        quint8 crcHi = static_cast<quint8>(buf[crcOffset]);
-        quint8 crcLo = static_cast<quint8>(buf[crcOffset + 1]);
-        uint16_t recvCrc = (static_cast<uint16_t>(crcHi) << 8) | crcLo;
-
-        if (calcedCrc != recvCrc) {
-            m_crcFailCount++;
-            markNoiseDuringStabilizing(buf.left(expectedTotal), "crc fail");
-            int dumpLen = qMin(buf.size(), 32);
-            QString dumpHex = buf.left(dumpLen).toHex(' ').toUpper();
+        case KeyFrameStreamParser::ResultKind::CrcMismatch: {
+            // CRC 失败时放弃当前帧起点；逐字节重同步，避免按损坏的长度误删后续好帧。
+            // 先删最前面的 1 字节 -> continue 再检查 -> 找到后续帧头时由 DropPrefix 清理前缀。
+            ++m_crcFailCount;
+            markNoiseDuringStabilizing(
+                        buf.left(inspected.frameLength), "crc fail");
+            const QString dumpHex =
+                    buf.left(qMin(buf.size(), 32)).toHex(' ').toUpper();
             log(QString("  [CRC FAIL] calc=0x%1 recv=0x%2 dump: %3")
-                    .arg(calcedCrc, 4, 16, QChar('0'))
-                    .arg(recvCrc, 4, 16, QChar('0'))
+                    .arg(inspected.calculatedCrc, 4, 16, QChar('0'))
+                    .arg(inspected.receivedCrc, 4, 16, QChar('0'))
                     .arg(dumpHex));
-            buf.remove(0, 1); // 滑窗重同步，避免跨帧误丢
-            const int nextHeaderIndex = buf.indexOf(QByteArray::fromHex("7E6C"));
-            // 简洁摘要（calc/recv 对调试最有用，保留；其余移入 detail）
-            emitLog(LogDir::ERROR, 0, lenField,
+            buf.remove(0, inspected.dropBytes); // CRC 失败仅移除当前起点的 1 字节，保留后续可能有效的帧。
+            const int nextHeaderIndex =
+                    buf.indexOf(QByteArray::fromHex("7E6C"));
+            emitLog(LogDir::ERROR, 0, inspected.lengthField,
                     QString("RESYNC CRC fail #%1: calc=0x%2 recv=0x%3")
                         .arg(m_crcFailCount)
-                        .arg(calcedCrc, 4, 16, QChar('0'))
-                        .arg(recvCrc, 4, 16, QChar('0')),
-                    buf.left(qMin(buf.size(), expectedTotal)), false, false);
-            // 详细诊断（仅专家模式）
-            emitLog(LogDir::ERROR, 0, lenField,
+                        .arg(inspected.calculatedCrc, 4, 16, QChar('0'))
+                        .arg(inspected.receivedCrc, 4, 16, QChar('0')),
+                    buf.left(qMin(buf.size(), inspected.frameLength)),
+                    false, false);
+            emitLog(LogDir::ERROR, 0, inspected.lengthField,
                     QString("  detail: CRC_FAIL nextHdr=%1 Len=%2 total=%3")
-                        .arg(nextHeaderIndex).arg(lenField).arg(expectedTotal),
+                        .arg(nextHeaderIndex)
+                        .arg(inspected.lengthField)
+                        .arg(inspected.frameLength),
                     {}, false, true);
-            continue;
+            continue; // 重回 while 顶部重新 inspect；不是等新信号，也不是把整个缓冲区清空。
         }
 
-        // 6. 提取完整帧
-        outFrame = buf.left(expectedTotal);
-        buf.remove(0, expectedTotal);
-        return 1;
+        case KeyFrameStreamParser::ResultKind::FrameReady:
+            outFrame = buf.left(inspected.frameLength); // 将完整且通过校验的帧交给调用者的 frame。
+            buf.remove(0, inspected.frameLength); // 从累计 buf 移除已取出的帧，其余字节留下。
+            return 1; // 只表示成功取出一帧；调用方接着 handleFrame()，再尝试提取下一帧。
+        }
     }
 }
-
 // ============================================================
 // 帧解析与分发
 //
@@ -1362,21 +1297,28 @@ int KeySerialClient::tryExtractOneFrame(QByteArray &buf, QByteArray &outFrame)
  */
 void KeySerialClient::handleFrame(const QByteArray &frame)
 {
+    // 从已通过完整性和 CRC 检查的帧读取公共字段；这些局部值只用于本次消息处理。
     quint8 keyId   = static_cast<quint8>(frame[OFF_KEYID]);
+    // 取出 KeyId；本函数中用于接收日志，不据此选择业务分支。
     quint8 frameNo = static_cast<quint8>(frame[OFF_FRAMENO]);
+    // 取出帧号用于日志；当前 ACK 请求匹配不使用这个帧号。
     quint16 lenField = static_cast<quint8>(frame[OFF_LEN])
                      | (static_cast<quint8>(frame[OFF_LEN + 1]) << 8);
-    quint8 cmd = static_cast<quint8>(frame[OFF_CMD]);
+    // Len 按小端存放，表示 Cmd(1B) 与 Data(N) 的总长度。
+    quint8 cmd = static_cast<quint8>(frame[OFF_CMD]); // 取出命令字；后续据此分发 ACK、钥匙事件等不同设备消息。
     int dataLen = lenField - 1;
+    // 扣除 Len 中的一个命令字节，得到 Data 的实际字节数。
     QByteArray data = frame.mid(OFF_DATA, dataLen);
+    // 取出数据区，不含命令字和尾部 CRC；其业务含义由 cmd 对应的分支解释。
 
+    // 记录公共字段，便于将收到的报文与具体消息处理对应。
     log(QString("  KeyId=0x%1 FrameNo=0x%2 Cmd=0x%3 DataLen=%4")
             .arg(keyId, 2, 16, QChar('0'))
             .arg(frameNo, 2, 16, QChar('0'))
             .arg(cmd, 2, 16, QChar('0'))
             .arg(dataLen));
 
-    // 收到合法协议帧（已通过 7E6C + CRC 校验）后，锁定验证端口。
+    // 收到合法协议帧后记录已验证串口；这是通信状态维护，不决定本次消息分发。
     markPortVerified(QString("cmd=0x%1").arg(cmd, 2, 16, QChar('0')));
 
     // --- 钥匙放上/拿走事件 (0x11) — 双座状态差分处理 ---
@@ -1397,11 +1339,11 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
                         QString("B_SEAT_%1").arg(newB ? "PLACED" : "REMOVED"), frame);
 
                 // B座放入时：仅在 A座不在位 且 无命令在途 时触发 B座自动维护链
-                if (newB && !m_keyPlaced && !m_inFlight) {
+                if (newB && !m_keyPlaced && !m_request.active()) {
                     startAuxSequence(0x02, AuxSequenceBatteryThenSync,
                                      AuxOriginAutoSeat2Placed,
                                      QStringLiteral("seat2 placed auto maintenance"));
-                } else if (newB && !m_keyPlaced && m_inFlight) {
+                } else if (newB && !m_keyPlaced && m_request.active()) {
                     emitLog(LogDir::EVENT, 0, 0,
                             "B座放入：有命令在途，跳过自动维护", {}, true, true);
                 }
@@ -1414,7 +1356,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
 
             if (newA) {
                 // A座放上：中断所有正在进行的命令，清理辅助链残留状态
-                const bool hadInFlight = m_inFlight;
+                const bool hadInFlight = m_request.active();
                 stopRetryTimer();
                 clearInFlight();
                 // 清理辅助链残留，防止 A座 SET_COM ACK 被误路由到 B座辅助链
@@ -1425,6 +1367,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
                 clearTicketTransferState();
                 clearDataTransferState();
                 clearTaskLogState();
+                clearCaptureRfidState();
                 setProtocolHealthy(false, QStringLiteral("A key re-placed during in-flight command"));
                 m_pendingAfterDelQuery = false;
                 m_qtaskRecoveryTimer->stop();
@@ -1442,7 +1385,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
                 emit stateFlagsChanged();
                 startKeyStabilityWindow(QStringLiteral("A key placed"));
                 QTimer::singleShot(KEY_PLACED_HANDSHAKE_DELAY_MS, this, [this]() {
-                    if (!m_serial->isOpen() || !m_keyPlaced || m_inFlight) {
+                    if (!m_serial->isOpen() || !m_keyPlaced || m_request.active()) {
                         return;
                     }
                     sendSetComHandshake(QStringLiteral("A key placed settle delay"), 0x01);
@@ -1451,7 +1394,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
             }
 
             // A座移走：重置 A座业务状态，清理辅助链残留
-            const bool hadInFlight = m_inFlight;
+            const bool hadInFlight = m_request.active();
             stopRetryTimer();
             clearInFlight();
             m_pendingAuxSeat    = 0x00;
@@ -1461,6 +1404,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
             clearTicketTransferState();
             clearDataTransferState();
             clearTaskLogState();
+            clearCaptureRfidState();
             setProtocolHealthy(false, QStringLiteral("A key removed"));
             m_pendingAfterDelQuery = false;
             if (hadInFlight) {
@@ -1488,14 +1432,14 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
 
     // --- Q_KEYEQ 电量响应 (0x14) ---
     if (cmd == CMD_Q_KEYEQ) {
-        const bool matched = (m_inFlightType == INFLIGHT_QKEYEQ);
+        const bool matched = (static_cast<quint8>(m_request.type()) == INFLIGHT_QKEYEQ);
         if (matched) {
             stopRetryTimer();
             clearInFlight();
-        } else if (m_inFlight) {
+        } else if (m_request.active()) {
             emitLog(LogDir::WARN, CMD_Q_KEYEQ, lenField,
                     QString("Q_KEYEQ resp ignored while cmd=%1 in-flight")
-                        .arg(m_inFlightType),
+                        .arg(static_cast<quint8>(m_request.type())),
                     frame, true, true);
             return;
         }
@@ -1545,41 +1489,32 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
 
     // --- ACK (0x5A) ---
     if (cmd == CMD_ACK) {
+        // ACK 的 Cmd 为 0x5A；Data[0] 为被确认命令（传票单帧/最后帧 0x03，非最后帧 0x83）；空数据取 0x00 避免越界。
         quint8 ackedCmd = dataLen > 0 ? static_cast<quint8>(data[0]) : 0x00;
-        const quint8 inFlightBeforeAck = m_inFlightType;
+        // 发出请求时，m_request 记下正在做什么、期待确认哪个命令；收到回复前一直保留。
+        // 先记住刚才做的是哪类请求；后面清掉 m_request 中的请求类型后，这里仍留有一份。
+        const quint8 inFlightBeforeAck = static_cast<quint8>(m_request.type());
+        // 记录 ACK 摘要，便于核对设备实际确认的命令。
         log(QString("  >> ACK for Cmd=0x%1").arg(ackedCmd, 2, 16, QChar('0')));
 
-        // 生成 ACK 摘要：标明被确认的命令
-        QString ackSummary = QString("ACK for 0x%1").arg(ackedCmd, 2, 16, QChar('0'));
-        switch (ackedCmd) {
-        case CMD_SET_COM: ackSummary = "ACK for SET_COM"; break;
-        case CMD_SET_TIME: ackSummary = "ACK for SET_TIME"; break;
-        case CMD_DEL:     ackSummary = "ACK for DEL"; break;
-        case CMD_INIT:    ackSummary = "ACK for INIT"; break;
-        case static_cast<quint8>(CMD_INIT | 0x80): ackSummary = "ACK for INIT_MORE"; break;
-        case CMD_DN_RFID: ackSummary = "ACK for DN_RFID"; break;
-        case static_cast<quint8>(CMD_DN_RFID | 0x80): ackSummary = "ACK for DN_RFID_MORE"; break;
-        }
+        const QString ackSummary = KeyRequestPolicy::ackSummary(ackedCmd);
         emitLog(LogDir::RX, CMD_ACK, lenField, ackSummary, frame);
 
-        bool matched = false;
-        if (m_inFlightType == INFLIGHT_SETCOM && ackedCmd == CMD_SET_COM)
-            matched = true;
-        else if (m_inFlightType == INFLIGHT_SETTIME && ackedCmd == CMD_SET_TIME)
-            matched = true;
-        else if (m_inFlightType == INFLIGHT_DEL && ackedCmd == CMD_DEL)
-            matched = true;
-        else if (m_inFlightType == INFLIGHT_TICKET && ackedCmd == m_expectedAckCmd)
-            matched = true;
-        else if ((m_inFlightType == INFLIGHT_INIT_TRANSFER || m_inFlightType == INFLIGHT_RFID_TRANSFER)
-                 && ackedCmd == m_expectedAckCmd)
-            matched = true;
-
+        // 判断设备这次确认的，是不是本机正在等的那条命令；这里只比较，不清理 m_request。
+        // 参数依次为：当前等待的请求类型、本机期待确认的命令、ACK 中读出的被确认命令。
+        // 传票期望值是发送帧的 0x03/0x83，而非 ACK 类型 0x5A；此处不按帧序号区分迟到应答。
+        const bool matched = KeyRequestPolicy::ackMatches(
+                    m_request.type(), m_request.expectedAckCommand(), ackedCmd);
+        // 确认对上了才停止重发、清掉等待信息；没对上就继续等原来那条请求的回复。
         if (matched) {
+            // 已收到匹配 ACK，不再定时重发刚才的请求，也清掉为重发保存的帧和次数。
             stopRetryTimer();
+            // 把 m_request 改为没有正在等待的请求；对象还在，不会删除票据帧列表。
             clearInFlight();
+            // 将是否正在等待查询探测回复的标记设为否。
             m_qtaskProbeInFlight = false;
             if (ackedCmd != CMD_SET_COM) {
+                // 当前 ACK 确认的不是握手：记下刚刚收到正确回复的时间，并标记设备通信正常。
                 noteBusinessSuccess(QStringLiteral("ACK 0x%1")
                                         .arg(ackedCmd, 2, 16, QLatin1Char('0')).toUpper());
                 setProtocolHealthy(true,
@@ -1587,13 +1522,15 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
                                        .arg(ackedCmd, 2, 16, QLatin1Char('0')).toUpper());
             }
         } else {
+            // 这条 ACK 没对上，只记日志；继续等待原请求回复，仍按原定时器重试。
             emitLog(LogDir::WARN, CMD_ACK, lenField,
                     QString("stale/unmatched ACK ignored for 0x%1")
                         .arg(ackedCmd, 2, 16, QLatin1Char('0')).toUpper(),
                     frame, true, true);
         }
 
-        if (ackedCmd == CMD_SET_COM) {
+        // 握手和校时 ACK 各走自己的处理；传票 ACK 的 0x03/0x83 不进入这两支。
+        if (matched && ackedCmd == CMD_SET_COM) {
             if (m_setComSeatInFlight == 0x01) {
                 // A座握手：正常流程，建立业务会话
                 m_sessionReady = true;
@@ -1623,18 +1560,21 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
             }
         }
 
+        // ACK 已匹配，且刚才不是传票、初始化或 RFID 分帧请求，才尝试补发之前暂存的命令。
         if (matched
                 && inFlightBeforeAck != INFLIGHT_TICKET
                 && inFlightBeforeAck != INFLIGHT_INIT_TRANSFER
                 && inFlightBeforeAck != INFLIGHT_RFID_TRANSFER) {
+            // 钥匙稳定、串口打开且没有请求待回复时，尝试发送之前暂存的查询或删除命令。
             tryDispatchDeferredCommand();
         }
 
         if (matched) {
+            // 向程序内的接收者通知匹配 ACK；这里不是向串口发送数据。
             emit ackReceived(ackedCmd);
         }
 
-        if (ackedCmd != CMD_SET_COM && !m_dataFrames.isEmpty() && m_dataFrameIndex >= 0) {
+        if (matched && ackedCmd != CMD_SET_COM && !m_dataFrames.isEmpty() && m_dataFrameIndex >= 0) {
             emitLog(LogDir::EVENT, ackedCmd, lenField,
                     QString("%1 frame %2/%3 ACK")
                         .arg(m_dataTransferLabel)
@@ -1655,24 +1595,33 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
             return;
         }
 
-        if (ackedCmd != CMD_SET_COM && !m_ticketFrames.isEmpty() && m_ticketFrameIndex >= 0) {
+        // m_ticketFrames 是发送前准备好的整张票据帧列表，不是本次收到的 ACK 数据；已发帧也暂留在列表中。
+        // m_ticketFrameIndex 由发送函数记录当前帧下标；清 m_request 不会清列表或下标。
+        // 此处检查 ACK 匹配、非握手、列表非空、下标非负；随后判断是否还有下一帧。
+        if (matched && ackedCmd != CMD_SET_COM && !m_ticketFrames.isEmpty() && m_ticketFrameIndex >= 0) {
             emitLog(LogDir::EVENT, ackedCmd, lenField,
                     QString("TICKET frame %1/%2 ACK")
                         .arg(m_ticketFrameIndex + 1)
                         .arg(m_ticketFrames.size()),
                     {}, true, true);
+            // 下标从 0 开始；当前下标加 1 仍在列表内，说明还有下一帧。
             if (m_ticketFrameIndex + 1 < m_ticketFrames.size()) {
+                // 取下一帧交给发送入口；返回 false 表示没有可派发的下一帧，true 不代表设备已确认。
                 if (!sendNextTicketFrame()) {
                     emitNotice("传票发送失败：后续帧派发失败");
                     emit ticketTransferFailed("后续帧派发失败");
                     clearTicketTransferState();
+                    // 这次无法继续发送，清空票据帧列表，并把当前下标改回 -1。
                 }
             } else {
                 emitNotice(QString("传票发送完成，共 %1 帧").arg(m_ticketFrames.size()));
+                // 最后一帧已获匹配确认；先通知接收者，信号处理返回后再清传票列表和下标。
                 emit ticketTransferFinished();
                 clearTicketTransferState();
+                // 全部帧确认后清空列表、下标改回 -1；只结束这组帧的传输。
             }
             return;
+            // 结束本次 handleFrame；若刚发出下一帧，等待它的 ACK 从接收链再次进入。
         }
 
         // DEL ACK → 自动再查一次验证
@@ -1686,13 +1635,13 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
 
     // --- I_TASK_LOG 回包 (0x05) ---
     if (cmd == CMD_I_TASK_LOG) {
-        if (m_inFlightType != INFLIGHT_TASKLOG && m_pendingTaskLogFrames > 0) {
+        if (static_cast<quint8>(m_request.type()) != INFLIGHT_TASKLOG && m_pendingTaskLogFrames > 0) {
             emitLog(LogDir::WARN, CMD_I_TASK_LOG, lenField,
                     "I_TASK_LOG duplicate resp ignored: task log upload already pending",
                     frame, true, true);
             return;
         }
-        if (m_inFlightType != INFLIGHT_TASKLOG && m_pendingTaskLogFrames == 0) {
+        if (static_cast<quint8>(m_request.type()) != INFLIGHT_TASKLOG && m_pendingTaskLogFrames == 0) {
             emitLog(LogDir::WARN, CMD_I_TASK_LOG, lenField,
                     "I_TASK_LOG resp ignored: no active task log request",
                     frame, true, true);
@@ -1706,7 +1655,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
         noteBusinessSuccess(QStringLiteral("I_TASK_LOG response"));
         setProtocolHealthy(true, QStringLiteral("I_TASK_LOG response"));
 
-        if (m_inFlightType == INFLIGHT_TASKLOG) {
+        if (static_cast<quint8>(m_request.type()) == INFLIGHT_TASKLOG) {
             stopRetryTimer();
             clearInFlight();
         }
@@ -1732,7 +1681,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
                         CMD_ACK,
                         static_cast<quint16>(1 + ackData.size()),
                         QString("ACK for I_TASK_LOG, start upload from frame 0"));
-        armTaskLogWaitTimeout(m_inFlightGeneration);
+        armTaskLogWaitTimeout(m_request.generation());
 
         if (totalFrames > 1) {
             emitNotice(QString("检测到 %1 帧回传日志，进入多帧接收模式").arg(totalFrames));
@@ -1741,6 +1690,49 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
     }
 
     // --- NAK (0x00) ---
+    if (cmd == CMD_I_RFID) {
+        if (static_cast<quint8>(m_request.type()) != INFLIGHT_CAPTURE_RFID
+                || m_pendingCaptureRfidTaskId.isEmpty()) {
+            emitLog(LogDir::WARN, CMD_I_RFID, lenField,
+                    "I_RFID response ignored: no active capture request",
+                    frame, true, true);
+            return;
+        }
+        const quint32 generation = m_request.generation();
+        const quint16 totalFrames = dataLen >= 2 ? readLe16(data, 0) : 0;
+        stopRetryTimer();
+        clearInFlight();
+        noteBusinessSuccess(QStringLiteral("I_RFID response"));
+        setProtocolHealthy(true, QStringLiteral("I_RFID response"));
+        m_pendingCaptureRfidFrames = totalFrames;
+        m_captureRfidExpectedSeq = 0;
+        m_captureRfidPayloadBuffer.clear();
+        if (totalFrames == 0) {
+            QVariantMap event;
+            event.insert(QStringLiteral("taskId"),
+                         captureTaskIdText(m_pendingCaptureRfidTaskId));
+            event.insert(QStringLiteral("taskIdRaw"),
+                         m_pendingCaptureRfidTaskId);
+            event.insert(QStringLiteral("records"), QVariantList());
+            emit captureRfidReady(event);
+            clearCaptureRfidState();
+            return;
+        }
+        QByteArray ackData;
+        ackData.append(static_cast<char>(CMD_I_RFID));
+        ackData.append('\0');
+        ackData.append('\0');
+        QByteArray addr2;
+        addr2.append(static_cast<char>(KeyProtocol::Addr2DefaultLo));
+        addr2.append(static_cast<char>(KeyProtocol::Addr2DefaultHi));
+        sendFrameNoWait(buildFrame(CMD_ACK, ackData, addr2),
+                        CMD_ACK,
+                        static_cast<quint16>(1 + ackData.size()),
+                        "ACK for I_RFID, start upload from frame 0");
+        armCaptureRfidWaitTimeout(generation);
+        return;
+    }
+
     if (cmd == CMD_NAK) {
         quint8 origCmd = dataLen > 0 ? static_cast<quint8>(data[0]) : 0xFF;
 
@@ -1788,6 +1780,14 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
         if (origCmd == CMD_I_TASK_LOG || origCmd == CMD_UP_TASK_LOG) {
             clearTaskLogState();
         }
+        if (origCmd == CMD_I_RFID || origCmd == CMD_UP_RFID) {
+            const QString taskId =
+                    captureTaskIdText(m_pendingCaptureRfidTaskId);
+            clearCaptureRfidState();
+            emit captureRfidFailed(
+                        taskId,
+                        QStringLiteral("\u91c7\u7801 RFID \u8bfb\u53d6\u6536\u5230 NAK"));
+        }
         m_pendingAfterDelQuery = false;
         if (origCmd == CMD_TICKET || origCmd == CMD_TICKET_MORE) {
             emitNotice(QString("传票发送收到 NAK：%1").arg(errDesc));
@@ -1806,10 +1806,10 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
 
     // --- Q_TASK 回包 (0x04) ---
     if (cmd == CMD_Q_TASK) {
-        if (m_inFlight && m_inFlightType != INFLIGHT_QTASK) {
+        if (m_request.active() && static_cast<quint8>(m_request.type()) != INFLIGHT_QTASK) {
             emitLog(LogDir::WARN, CMD_Q_TASK, lenField,
                     QString("Q_TASK resp ignored while cmd=%1 in-flight")
-                        .arg(m_inFlightType),
+                        .arg(static_cast<quint8>(m_request.type())),
                     frame, true, true);
             return;
         }
@@ -1818,7 +1818,7 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
         m_qtaskRecoveryRound = 0;
         m_qtaskRecoveryTimer->stop();
         m_qtaskProbeInFlight = false;
-        if (m_inFlightType == INFLIGHT_QTASK) {
+        if (static_cast<quint8>(m_request.type()) == INFLIGHT_QTASK) {
             stopRetryTimer();
             clearInFlight();
         }
@@ -1846,34 +1846,23 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
             return;
         }
 
-        quint8 count = static_cast<quint8>(data[0]);
+        const KeyTaskListParser::ParseResult parsed = KeyTaskListParser::parse(data);
+        const quint8 count = parsed.declaredCount;
+        m_tasks = parsed.tasks;
         log(QString("  >> Q_TASK 任务数: %1").arg(count));
-        m_tasks.clear();
 
-        // 提取第一条任务ID用于摘要（便于用户快速识别）
         QString firstTaskHex;
-        int offset = 1;
-        for (int i = 0; i < count && (offset + TASK_INFO_LEN) <= dataLen; ++i) {
-            KeyTaskInfo info;
-            info.taskId   = data.mid(offset, TASK_ID_LEN);
-            info.status   = static_cast<quint8>(data[offset + 16]);
-            info.type     = static_cast<quint8>(data[offset + 17]);
-            info.source   = static_cast<quint8>(data[offset + 18]);
-            info.reserved = static_cast<quint8>(data[offset + 19]);
-            m_tasks.append(info);
-
+        for (int i = 0; i < m_tasks.size(); ++i) {
+            const KeyTaskInfo &info = m_tasks.at(i);
             if (i == 0) {
                 firstTaskHex = info.taskIdHex();
             }
-
             log(QString("  [%1] taskId=%2 status=0x%3 type=0x%4")
                     .arg(i + 1)
                     .arg(info.taskIdHex())
                     .arg(info.status, 2, 16, QChar('0'))
                     .arg(info.type, 2, 16, QChar('0')));
-            offset += TASK_INFO_LEN;
         }
-
         // 结构化日志：摘要包含任务数和首条ID
         QString qtaskSummary = QString("Q_TASK resp: count=%1").arg(count);
         if (!firstTaskHex.isEmpty()) {
@@ -1889,6 +1878,36 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
     }
 
     // --- UP_TASK_LOG 回包 (0x15) ---
+    if (cmd == CMD_UP_RFID) {
+        if (m_pendingCaptureRfidFrames == 0 || dataLen < 2) {
+            emitLog(LogDir::WARN, CMD_UP_RFID, lenField,
+                    "UP_RFID ignored: no active capture upload",
+                    frame, true, true);
+            return;
+        }
+        m_captureRfidWaitTimer->start(5000);
+        const quint16 frameSeq = readLe16(data, 0);
+        if (frameSeq != m_captureRfidExpectedSeq) {
+            const QString taskId =
+                    captureTaskIdText(m_pendingCaptureRfidTaskId);
+            clearCaptureRfidState();
+            emit captureRfidFailed(
+                        taskId,
+                        QStringLiteral("UP_RFID \u5e27\u5e8f\u53f7\u4e0d\u8fde\u7eed"));
+            return;
+        }
+        m_captureRfidPayloadBuffer.append(data.mid(2));
+        sendCaptureRfidAck(frameSeq);
+        ++m_captureRfidExpectedSeq;
+        if (m_captureRfidExpectedSeq < m_pendingCaptureRfidFrames) return;
+        const QByteArray fullPayload = m_captureRfidPayloadBuffer;
+        const quint16 totalFrames = m_pendingCaptureRfidFrames;
+        parseAndEmitCaptureRfidPayload(fullPayload, totalFrames,
+                                       frameSeq, lenField, frame);
+        clearCaptureRfidState();
+        return;
+    }
+
     if (cmd == CMD_UP_TASK_LOG) {
         emitLog(LogDir::RX, CMD_UP_TASK_LOG, lenField,
                 QString("UP_TASK_LOG recv: payload=%1B").arg(dataLen),
@@ -1978,8 +1997,9 @@ void KeySerialClient::handleFrame(const QByteArray &frame)
  */
 void KeySerialClient::onReadyRead()
 {
+    // 取出传输层当前可读字节；一次读取可能是半帧，也可能包含多帧。
     QByteArray incoming = m_serial->readAll();
-    if (incoming.isEmpty()) return;
+    if (incoming.isEmpty()) return;// 本次没有新增字节，保留累计缓冲区并结束处理。
 
     // RAW_RX 日志（最多前64字节）
     int showLen = qMin(incoming.size(), 64);
@@ -1992,21 +2012,24 @@ void KeySerialClient::onReadyRead()
             QString("RAW_RX +%1 bytes").arg(incoming.size()),
             incoming, true, true);
 
+    // 维护查询超时诊断信息；不在这里提取或分发帧。
     markQTaskFrameHeaderSeen(incoming);
 
+    // 钥匙稳定期间记录无帧头输入的噪声迹象。
     if (m_keyPlaced && !m_keyStable &&
         incoming.indexOf(QByteArray::fromHex("7E6C")) < 0) {
         markNoiseDuringStabilizing(incoming, "raw chunk");
     }
 
-    m_recvBuffer.append(incoming);
+    m_recvBuffer.append(incoming);// 追加到成员缓冲区，保留跨 readyRead 到达的半帧数据。
 
-    // 循环提取完整帧
+    // 每次成功只取一帧；循环处理同批数据中的多帧，不足一帧时保留余量等待下次事件。
     QByteArray frame;
+    // m_recvBuffer 作为输入输出缓冲区，frame 接收取出的完整且校验通过的帧。
     while (tryExtractOneFrame(m_recvBuffer, frame) == 1) {
         logHex("REC", frame);
-        handleFrame(frame);
-        frame.clear();
+        handleFrame(frame);// 直接解释并处理本帧的消息含义，返回后继续提取。
+        frame.clear(); // 清空已处理的临时帧；累计缓冲区中的剩余字节继续保留。
     }
 }
 
@@ -2048,7 +2071,7 @@ void KeySerialClient::sendFrame(const QByteArray &frame, quint8 expectedAckCmd,
 
     if (!serial->isOpen()) return;
 
-    if (m_inFlight) {
+    if (m_request.active()) {
         log("[BUSY] sendFrame 被拒绝：上一个请求仍在途");
         emitLog(LogDir::WARN, 0, 0, "sendFrame 被拒绝：上一个请求仍在途");
         return;
@@ -2089,9 +2112,8 @@ void KeySerialClient::sendFrame(const QByteArray &frame, quint8 expectedAckCmd,
     }
     emitLog(LogDir::TX, txCmd, txLen, txSummary, frame);
 
-    // 先进入 in-flight 状态，再执行实际发送，避免快速回包与旧超时发生竞态。
-    beginInFlightContext(inFlightType, expectedAckCmd);
-    m_lastSentFrame = frame;
+    // 先记下请求类型、期望确认命令和待重发帧并启动计时，再写串口，避免快速回复到来时尚无等待记录。
+    beginInFlightContext(inFlightType, expectedAckCmd, frame);
     startRetryTimer(expectedAckCmd);
 
     qint64 written = serial->write(frame);
@@ -2142,41 +2164,20 @@ void KeySerialClient::sendFrame(const QByteArray &frame, quint8 expectedAckCmd,
  */
 void KeySerialClient::startRetryTimer(quint8 expectedAckCmd)
 {
-    m_expectedAckCmd = expectedAckCmd;
-    m_retryCount = 0;
-    m_retryTimerGeneration = m_inFlightGeneration;
+    Q_ASSERT(m_request.expectedAckCommand() == expectedAckCmd);
+    m_request.armRetryTimer();
     m_retryTimer->start(RETRY_TIMEOUT_MS);
 }
 
-/**
- * @brief 停止重试定时器并清理重试状态
- *
- * 停止定时器、重置计数器、清空上次发送帧副本。
- * 在收到响应（ACK/NAK/Q_TASK 回包）或超时放弃时调用。
- */
 void KeySerialClient::stopRetryTimer()
 {
     m_retryTimer->stop();
-    m_retryCount = 0;
-    m_expectedAckCmd = 0;
-    m_retryTimerGeneration = 0;
-    m_lastSentFrame.clear();
+    m_request.clearRetry();
 }
 
-/**
- * @brief 清除 inFlight 状态，允许发送新命令
- *
- * 若当前 inFlight 类型为 Q_TASK，同时重置帧头观察标志。
- * 在收到匹配响应、超时放弃、或 KEY_PLACED 事件时调用。
- */
 void KeySerialClient::clearInFlight()
 {
-    if (m_inFlightType == INFLIGHT_QTASK) {
-        m_qtaskSawFrameHeader = false;
-    }
-    m_inFlight = false;
-    m_inFlightType = INFLIGHT_NONE;
-    m_expectedAckCmd = 0;
+    m_request.clearRequest();
 }
 
 void KeySerialClient::sendFrameNoWait(const QByteArray &frame,
@@ -2257,7 +2258,7 @@ bool KeySerialClient::ensureBusinessReadyOrDefer(quint8 inFlightType, const QByt
             m_deferredDeleteTaskId.clear();
         }
         emitLog(LogDir::EVENT, 0, 0, "Session not ready, defer business cmd");
-        if (!m_inFlight) {
+        if (!m_request.active()) {
             sendSetComHandshake("session not ready");
         }
         return false;
@@ -2348,7 +2349,7 @@ void KeySerialClient::markNoiseDuringStabilizing(const QByteArray &noise, const 
  */
 void KeySerialClient::tryDispatchDeferredCommand()
 {
-    if (!m_keyStable || m_inFlight || !m_serial->isOpen()) {
+    if (!m_keyStable || m_request.active() || !m_serial->isOpen()) {
         return;
     }
 
@@ -2388,7 +2389,7 @@ void KeySerialClient::sendSetComHandshake(const QString &reason, quint8 seat)
     if (!m_serial->isOpen()) {
         return;
     }
-    if (m_inFlight) {
+    if (m_request.active()) {
         emitLog(LogDir::WARN, 0, 0,
                 QString("skip SET_COM re-handshake: inFlight (%1)").arg(reason),
                 {}, true, true);
@@ -2482,7 +2483,7 @@ void KeySerialClient::drainBeforeBusinessSend(const QString &cmdName)
  */
 void KeySerialClient::scheduleStartupProbeQTask()
 {
-    if (!m_serial->isOpen() || m_keyPlaced || m_inFlight) {
+    if (!m_serial->isOpen() || m_keyPlaced || m_request.active()) {
         return;
     }
 
@@ -2491,7 +2492,7 @@ void KeySerialClient::scheduleStartupProbeQTask()
                 .arg(STARTUP_PROBE_DELAY_MS),
             {}, true, true);
     QTimer::singleShot(STARTUP_PROBE_DELAY_MS, this, [this]() {
-        if (!m_serial->isOpen() || m_inFlight || m_keyPlaced || !m_sessionReady) {
+        if (!m_serial->isOpen() || m_request.active() || m_keyPlaced || !m_sessionReady) {
             return;
         }
         queryTasksAllInternal(false, true);
@@ -2514,7 +2515,7 @@ void KeySerialClient::scheduleStartupProbeQTask()
  */
 void KeySerialClient::markQTaskFrameHeaderSeen(const QByteArray &incoming)
 {
-    if (m_inFlightType != INFLIGHT_QTASK || m_qtaskSawFrameHeader) {
+    if (static_cast<quint8>(m_request.type()) != INFLIGHT_QTASK || m_request.qTaskFrameHeaderSeen()) {
         return;
     }
     const QByteArray marker = QByteArray::fromHex("7E6C");
@@ -2524,7 +2525,7 @@ void KeySerialClient::markQTaskFrameHeaderSeen(const QByteArray &incoming)
     }
     probe.append(incoming);
     if (probe.indexOf(marker) >= 0) {
-        m_qtaskSawFrameHeader = true;
+        m_request.markQTaskFrameHeaderSeen();
         emitLog(LogDir::EVENT, CMD_Q_TASK, 0,
                 "Q_TASK RX observed frame header 7E6C",
                 {}, true, true);
@@ -2609,7 +2610,7 @@ void KeySerialClient::tryReopenVerifiedPort(const QString &reason)
         emitLog(LogDir::ERROR, 0, 0,
                 QString("重连已达上限(%1次)，停止自动重连: %2")
                     .arg(MAX_REOPEN_RETRIES).arg(reason));
-        emit timeoutOccurred(QString("串口重连失败(已重试%1次): %2")
+        emit timeoutOccurred(0, QString("串口重连失败(已重试%1次): %2")
                                  .arg(MAX_REOPEN_RETRIES).arg(reason));
         m_reopenRetryCount = 0;
         return;
@@ -2617,7 +2618,7 @@ void KeySerialClient::tryReopenVerifiedPort(const QString &reason)
 
     QString targetPort = m_hasVerifiedPort ? m_verifiedPortName : m_serial->portName();
     if (targetPort.isEmpty()) {
-        emit timeoutOccurred(QString("串口硬错误: %1").arg(reason));
+        emit timeoutOccurred(0, QString("串口硬错误: %1").arg(reason));
         return;
     }
 
@@ -2633,11 +2634,11 @@ void KeySerialClient::tryReopenVerifiedPort(const QString &reason)
         if (connectPort(targetPort, m_currentBaud)) {
             m_reopenInProgress = false;
             m_reopenRetryCount = 0;
-            emit timeoutOccurred(QString("串口已恢复: %1").arg(targetPort));
+            emit timeoutOccurred(0, QString("串口已恢复: %1").arg(targetPort));
             return;
         }
         m_reopenInProgress = false;
-        emit timeoutOccurred(QString("串口重连失败(%1): %2").arg(targetPort).arg(reason));
+        emit timeoutOccurred(0, QString("串口重连失败(%1): %2").arg(targetPort).arg(reason));
     });
 }
 
@@ -2696,7 +2697,6 @@ void KeySerialClient::onSerialError(int errorCode, const QString &errorMessage)
     m_qtaskRecoveryRound = 0;
     m_keyPlacedElapsed.invalidate();
     m_lastNoiseElapsed.invalidate();
-    m_qtaskSawFrameHeader = false;
     m_qtaskProbeInFlight = false;
 
     if (m_serial->isOpen()) {
@@ -2718,7 +2718,7 @@ void KeySerialClient::onSerialError(int errorCode, const QString &errorMessage)
  * 每次超时（RETRY_TIMEOUT_MS=1000ms）触发一次，处理逻辑：
  *
  * 1. 重试次数未达上限（< MAX_RETRIES=3）：
- *    重发 m_lastSentFrame，重启定时器
+ *    重发 m_request.lastFrame()，重启定时器
  *
  * 2. 重试次数达上限，按命令类型分别处理：
  *    a. startup probe Q_TASK 超时：静默放弃（钥匙确实不在位）
@@ -2728,24 +2728,24 @@ void KeySerialClient::onSerialError(int errorCode, const QString &errorMessage)
  *       若钥匙在位则重新发起 SET_COM 握手
  *
  * Q_TASK 超时诊断：
- *   通过 m_qtaskSawFrameHeader 判断设备是否有部分响应：
+ *   通过 m_request.qTaskFrameHeaderSeen() 判断设备是否有部分响应：
  *   - 观察到帧头：设备有响应但帧不完整（传输问题）
  *   - 未观察到帧头：设备完全无响应（钥匙/底座问题）
  */
 void KeySerialClient::onRetryTimeout()
 {
-    if (!m_inFlight || m_retryTimerGeneration != m_inFlightGeneration) {
+    if (!m_request.active() || !m_request.retryTimerMatchesCurrentRequest()) {
         emitLog(LogDir::EVENT, 0, 0,
                 "Ignore stale retry timeout: no command in-flight",
                 {}, true, true);
         return;
     }
 
-    m_retryCount++;
-    if (m_retryCount >= MAX_RETRIES) {
-        const quint8 timeoutCmd = m_expectedAckCmd;
-        const quint8 timeoutInFlight = m_inFlightType;
-        const bool qtaskSawHeader = m_qtaskSawFrameHeader;
+    m_request.recordTimeout();
+    if (m_request.retryCount() >= MAX_RETRIES) {
+        const quint8 timeoutCmd = m_request.expectedAckCommand();
+        const quint8 timeoutInFlight = static_cast<quint8>(m_request.type());
+        const bool qtaskSawHeader = m_request.qTaskFrameHeaderSeen();
         QString cmdName = QString("0x%1").arg(timeoutCmd, 2, 16, QChar('0')).toUpper();
         if (timeoutInFlight == INFLIGHT_QTASK) {
             cmdName = "Q_TASK";
@@ -2793,8 +2793,7 @@ void KeySerialClient::onRetryTimeout()
             m_qtaskRecoveryRound = 0;
             m_qtaskRecoveryTimer->stop();
             m_qtaskProbeInFlight = false;
-            m_qtaskSawFrameHeader = false;
-            emitLog(LogDir::EVENT, CMD_Q_TASK, 0,
+                    emitLog(LogDir::EVENT, CMD_Q_TASK, 0,
                     "Startup Q_TASK probe timeout, key remains not-present");
             return;
         }
@@ -2848,11 +2847,19 @@ void KeySerialClient::onRetryTimeout()
         m_qtaskRecoveryRound = 0;
         m_qtaskRecoveryTimer->stop();
         m_qtaskProbeInFlight = false;
-        m_qtaskSawFrameHeader = false;
 
+        // Exhausted Q_TASK silence means the reported A-seat presence cannot
+        // be trusted. Do not turn SET_COM ACKs into an unbounded ready/query
+        // loop; wait for a fresh physical placement edge instead.
+        const bool abandonUnconfirmedKeyPresence =
+                timeoutInFlight == INFLIGHT_QTASK && !qtaskSawHeader;
+    
         if (m_serial->isOpen()) {
-            if (m_keyPlaced) {
+            if (m_keyPlaced && !abandonUnconfirmedKeyPresence) {
                 sendSetComHandshake(QString("timeout recovery after %1").arg(cmdName));
+            } else if (abandonUnconfirmedKeyPresence) {
+                emitLog(LogDir::EVENT, CMD_Q_TASK, 0,
+                        "Q_TASK silence exhausted; stop automatic handshake recovery");
             } else {
                 emitLog(LogDir::EVENT, 0, 0,
                         "钥匙未在位，等待重新放稳后自动重握手");
@@ -2863,20 +2870,36 @@ void KeySerialClient::onRetryTimeout()
             emitLog(LogDir::WARN, CMD_Q_TASK, 0,
                     "Q_TASK timeout: no frame header observed",
                     {}, true, true);
-            emit timeoutOccurred(QString("%1 查询超时（未收到帧头）").arg(cmdName));
+            emit timeoutOccurred(timeoutCmd, QString("%1 查询超时（未收到帧头）").arg(cmdName));
         } else {
-            emit timeoutOccurred(QString("%1 超时，连接保持，请重新放稳钥匙").arg(cmdName));
+            emit timeoutOccurred(timeoutCmd, QString("%1 超时，连接保持，请重新放稳钥匙").arg(cmdName));
+        }
+
+        if (abandonUnconfirmedKeyPresence && m_keyPlaced) {
+            m_keyPlaced = false;
+            m_keyStable = false;
+            m_keyStableTimer->stop();
+            m_deferredInFlightType = INFLIGHT_NONE;
+            m_deferredDeleteTaskId.clear();
+            m_batteryPercent = -1;
+            m_keyPlacedElapsed.invalidate();
+            m_lastNoiseElapsed.invalidate();
+            emitLog(LogDir::EVENT, CMD_Q_TASK, 0,
+                    "A-seat presence invalidated after silent Q_TASK exhaustion; wait for KEY_PLACED");
+            emit keyPlacedChanged(false);
+            emit keyStableChanged(false);
+            emit stateFlagsChanged();
         }
         return;
     }
 
-    log(QString("[RETRY] 第 %1/%2 次重发...").arg(m_retryCount).arg(MAX_RETRIES));
+    log(QString("[RETRY] 第 %1/%2 次重发...").arg(m_request.retryCount()).arg(MAX_RETRIES));
 
     // 生成重试摘要：标明是哪个命令的重试
     QString retrySummary = QString("Retry %1/%2")
-        .arg(m_retryCount).arg(MAX_RETRIES);
+        .arg(m_request.retryCount()).arg(MAX_RETRIES);
     // 按 inFlightType 区分命令名，而非按期望ACK字节（SET_COM/DEL 期待同一个 ACK 无法区分）
-    switch (m_inFlightType) {
+    switch (static_cast<quint8>(m_request.type())) {
     case INFLIGHT_SETCOM: retrySummary += " for SET_COM"; break;
     case INFLIGHT_DEL:    retrySummary += " for DEL"; break;
     case INFLIGHT_QTASK:  retrySummary += " for Q_TASK"; break;
@@ -2897,25 +2920,25 @@ void KeySerialClient::onRetryTimeout()
                                            .arg(m_ticketFrameIndex + 1)
                                            .arg(m_ticketFrames.size()); break;
     default:
-        retrySummary += QString(" for 0x%1").arg(m_expectedAckCmd, 2, 16, QChar('0'));
+        retrySummary += QString(" for 0x%1").arg(m_request.expectedAckCommand(), 2, 16, QChar('0'));
     }
-    emitLog(LogDir::WARN, m_expectedAckCmd, 0, retrySummary);
+    emitLog(LogDir::WARN, m_request.expectedAckCommand(), 0, retrySummary);
 
-    if (!m_lastSentFrame.isEmpty() && m_serial->isOpen()) {
-        logHex("SEN(retry)", m_lastSentFrame);
-        qint64 written = m_serial->write(m_lastSentFrame);
+    if (!m_request.lastFrame().isEmpty() && m_serial->isOpen()) {
+        logHex("SEN(retry)", m_request.lastFrame());
+        qint64 written = m_serial->write(m_request.lastFrame());
         const bool flushOk = m_serial->flush();
  #ifdef Q_OS_WIN
         const bool waitOk = m_serial->waitForBytesWritten(200);
 #endif
-        if (written != m_lastSentFrame.size()
+        if (written != m_request.lastFrame().size()
 #ifdef Q_OS_WIN
                 || !waitOk
 #endif
                 ) {
-            emitLog(LogDir::WARN, m_expectedAckCmd, 0,
+            emitLog(LogDir::WARN, m_request.expectedAckCommand(), 0,
                     QString("retry write: %1/%2 bytes%3")
-                        .arg(written).arg(m_lastSentFrame.size())
+                        .arg(written).arg(m_request.lastFrame().size())
 #ifdef Q_OS_WIN
                         .arg(QString(", wait=%1").arg(waitOk ? "OK" : "FAIL"))
 #else
@@ -2924,7 +2947,7 @@ void KeySerialClient::onRetryTimeout()
                         );
         }
         if (!flushOk) {
-            emitLog(LogDir::WARN, m_expectedAckCmd, 0,
+            emitLog(LogDir::WARN, m_request.expectedAckCommand(), 0,
                     "retry flush returned false (non-fatal)", {}, true, true);
         }
     }
@@ -3080,4 +3103,108 @@ void KeySerialClient::emitNotice(const QString &what)
 {
     emit notice(what);
     emitLog(LogDir::EVENT, 0, 0, what);
+}
+
+void KeySerialClient::requestCaptureRfid(const QByteArray &taskId16)
+{
+    if (taskId16.size() != TASK_ID_LEN || !m_serial->isOpen()
+            || m_request.active() || !m_keyPlaced || !m_keyStable
+            || !m_sessionReady) {
+        emit captureRfidFailed(captureTaskIdText(taskId16),
+                               QStringLiteral("I_RFID \u53d1\u9001\u5931\u8d25\uff1a\u94a5\u5319\u672a\u5c31\u7eea\u6216\u5f53\u524d\u547d\u4ee4\u672a\u6536\u53e3"));
+        return;
+    }
+    clearCaptureRfidState();
+    m_pendingCaptureRfidTaskId = taskId16;
+    QByteArray addr2;
+    addr2.append(static_cast<char>(m_stationId & 0xFF));
+    addr2.append(static_cast<char>((m_stationId >> 8) & 0xFF));
+    drainBeforeBusinessSend("I_RFID");
+    sendFrame(buildFrame(CMD_I_RFID, taskId16, addr2),
+              CMD_I_RFID, INFLIGHT_CAPTURE_RFID);
+}
+
+void KeySerialClient::transferTicketPayload(
+        const QByteArray &payload, quint8 stationId)
+{
+    if (payload.isEmpty() || !m_serial->isOpen() || m_request.active()
+            || !m_keyPlaced || !m_keyStable || !m_sessionReady) {
+        emit ticketTransferFailed(
+                    QStringLiteral("\u91c7\u7801\u7968\u4e0b\u53d1\u5931\u8d25\uff1a\u94a5\u5319\u672a\u5c31\u7eea\u3001\u547d\u4ee4\u672a\u6536\u53e3\u6216 payload \u4e3a\u7a7a"));
+        return;
+    }
+    TicketFrameBuilder builder(stationId, 0x00, 0x00);
+    const QList<QByteArray> frames = builder.buildFrames(payload);
+    if (frames.isEmpty()) {
+        emit ticketTransferFailed(QStringLiteral("\u91c7\u7801\u7968\u5206\u5e27\u5931\u8d25"));
+        return;
+    }
+    clearTicketTransferState();
+    m_ticketFrames = frames;
+    emitLog(LogDir::EVENT, CMD_TICKET, 0,
+            QString("Capture ticket prepared: payload=%1B frames=%2")
+                .arg(payload.size()).arg(frames.size()), {}, true, true);
+    if (!sendNextTicketFrame()) {
+        clearTicketTransferState();
+        emit ticketTransferFailed(QStringLiteral("\u91c7\u7801\u7968\u9996\u5e27\u53d1\u9001\u5931\u8d25"));
+    }
+}
+
+void KeySerialClient::clearCaptureRfidState()
+{
+    m_captureRfidWaitTimer->stop();
+    m_pendingCaptureRfidTaskId.clear();
+    m_pendingCaptureRfidFrames = 0;
+    m_captureRfidExpectedSeq = 0;
+    m_captureRfidPayloadBuffer.clear();
+}
+
+void KeySerialClient::armCaptureRfidWaitTimeout(quint32 generation)
+{
+    m_captureRfidWaitGeneration = generation;
+    m_captureRfidWaitTimer->start(5000);
+}
+
+void KeySerialClient::sendCaptureRfidAck(quint16 frameSeq)
+{
+    QByteArray ackData;
+    ackData.append(static_cast<char>(CMD_UP_RFID));
+    ackData.append(static_cast<char>(frameSeq & 0xFF));
+    ackData.append(static_cast<char>((frameSeq >> 8) & 0xFF));
+    QByteArray addr2;
+    addr2.append(static_cast<char>(KeyProtocol::Addr2DefaultLo));
+    addr2.append(static_cast<char>(KeyProtocol::Addr2DefaultHi));
+    sendFrameNoWait(buildFrame(CMD_ACK, ackData, addr2),
+                    CMD_ACK,
+                    static_cast<quint16>(1 + ackData.size()),
+                    QString("ACK for UP_RFID frame %1").arg(frameSeq));
+}
+
+bool KeySerialClient::parseAndEmitCaptureRfidPayload(
+        const QByteArray &payload,
+        quint16 totalFrames,
+        quint16 lastFrameSeq,
+        quint16 lenField,
+        const QByteArray &rawFrame)
+{
+    const CaptureRfidParseResult parsed =
+            CaptureRfidPayloadParser::parse(payload);
+    if (!parsed.ok) {
+        emitLog(LogDir::ERROR, CMD_UP_RFID, lenField, parsed.error, rawFrame);
+        emit captureRfidFailed(captureTaskIdText(m_pendingCaptureRfidTaskId),
+                               parsed.error);
+        return false;
+    }
+    QVariantMap event;
+    event.insert(QStringLiteral("taskId"),
+                 captureTaskIdText(m_pendingCaptureRfidTaskId));
+    event.insert(QStringLiteral("taskIdRaw"), m_pendingCaptureRfidTaskId);
+    event.insert(QStringLiteral("stationNo"), parsed.stationNo);
+    event.insert(QStringLiteral("version"), parsed.version);
+    event.insert(QStringLiteral("recordSize"), parsed.recordSize);
+    event.insert(QStringLiteral("frameSeq"), static_cast<int>(lastFrameSeq));
+    event.insert(QStringLiteral("totalFrames"), static_cast<int>(totalFrames));
+    event.insert(QStringLiteral("records"), parsed.records);
+    emit captureRfidReady(event);
+    return true;
 }

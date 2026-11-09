@@ -16,9 +16,11 @@
 #include <QWidget>
 #include <QString>
 #include <QStringList>
+#include "shared/ui/UiLayoutProfile.h"
 
 class QShowEvent;
 class LogController;
+class QTimer;
 class IProcessService;
 
 namespace Ui
@@ -38,19 +40,22 @@ class LogPage : public QWidget
 public:
     explicit LogPage(IProcessService *processService, QWidget *parent = nullptr);
     ~LogPage();
+    // Adjusts page spacing only; log buffering and retention remain unchanged.
+    void applyLayoutProfile(const UiLayoutProfile &profile);
 
 protected:
     void showEvent(QShowEvent *event) override;
 
 private slots:
     void onServiceLogGenerated(const QString &text);
+    void flushBufferedLogs();
 
 private:
-    void flushBufferedLogs();
     void appendOrBufferLog(const QString &text);
 
     Ui::LogPage *ui;
     LogController *m_controller;
+    QTimer *m_flushTimer;
     QStringList m_pendingLogs;
 };
 

@@ -1,4 +1,7 @@
+#include "app/AppComposition.h"
 #include "app/mainwindow.h"
+#include "platform/logging/LogService.h"
+#include "shared/contracts/IProcessService.h"
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -72,12 +75,32 @@ void configureLinuxBoardGraphics()
             << "AA_UseOpenGLES=" << (forceEglGles ? "true" : "false")
             << "QT_XCB_NO_XI2=" << qEnvironmentVariable("QT_XCB_NO_XI2", "<unset>");
 }
+
+QString linuxGraphicsRuntimeSummary()
+{
+    return QStringLiteral("qt=%1 mode=%2 display=%3 platform=%4 xcbGl=%5 openGl=%6 "
+                          "xcbNoXi2=%7 chromiumFlags=\"%8\"")
+            .arg(QString::fromLatin1(qVersion()))
+            .arg(linuxGraphicsMode())
+            .arg(qEnvironmentVariable("DISPLAY", QStringLiteral("<unset>")))
+            .arg(qEnvironmentVariable("QT_QPA_PLATFORM", QStringLiteral("<unset>")))
+            .arg(qEnvironmentVariable("QT_XCB_GL_INTEGRATION", QStringLiteral("<unset>")))
+            .arg(qEnvironmentVariable("QT_OPENGL", QStringLiteral("<unset>")))
+            .arg(qEnvironmentVariable("QT_XCB_NO_XI2", QStringLiteral("<unset>")))
+            .arg(qEnvironmentVariable("QTWEBENGINE_CHROMIUM_FLAGS", QStringLiteral("<unset>")));
+}
 #endif
 }
 
 int main(int argc, char *argv[]) // C++ 标准入口函数
 {
-#ifdef Q_OS_LINUX
+#ifdef Q_OS_WIN// Windows 图形缩放配置
+    QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+    QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
+    QGuiApplication::setHighDpiScaleFactorRoundingPolicy(
+        Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
+#endif
+#ifdef Q_OS_LINUX// RK3568 Linux 图形配置
     configureLinuxBoardGraphics();
 #endif
 
@@ -87,6 +110,8 @@ int main(int argc, char *argv[]) // C++ 标准入口函数
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
 
     QApplication a(argc, argv); // 创建应用对象，负责管理应用级资源和主事件循环
+
+    
     const QIcon appIcon(QStringLiteral(":/branding/window_icon.png"));
     if (!appIcon.isNull())
     {
@@ -104,11 +129,24 @@ int main(int argc, char *argv[]) // C++ 标准入口函数
         qInfo() << "[app-lifecycle] aboutToQuit emitted";
     });
 
-    MainWindow w; // 创建主窗口
+    AppComposition composition(&a);
+
+#ifdef Q_OS_LINUX
+    // Persist the effective graphics profile so a later WebEngine incident can
+    // be correlated with the exact board runtime rather than shell defaults.
+    LOG_INFO(QStringLiteral("GRAPHICS"), linuxGraphicsRuntimeSummary());
+#endif
+    QObject::connect(&a, &QCoreApplication::aboutToQuit, [&composition]() {
+        composition.processService()->stopAll();
+        composition.markCleanExit();
+    });
+    
+    MainWindow w(composition);
     if (!appIcon.isNull())
     {
         w.setWindowIcon(appIcon);
     }
+    composition.start();
     w.show();     // 显示主窗口到屏幕上
 
     return a.exec(); // 进入事件循环，程序在这里等待用户操作

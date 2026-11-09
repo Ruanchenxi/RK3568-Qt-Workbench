@@ -13,6 +13,9 @@
 
 namespace KeyProtocol {
 
+static constexpr quint8 CmdIRfid = 0x07;  ///< Capture RFID query.
+static constexpr quint8 CmdUpRfid = 0x17; ///< Capture RFID upload.
+
 // ---------- 帧头 ----------
 static constexpr quint8  FrameHeader0   = 0x7E;  ///< 帧头第一字节
 static constexpr quint8  FrameHeader1   = 0x6C;  ///< 帧头第二字节
